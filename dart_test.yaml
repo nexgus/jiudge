@@ -1,0 +1,7 @@
+# Test tags.
+#
+# `probe`: tests that depend on local RudyMap data (the `.map` / theme under
+# RUDYMAP_DIR). They skip gracefully when the data is absent, so they are safe
+# to run anywhere but only do real work on a dev machine with the data present.
+tags:
+  probe:

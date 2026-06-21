@@ -35,6 +35,20 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Pure-Dart mapsforge renderer. Loads the RudyMap `.map` basemap and its
+  # bundled render theme in-process (no platform channel). Phase 0 prototype.
+  # The `.map` datastore reader lives in a separate package and must be added
+  # explicitly; the umbrella package does not pull it in.
+  mapsforge_flutter: ^4.0.0
+  mapsforge_flutter_mapfile: ^4.0.0
+  # Sub-packages imported directly by the map integration (datastore model,
+  # offline renderer, symbol cache, render-theme parser).
+  mapsforge_flutter_core: ^4.0.0
+  mapsforge_flutter_renderer: ^4.0.0
+  mapsforge_flutter_rendertheme: ^4.0.0
+  # XML parsing for the debug-only render-theme sanitizer (theme_sanitizer.dart).
+  xml: ^6.6.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
