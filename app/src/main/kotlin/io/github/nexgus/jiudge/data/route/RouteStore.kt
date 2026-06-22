@@ -1,43 +1,52 @@
 package io.github.nexgus.jiudge.data.route
 
+import android.content.Context
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import org.json.JSONObject
-import java.io.File
 
 /**
- * Stores [PlannedRoute]s as individual JSON files under [dir] (the app's private storage). One
- * file per route keeps plans shareable and loadable without a database (see CLAUDE.md storage
- * decision). [list] reads only each file's metadata so the picker need not parse full geometry.
+ * Stores [PlannedRoute]s as individual JSON documents under the user-picked SAF folder
+ * ([RouteFolder]), inside a `plans/` subdirectory - one document per route, so plans stay
+ * shareable and survive uninstall (the folder is in public storage). [list] reads each document's
+ * JSON to fill the picker; routes are few and the files tiny.
+ *
+ * Every method does blocking I/O through the [android.content.ContentResolver] - call off the main
+ * thread. Callers must have a folder set ([RouteFolder.current] non-null) before saving/loading;
+ * [save] throws otherwise, [list] returns empty.
  */
 class RouteStore(
-    private val dir: File,
+    private val context: Context,
 ) {
-    /** Lightweight listing entry - enough to render the load picker without reading geometry. */
+    /** Lightweight listing entry - identifies a saved route document and its summary fields. */
     data class Summary(
-        val file: File,
+        val uri: Uri,
         val name: String,
         val createdAtEpochMs: Long,
         val waypointCount: Int,
     )
 
-    /** Persists [route] to a uniquely-named file and returns it. */
-    fun save(route: PlannedRoute): File {
-        if (!dir.exists()) dir.mkdirs()
-        val file = File(dir, "${slug(route.name)}-${route.createdAtEpochMs}${PlannedRoute.FILE_SUFFIX}")
-        file.writeText(route.toJson().toString())
-        return file
+    /** Persists [route] as a new uniquely-named JSON document under `plans/`. */
+    fun save(route: PlannedRoute) {
+        val plans = plansDir() ?: error("no route folder selected")
+        val displayName = "${slug(route.name)}-${route.createdAtEpochMs}"
+        val doc = plans.createFile(MIME_JSON, displayName) ?: error("cannot create route document")
+        context.contentResolver.openOutputStream(doc.uri)?.use { out ->
+            out.write(route.toJson().toString().toByteArray())
+        } ?: error("cannot write route document")
     }
 
-    /** Lists saved routes newest-first; files that fail to parse are skipped rather than thrown. */
+    /** Lists saved routes newest-first; documents that fail to parse are skipped, not thrown. */
     fun list(): List<Summary> {
-        val files =
-            dir.listFiles { f -> f.isFile && f.name.endsWith(PlannedRoute.FILE_SUFFIX) }
-                ?: return emptyList()
-        return files
-            .mapNotNull { f ->
+        val plans = plansDir() ?: return emptyList()
+        return plans
+            .listFiles()
+            .filter { it.isFile && it.name?.endsWith(PlannedRoute.FILE_SUFFIX) == true }
+            .mapNotNull { doc ->
                 runCatching {
-                    val json = JSONObject(f.readText())
+                    val json = JSONObject(readText(doc.uri))
                     Summary(
-                        file = f,
+                        uri = doc.uri,
                         name = json.getString("name"),
                         createdAtEpochMs = json.getLong("createdAtEpochMs"),
                         waypointCount = json.getJSONArray("waypoints").length(),
@@ -46,13 +55,29 @@ class RouteStore(
             }.sortedByDescending { it.createdAtEpochMs }
     }
 
-    fun load(file: File): PlannedRoute = PlannedRoute.fromJson(JSONObject(file.readText()))
+    fun load(uri: Uri): PlannedRoute = PlannedRoute.fromJson(JSONObject(readText(uri)))
 
-    // Keep CJK and word characters; collapse everything else so the filename stays filesystem-safe.
+    /** The `plans/` subdir of the picked folder, created on demand; null if no folder is set. */
+    private fun plansDir(): DocumentFile? {
+        val treeUri = RouteFolder.current(context) ?: return null
+        val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return null
+        return tree.findFile(PLANS_DIR) ?: tree.createDirectory(PLANS_DIR)
+    }
+
+    private fun readText(uri: Uri): String =
+        context.contentResolver.openInputStream(uri)?.use { it.reader().readText() }
+            ?: error("cannot read route document")
+
+    // Keep CJK and word characters; collapse everything else so the document name stays valid.
     private fun slug(name: String): String =
         name
             .trim()
             .ifEmpty { "route" }
             .replace(Regex("[^\\p{L}\\p{N}_-]+"), "_")
             .take(40)
+
+    private companion object {
+        const val PLANS_DIR = "plans"
+        const val MIME_JSON = "application/json"
+    }
 }

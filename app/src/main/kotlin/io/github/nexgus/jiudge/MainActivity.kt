@@ -45,6 +45,7 @@ import io.github.nexgus.jiudge.core.mapdata.MapDataDownload
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.PlannedRoute
+import io.github.nexgus.jiudge.data.route.RouteFolder
 import io.github.nexgus.jiudge.data.route.RouteStore
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
@@ -57,7 +58,9 @@ import io.github.nexgus.jiudge.feature.planning.RoutePlanner
 import io.github.nexgus.jiudge.feature.planning.RouteViewControls
 import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.mapsforge.map.android.view.MapView
 import org.mapsforge.map.model.common.Observer
 import java.io.File
@@ -69,7 +72,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val paths = AppPaths(this)
         val catalog = MapDataCatalog(paths)
-        val routesDir = File(filesDir, "routes")
         setContent {
             MaterialTheme {
                 val snackbarHostState = remember { SnackbarHostState() }
@@ -99,7 +101,7 @@ class MainActivity : ComponentActivity() {
                         MapScreen(
                             mapDir = paths.mapDir,
                             engine = remember { BRouterEngine(paths.brouterDir) },
-                            routeStore = remember { RouteStore(routesDir) },
+                            routeStore = remember { RouteStore(applicationContext) },
                             snackbarHostState = snackbarHostState,
                             onMapCreated = { mapView = it },
                             modifier =
@@ -149,6 +151,31 @@ private fun MapScreen(
     var displayedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
     // What ROUTE_EDIT "取消" reverts to: set when entering edit, refreshed on save.
     var editBaseline by remember { mutableStateOf<PlannedRoute?>(null) }
+
+    // SAF folder gate: saving/loading routes needs the user-picked folder. Pick it on first use,
+    // then run the deferred action; if the user cancels the picker, the action is dropped.
+    val context = LocalContext.current
+    var pendingFolderAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val folderPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            val action = pendingFolderAction
+            pendingFolderAction = null
+            if (uri != null) {
+                RouteFolder.persist(context, uri)
+                action?.invoke()
+            } else {
+                scope.launch { snackbarHostState.showSnackbar("需選擇資料夾才能儲存或載入路徑") }
+            }
+        }
+
+    fun withFolder(action: () -> Unit) {
+        if (RouteFolder.current(context) != null) {
+            action()
+        } else {
+            pendingFolderAction = action
+            folderPicker.launch(null)
+        }
+    }
 
     Box(modifier = modifier) {
         AndroidView(
@@ -283,7 +310,15 @@ private fun MapScreen(
             },
             onLoad = {
                 showChooser = false
-                loadList = routeStore.list()
+                withFolder {
+                    scope.launch {
+                        try {
+                            loadList = withContext(Dispatchers.IO) { routeStore.list() }
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("讀取清單失敗: ${e.message}")
+                        }
+                    }
+                }
             },
             onCancel = { showChooser = false },
         )
@@ -294,18 +329,26 @@ private fun MapScreen(
             initialName = editBaseline?.name ?: "",
             onConfirm = { name ->
                 val p = planner
+                showSave = false
                 if (p != null) {
                     val saved = p.toPlannedRoute(name, System.currentTimeMillis())
-                    routeStore.save(saved)
-                    // Keep the route on screen: leave editing for view mode rather than clearing.
-                    p.clear()
-                    viewer?.show(saved)
-                    displayedRoute = saved
-                    editBaseline = saved
-                    mode = PlanMode.ROUTE_VIEW
+                    withFolder {
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) { routeStore.save(saved) }
+                                // Keep the route on screen: leave editing for view mode, not cleared.
+                                p.clear()
+                                viewer?.show(saved)
+                                displayedRoute = saved
+                                editBaseline = saved
+                                mode = PlanMode.ROUTE_VIEW
+                                snackbarHostState.showSnackbar("已儲存規劃路徑: $name")
+                            } catch (e: Exception) {
+                                snackbarHostState.showSnackbar("儲存失敗: ${e.message}")
+                            }
+                        }
+                    }
                 }
-                showSave = false
-                scope.launch { snackbarHostState.showSnackbar("已儲存規劃路徑: $name") }
             },
             onDismiss = { showSave = false },
         )
@@ -317,11 +360,17 @@ private fun MapScreen(
             onPick = { summary ->
                 loadList = null
                 // Opening a saved file shows it in view mode (per docs/ui.md); "編輯" enters editing.
-                val route = routeStore.load(summary.file)
-                planner?.clear()
-                viewer?.show(route)
-                displayedRoute = route
-                mode = PlanMode.ROUTE_VIEW
+                scope.launch {
+                    try {
+                        val route = withContext(Dispatchers.IO) { routeStore.load(summary.uri) }
+                        planner?.clear()
+                        viewer?.show(route)
+                        displayedRoute = route
+                        mode = PlanMode.ROUTE_VIEW
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar("載入失敗: ${e.message}")
+                    }
+                }
             },
             onDismiss = { loadList = null },
         )

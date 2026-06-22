@@ -51,6 +51,9 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
+    // SAF (DocumentFile) for storing user routes in a user-picked folder that survives uninstall.
+    implementation(libs.androidx.documentfile)
+
     // mapsforge: render RudyMap .map with its bundled theme + hillshade from .hgt DEM.
     // mapsforge-map-android pulls in com.caverock:androidsvg transitively for SVG symbols -
     // do not add androidsvg explicitly or its classes collide (duplicate-class build error).
