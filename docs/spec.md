@@ -63,7 +63,7 @@
 | 路由引擎 | **BRouter** (`brouter-core`, Java, in-process) | 完全離線; profile 專為步行/登山路徑調校; rd5 路由資料每區極小 (全台約 1-2 個 5x5 度方格); 較 GraphHopper 更貼登山域 (改採於 2026-06-22, 詳見 CLAUDE.md) |
 | 高程處理 | **RudyMap `.hgt` DEM** (`hgtmix`) | App 端查詢海拔; mapsforge 可由 `.hgt` 即時算 hillshade, 不自行預烘 |
 | 等高線 | **內嵌於 RudyMap `.map`** (TOPO 圖, Phase 0 驗證) | 由樣式渲染, 不自行產出 |
-| 本地儲存 | **檔案** (一條規劃路線/軌跡一個 JSON/GPX 檔) 為主; 必要時再導入 Room (SQLite) | 個人專案, 檔案分享導向; 路線數量少, 檔案最貼合且零依賴 (詳見 CLAUDE.md). 圖資/`.rd5`/DEM 走檔案系統 |
+| 本地儲存 | **檔案** (一條規劃路線/軌跡一個 JSON/GPX 檔); 使用者路徑存於**使用者選定的 SAF 公共資料夾** (`Jiudge/plans/`, `Jiudge/tracks/`); 可下載的圖資/`.rd5`/DEM 存於 `getExternalFilesDir`. 必要時再導入 Room (SQLite) | 個人專案, 檔案分享導向, 路線數量少, 零依賴 (詳見 CLAUDE.md). 使用者路徑放 SAF 公共區故能撐過解除安裝, 可用檔案管理員存取; 可重新下載的資料放 app 專屬外部儲存, 被清掉也能重抓 |
 | GPS 服務 | **Android Foreground Service** + Wake Lock | 唯一可靠的背景錄製方式 |
 | Backend | **無** | 不託管任何資料; 圖資由 App 直接抓 RudyMap 公開鏡像 (靜態 HTTPS) |
 
@@ -85,11 +85,12 @@
                  │
 ┌────────────────┴───────────────────────────────┐
 │          離線資料 (裝置儲存)                    │
-│  • taiwan.map               (RudyMap 向量底圖)  │
-│  • *_hs_style/              (RudyMap 樣式)      │
-│  • hgtmix/*.hgt             (DEM 海拔/陰影)     │
-│  • brouter/segments4/*.rd5  (BRouter 路由資料)  │
-│  • routes/*.json            (規劃路線, 一條一檔)│
+│  getExternalFilesDir/ (可下載, 解除安裝即清):   │
+│   • map/  底圖 .map + 樣式 + hgt/ DEM           │
+│   • brouter/  segments4 + profiles2 (路由資料)  │
+│  使用者選定的 SAF 公共資料夾 (撐過解除安裝):    │
+│   • Jiudge/plans/*.json   (規劃路線, 一條一檔)  │
+│   • Jiudge/tracks/        (GPS 軌跡, Phase 1)   │
 └─────────────────────────────────────────────────┘
                  ▲
                  │ "檢查更新" / 下載 (需連網)

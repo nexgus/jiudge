@@ -7,7 +7,7 @@ import org.json.JSONObject
 
 /**
  * Stores [PlannedRoute]s as individual JSON documents under the user-picked SAF folder
- * ([RouteFolder]), inside a `plans/` subdirectory - one document per route, so plans stay
+ * ([RouteFolder]), inside a `Jiudge/plans/` subdirectory - one document per route, so plans stay
  * shareable and survive uninstall (the folder is in public storage). [list] reads each document's
  * JSON to fill the picker; routes are few and the files tiny.
  *
@@ -57,11 +57,17 @@ class RouteStore(
 
     fun load(uri: Uri): PlannedRoute = PlannedRoute.fromJson(JSONObject(readText(uri)))
 
-    /** The `plans/` subdir of the picked folder, created on demand; null if no folder is set. */
+    /** The `Jiudge/plans/` subdir under the picked folder, created on demand; null if no folder. */
     private fun plansDir(): DocumentFile? {
+        val app = appDir() ?: return null
+        return app.findFile(PLANS_DIR) ?: app.createDirectory(PLANS_DIR)
+    }
+
+    /** App-named folder under the picked tree, so our data is namespaced rather than dumped at its root. */
+    private fun appDir(): DocumentFile? {
         val treeUri = RouteFolder.current(context) ?: return null
         val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return null
-        return tree.findFile(PLANS_DIR) ?: tree.createDirectory(PLANS_DIR)
+        return tree.findFile(APP_DIR) ?: tree.createDirectory(APP_DIR)
     }
 
     private fun readText(uri: Uri): String =
@@ -77,6 +83,7 @@ class RouteStore(
             .take(40)
 
     private companion object {
+        const val APP_DIR = "Jiudge"
         const val PLANS_DIR = "plans"
         const val MIME_JSON = "application/json"
     }

@@ -33,7 +33,7 @@ change it - and update this table and the rationale notes below so the record st
 | Routing engine | BRouter (`org.btools:brouter-core`, Java), called in-process - no platform channel needed |
 | Routing data | BRouter `.rd5` segments (5x5-deg tiles) + `.brf` profile, OSM-derived - separate from the rendering `.map`, which carries no routing topology |
 | DEM / hillshade | RudyMap `.hgt` DEM (`hgtmix`); mapsforge native hillshading + on-device elevation queries |
-| Local storage | Filesystem (one JSON/GPX file per planned route/track) for now; Room (SQLite) only if/when querying many records demands it. Filesystem for `.map`/`.rd5`/DEM |
+| Local storage | One JSON/GPX file per planned route/track. **User routes live in a user-picked SAF folder** (`Jiudge/plans/`, `Jiudge/tracks/`) via `DocumentFile`, so they survive uninstall; downloadable `.map`/`.rd5`/DEM live under `getExternalFilesDir` (`core/storage/AppPaths`). Room (SQLite) only if/when querying many records demands it |
 | GPS background | Android Foreground Service + Wake Lock + persistent notification |
 | Backend | None. Map data fetched in-app directly from RudyMap public mirrors (static HTTPS) |
 
