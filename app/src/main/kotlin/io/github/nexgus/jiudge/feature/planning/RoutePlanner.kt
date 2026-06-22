@@ -41,11 +41,12 @@ class RoutePlanner(
     suspend fun addWaypointAtCenter(): String? {
         val center = mapView.model.mapViewPosition.center
         if (_waypoints.isNotEmpty()) {
-            val path = try {
-                withContext(Dispatchers.Default) { engine.route(_waypoints.last(), center) }
-            } catch (e: RoutingException) {
-                return e.message ?: "routing failed"
-            }
+            val path =
+                try {
+                    withContext(Dispatchers.Default) { engine.route(_waypoints.last(), center) }
+                } catch (e: RoutingException) {
+                    return e.message ?: "routing failed"
+                }
             segments.add(path)
             segmentLayers.add(mapView.addRoutePolyline(path))
         }
@@ -67,8 +68,10 @@ class RoutePlanner(
         mapView.layerManager.redrawLayers()
     }
 
-    fun toPlannedRoute(name: String, createdAtEpochMs: Long): PlannedRoute =
-        PlannedRoute(name, createdAtEpochMs, _waypoints.toList(), segments.map { it.toList() })
+    fun toPlannedRoute(
+        name: String,
+        createdAtEpochMs: Long,
+    ): PlannedRoute = PlannedRoute(name, createdAtEpochMs, _waypoints.toList(), segments.map { it.toList() })
 
     /**
      * Replaces the current plan with a saved [route] and draws it, leaving it fully editable

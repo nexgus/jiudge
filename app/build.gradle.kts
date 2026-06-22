@@ -3,6 +3,9 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// ktlint, run via the CLI rather than the ktlint-gradle plugin (see libs.versions.toml note).
+val ktlint: Configuration by configurations.creating
+
 android {
     namespace = "io.github.nexgus.jiudge"
     compileSdk = 35
@@ -63,4 +66,32 @@ dependencies {
     implementation(libs.brouter.expressions)
     implementation(libs.brouter.util)
     implementation(libs.brouter.codec)
+
+    ktlint(libs.ktlint.cli)
+
+    testImplementation(libs.junit)
 }
+
+// Lint/format Kotlin sources with the ktlint CLI. `ktlintCheck` is wired into `check`.
+val ktlintArgs = listOf("src/**/*.kt", "**/*.kts", "!**/build/**")
+
+tasks.register<JavaExec>("ktlintCheck") {
+    group = "verification"
+    description = "Check Kotlin code style with ktlint."
+    classpath = ktlint
+    mainClass.set("com.pinterest.ktlint.Main")
+    args = ktlintArgs
+    // ktlint needs deep reflection into the Kotlin compiler internals on JDK 17+.
+    jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
+}
+
+tasks.register<JavaExec>("ktlintFormat") {
+    group = "formatting"
+    description = "Auto-format Kotlin code with ktlint."
+    classpath = ktlint
+    mainClass.set("com.pinterest.ktlint.Main")
+    args = listOf("-F") + ktlintArgs
+    jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
+}
+
+tasks.named("check") { dependsOn("ktlintCheck") }

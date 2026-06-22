@@ -19,11 +19,12 @@ private const val WAYPOINT_STROKE_WIDTH = 3f
 
 /** Adds a routed-path polyline layer and returns it (caller owns removal). */
 internal fun MapView.addRoutePolyline(points: List<LatLong>): Polyline {
-    val paint = AndroidGraphicFactory.INSTANCE.createPaint().apply {
-        setColor(ROUTE_COLOR)
-        setStrokeWidth(ROUTE_STROKE_WIDTH)
-        setStyle(Style.STROKE)
-    }
+    val paint =
+        AndroidGraphicFactory.INSTANCE.createPaint().apply {
+            setColor(ROUTE_COLOR)
+            setStrokeWidth(ROUTE_STROKE_WIDTH)
+            setStyle(Style.STROKE)
+        }
     val line = Polyline(paint, AndroidGraphicFactory.INSTANCE)
     line.latLongs.addAll(points)
     layerManager.layers.add(line)
@@ -32,15 +33,17 @@ internal fun MapView.addRoutePolyline(points: List<LatLong>): Polyline {
 
 /** Adds a filled waypoint dot layer and returns it (caller owns removal). */
 internal fun MapView.addWaypointMarker(point: LatLong): FixedPixelCircle {
-    val fill = AndroidGraphicFactory.INSTANCE.createPaint().apply {
-        setColor(WAYPOINT_FILL)
-        setStyle(Style.FILL)
-    }
-    val stroke = AndroidGraphicFactory.INSTANCE.createPaint().apply {
-        setColor(WAYPOINT_STROKE)
-        setStrokeWidth(WAYPOINT_STROKE_WIDTH)
-        setStyle(Style.STROKE)
-    }
+    val fill =
+        AndroidGraphicFactory.INSTANCE.createPaint().apply {
+            setColor(WAYPOINT_FILL)
+            setStyle(Style.FILL)
+        }
+    val stroke =
+        AndroidGraphicFactory.INSTANCE.createPaint().apply {
+            setColor(WAYPOINT_STROKE)
+            setStrokeWidth(WAYPOINT_STROKE_WIDTH)
+            setStyle(Style.STROKE)
+        }
     val circle = FixedPixelCircle(point, WAYPOINT_RADIUS, fill, stroke)
     layerManager.layers.add(circle)
     return circle

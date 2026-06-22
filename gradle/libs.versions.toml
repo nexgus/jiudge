@@ -7,6 +7,8 @@ composeBom = "2024.10.01"
 lifecycle = "2.8.7"
 mapsforge = "0.25.0"
 brouter = "v1.7.9"
+ktlint = "1.5.0"
+junit = "4.13.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -32,6 +34,15 @@ brouter-mapaccess = { group = "com.github.abrensch.brouter", name = "brouter-map
 brouter-expressions = { group = "com.github.abrensch.brouter", name = "brouter-expressions", version.ref = "brouter" }
 brouter-util = { group = "com.github.abrensch.brouter", name = "brouter-util", version.ref = "brouter" }
 brouter-codec = { group = "com.github.abrensch.brouter", name = "brouter-codec", version.ref = "brouter" }
+
+# ktlint CLI, driven via a JavaExec task (see app/build.gradle.kts). Used directly instead of the
+# ktlint-gradle plugin: that plugin discovers Kotlin source sets through the JetBrains Kotlin
+# Gradle plugin, which this project does not apply (AGP 9 has built-in Kotlin), so it only ever
+# linted .kts scripts. Calling the CLI over src/**/*.kt avoids that AGP-version coupling.
+ktlint-cli = { group = "com.pinterest.ktlint", name = "ktlint-cli", version.ref = "ktlint" }
+
+# JUnit 4 for JVM unit tests (core/ + data/ pure-Kotlin logic).
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

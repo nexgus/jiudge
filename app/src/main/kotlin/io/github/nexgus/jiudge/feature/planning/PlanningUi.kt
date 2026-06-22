@@ -50,7 +50,11 @@ fun CrosshairOverlay(modifier: Modifier = Modifier) {
         val dark = 2.dp.toPx()
         val halo = 4.dp.toPx()
         val dotR = 3.dp.toPx()
-        fun cross(color: Color, width: Float) {
+
+        fun cross(
+            color: Color,
+            width: Float,
+        ) {
             drawLine(color, Offset(cx - arm, cy), Offset(cx - gap, cy), width)
             drawLine(color, Offset(cx + gap, cy), Offset(cx + arm, cy), width)
             drawLine(color, Offset(cx, cy - arm), Offset(cx, cy - gap), width)
@@ -84,9 +88,10 @@ fun PlanningBottomBar(
         shadowElevation = 6.dp,
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -125,7 +130,11 @@ fun MapViewControls(
  * Editing is where "+"/"-"/儲存 live.
  */
 @Composable
-fun RouteViewControls(onEdit: () -> Unit, onLeave: () -> Unit, modifier: Modifier = Modifier) {
+fun RouteViewControls(
+    onEdit: () -> Unit,
+    onLeave: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(onClick = onEdit) { Text("編輯") }
         OutlinedButton(onClick = onLeave) { Text("離開") }
@@ -134,7 +143,11 @@ fun RouteViewControls(onEdit: () -> Unit, onLeave: () -> Unit, modifier: Modifie
 
 /** Planning entry: start a fresh plan, load a saved one, or cancel. */
 @Composable
-fun PlanEntryChooser(onNew: () -> Unit, onLoad: () -> Unit, onCancel: () -> Unit) {
+fun PlanEntryChooser(
+    onNew: () -> Unit,
+    onLoad: () -> Unit,
+    onCancel: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text("規劃路徑") },
@@ -151,7 +164,11 @@ fun PlanEntryChooser(onNew: () -> Unit, onLoad: () -> Unit, onCancel: () -> Unit
 
 /** Prompts for a route name on save (prefilled with [initialName]). Blank falls back to a default. */
 @Composable
-fun SaveRouteDialog(initialName: String = "", onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+fun SaveRouteDialog(
+    initialName: String = "",
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
     var name by remember { mutableStateOf(initialName) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -189,10 +206,11 @@ fun LoadRouteDialog(
                 LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
                     items(summaries) { s ->
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onPick(s) }
-                                .padding(vertical = 10.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onPick(s) }
+                                    .padding(vertical = 10.dp),
                         ) {
                             Text(s.name, style = MaterialTheme.typography.bodyLarge)
                             Text(

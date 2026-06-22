@@ -9,7 +9,9 @@ import org.mapsforge.map.layer.Layer
  * the same styling as the live planner. v1 load is view-only; editing a loaded route is a v2
  * candidate (see CLAUDE.md scope discipline). Call [clear] to remove it.
  */
-class RouteViewer(private val mapView: MapView) {
+class RouteViewer(
+    private val mapView: MapView,
+) {
     private val layers = mutableListOf<Layer>()
 
     fun show(route: PlannedRoute) {

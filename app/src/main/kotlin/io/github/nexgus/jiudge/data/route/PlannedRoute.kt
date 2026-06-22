@@ -34,32 +34,37 @@ data class PlannedRoute(
             return out
         }
 
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("name", name)
-        put("createdAtEpochMs", createdAtEpochMs)
-        put("waypoints", waypoints.toPointArray())
-        put("segments", JSONArray().also { arr -> segments.forEach { arr.put(it.toPointArray()) } })
-    }
+    fun toJson(): JSONObject =
+        JSONObject().apply {
+            put("name", name)
+            put("createdAtEpochMs", createdAtEpochMs)
+            put("waypoints", waypoints.toPointArray())
+            put("segments", JSONArray().also { arr -> segments.forEach { arr.put(it.toPointArray()) } })
+        }
 
     companion object {
         const val FILE_SUFFIX = ".json"
 
-        fun fromJson(json: JSONObject): PlannedRoute = PlannedRoute(
-            name = json.getString("name"),
-            createdAtEpochMs = json.getLong("createdAtEpochMs"),
-            waypoints = json.getJSONArray("waypoints").toLatLongs(),
-            segments = json.optJSONArray("segments")?.let { segs ->
-                (0 until segs.length()).map { segs.getJSONArray(it).toLatLongs() }
-            } ?: emptyList(),
-        )
+        fun fromJson(json: JSONObject): PlannedRoute =
+            PlannedRoute(
+                name = json.getString("name"),
+                createdAtEpochMs = json.getLong("createdAtEpochMs"),
+                waypoints = json.getJSONArray("waypoints").toLatLongs(),
+                segments =
+                    json.optJSONArray("segments")?.let { segs ->
+                        (0 until segs.length()).map { segs.getJSONArray(it).toLatLongs() }
+                    } ?: emptyList(),
+            )
 
-        private fun List<LatLong>.toPointArray(): JSONArray = JSONArray().also { arr ->
-            forEach { p -> arr.put(JSONArray().put(p.latitude).put(p.longitude)) }
-        }
+        private fun List<LatLong>.toPointArray(): JSONArray =
+            JSONArray().also { arr ->
+                forEach { p -> arr.put(JSONArray().put(p.latitude).put(p.longitude)) }
+            }
 
-        private fun JSONArray.toLatLongs(): List<LatLong> = (0 until length()).map { i ->
-            val pair = getJSONArray(i)
-            LatLong(pair.getDouble(0), pair.getDouble(1))
-        }
+        private fun JSONArray.toLatLongs(): List<LatLong> =
+            (0 until length()).map { i ->
+                val pair = getJSONArray(i)
+                LatLong(pair.getDouble(0), pair.getDouble(1))
+            }
     }
 }
