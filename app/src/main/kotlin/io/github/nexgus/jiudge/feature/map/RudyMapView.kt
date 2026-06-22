@@ -38,7 +38,10 @@ object RudyMapView {
     fun create(context: Context, dataDir: File): MapView {
         val mapView = MapView(context).apply {
             isClickable = true
-            mapScaleBar.isVisible = true
+            // Scale bar hidden: it snaps to coarse 1/2/5 buckets so it is not a precise
+            // indicator (e.g. zoom 15 and 16 both read 200 m). The zoom-level readout in the
+            // UI overlay is shown instead.
+            mapScaleBar.isVisible = false
             setBuiltInZoomControls(false)
             setZoomLevelMin(0)
             setZoomLevelMax(21) // RudyMap's `.map` tops out around zoom 21.

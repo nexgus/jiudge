@@ -53,6 +53,14 @@ $ADB -s $DEV install -r app/build/outputs/apk/debug/app-debug.apk
 $ADB -s $DEV shell am start -n io.github.nexgus.jiudge/.MainActivity
 ```
 
+## 6. 關閉 App
+
+```bash
+$ADB -s $DEV shell am force-stop io.github.nexgus.jiudge
+```
+
+- 完全移除 (連同快取與資料) 改用: `$ADB -s $DEV uninstall io.github.nexgus.jiudge`
+
 ## VSCode 一鍵 (build + install + launch)
 
 `.vscode/tasks.json` 將步驟 3-5 串成一個工作, 以 Cmd+Shift+B 執行:
