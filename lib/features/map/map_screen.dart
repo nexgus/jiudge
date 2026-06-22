@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mapsforge_flutter/mapsforge.dart';
 import 'package:mapsforge_flutter/marker.dart';
+import 'package:mapsforge_flutter/overlay.dart';
 import 'package:mapsforge_flutter_core/model.dart';
 import 'package:mapsforge_flutter_core/utils.dart';
 
@@ -31,9 +32,9 @@ class _MapScreenState extends State<MapScreen> {
     defaultValue: '/Users/scgus/rudymap-data',
   );
 
-  /// Initial camera: Yushan main-peak area (good terrain + dense labels).
-  static const double _initialLat = 23.47;
-  static const double _initialLng = 120.957;
+  /// Initial camera: Guanyinshan main peak (Yinghanling), Bali - 616 m.
+  static const double _initialLat = 25.1363861;
+  static const double _initialLng = 121.4275306;
   static const int _initialZoom = 15;
 
   /// Marker datastore for the fake GPS dot.
@@ -124,7 +125,17 @@ class _MapScreenState extends State<MapScreen> {
           }
           return Stack(
             children: [
-              MapsforgeView(mapModel: model),
+              // Default overlays minus IndoorlevelOverlay: the indoor floor
+              // bar (UG/EG/OG) is meaningless for an outdoor hiking map and
+              // RudyMap's data carries no indoor levels.
+              MapsforgeView(
+                mapModel: model,
+                children: [
+                  DistanceOverlay(mapModel: model),
+                  ZoomOverlay(mapModel: model),
+                  RotationResetOverlay(mapModel: model),
+                ],
+              ),
               MarkerDatastoreOverlay(
                 mapModel: model,
                 datastore: _markers,

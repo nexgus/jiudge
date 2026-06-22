@@ -44,6 +44,7 @@ app.*.map.json
 
 # RudyMap data (downloaded at runtime / produced locally; never committed)
 /mapdata/
+/temp/
 *.map
 *.map.zip
 *.hgt
