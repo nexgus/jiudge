@@ -56,45 +56,41 @@
 
 | 層級 | 選擇 | 為何 |
 |------|------|------|
-| App 框架 | **Flutter 3.x** (僅 Android) | UI 自訂彈性高, 單一 Dart 程式碼庫; 不再以 iOS 重用為理由 |
-| 地圖渲染 | **`mapsforge_flutter`** (純 Dart, mapsforge 標準渲染器) | 直接吃 RudyMap `.map`; 在 Flutter 行程內, 地圖不必走 platform channel; OruxMaps 證實標準渲染器可達連續捏放與旋轉 |
+| App 框架 | **Native Android (Kotlin)** + Jetpack Compose UI (僅 Android) | 兩大引擎 (mapsforge 渲染, BRouter 路由) 皆為 JVM 函式庫, 原生可於同一行程內全保真執行; 不再以 iOS 重用為理由 (改採於 2026-06-22, 詳見 CLAUDE.md) |
+| 地圖渲染 | **`org.mapsforge:mapsforge-map-android`** (標準 Canvas 渲染器, in-process JVM) | 直接吃 RudyMap `.map` 與隨附樣式; 與 RudyMap 參考 App 同源, 可渲染樣式要求的方向性 hillshade (純 Dart 的 `mapsforge_flutter` 無法, 即原生化主因) |
 | 圖磚格式 | **mapsforge `.map`** (取自 RudyMap) | 直接使用 RudyMap 既有圖資, 不自行生產; 台灣為單一整檔 |
 | 地圖樣式 | **RudyMap 隨附 render theme** (原樣使用) | 不自製美術, 連深色版都現成 |
-| 路由引擎 | **GraphHopper** (Java, embed 進 Android) | 完全離線, 支援 hiking profile, 行動端整合相對成熟 |
+| 路由引擎 | **BRouter** (`brouter-core`, Java, in-process) | 完全離線; profile 專為步行/登山路徑調校; rd5 路由資料每區極小 (全台約 1-2 個 5x5 度方格); 較 GraphHopper 更貼登山域 (改採於 2026-06-22, 詳見 CLAUDE.md) |
 | 高程處理 | **RudyMap `.hgt` DEM** (`hgtmix`) | App 端查詢海拔; mapsforge 可由 `.hgt` 即時算 hillshade, 不自行預烘 |
 | 等高線 | **內嵌於 RudyMap `.map`** (TOPO 圖, Phase 0 驗證) | 由樣式渲染, 不自行產出 |
-| 本地儲存 | **SQLite** (軌跡/路線/設定) + 檔案 (`.map`/路由圖/DEM) | 標準作法 |
+| 本地儲存 | **檔案** (一條規劃路線/軌跡一個 JSON/GPX 檔) 為主; 必要時再導入 Room (SQLite) | 個人專案, 檔案分享導向; 路線數量少, 檔案最貼合且零依賴 (詳見 CLAUDE.md). 圖資/`.rd5`/DEM 走檔案系統 |
 | GPS 服務 | **Android Foreground Service** + Wake Lock | 唯一可靠的背景錄製方式 |
 | Backend | **無** | 不託管任何資料; 圖資由 App 直接抓 RudyMap 公開鏡像 (靜態 HTTPS) |
 
 ### 2.2 系統元件
 
 ```
-┌─────────────────────────────────────────┐
-│         App UI + 地圖渲染 (Flutter / Dart)│
-│  ┌──────┬──────┬──────┬──────┬──────┐  │
-│  │ 地圖 │ 規劃 │ 錄製 │ 軌跡 │ 設定 │  │
-│  │檢視  │模式  │模式  │管理  │更新  │  │
-│  └──────┴──────┴──────┴──────┴──────┘  │
-│   地圖以 mapsforge_flutter 在 Dart 渲染  │
-└────────────────┬────────────────────────┘
-                 │ Platform Channel
-┌────────────────┴────────────────────────┐
-│       Native 服務層 (Kotlin)             │
-│  ┌──────────┬──────────┬──────────┐    │
-│  │GraphHopper│GPS Service│ 下載/檔  │    │
-│  │ 路由引擎  │(Foreground)│ 案管理   │    │
-│  └──────────┴──────────┴──────────┘    │
-└────────────────┬────────────────────────┘
+┌──────────────────────────────────────────────┐
+│   Native Android App (Kotlin / JVM, 單一行程)  │
+│  ┌──────┬──────┬──────┬──────┬──────┐         │
+│  │ 地圖 │ 規劃 │ 錄製 │ 軌跡 │ 設定 │  Compose UI│
+│  │檢視  │模式  │模式  │管理  │更新  │         │
+│  └──────┴──────┴──────┴──────┴──────┘         │
+│  ┌───────────┬──────────┬────────────┐        │
+│  │ mapsforge │ BRouter  │ GPS Service │ 同行程  │
+│  │ 地圖渲染  │ 路由引擎 │(Foreground) │ JVM 引擎│
+│  └───────────┴──────────┴────────────┘        │
+│       下載 / 檔案管理 (RudyMap 鏡像)           │
+└────────────────┬───────────────────────────────┘
                  │
-┌────────────────┴────────────────────────┐
-│          離線資料 (裝置儲存)             │
-│  • taiwan.map          (RudyMap 向量底圖)│
-│  • *_hs_style/         (RudyMap 樣式)    │
-│  • hgtmix/*.hgt        (DEM 海拔/陰影)   │
-│  • taiwan.gh-graph/    (路由圖目錄)      │
-│  • app.db              (軌跡/路線 SQLite)│
-└─────────────────────────────────────────┘
+┌────────────────┴───────────────────────────────┐
+│          離線資料 (裝置儲存)                    │
+│  • taiwan.map               (RudyMap 向量底圖)  │
+│  • *_hs_style/              (RudyMap 樣式)      │
+│  • hgtmix/*.hgt             (DEM 海拔/陰影)     │
+│  • brouter/segments4/*.rd5  (BRouter 路由資料)  │
+│  • routes/*.json            (規劃路線, 一條一檔)│
+└─────────────────────────────────────────────────┘
                  ▲
                  │ "檢查更新" / 下載 (需連網)
 ┌────────────────┴────────────────────────┐
@@ -122,7 +118,7 @@ RudyMap 公開鏡像 (擇一, 可容錯輪替)
 - 皆為**靜態 HTTP GET, 無表單/JS**; 檔名固定, 內容每週四更新 (beta 週一三六).
 - **無 manifest, 無 SHA256**. 版本日期 (`vYYYY.MM.DD`) 只在網頁, 不在檔名.
 
-唯一仍需自行產出的是**路由圖**: 取 OSM Taiwan extract (Geofabrik) 經 GraphHopper import (hiking profile) 產生路由圖目錄. 可離線預先產好放入裝置, 或日後評估能否在裝置上建. (與底圖無關, 不依賴 RudyMap.)
+路由所需的**路由資料**與底圖各自獨立 (`.map` 不含路由拓樸, 不可由其轉出): 採 BRouter 的 `.rd5` segment (5x5 度方格, 全台約 `E120_N20` + `E120_N25` 兩格) 直接自 brouter.de 下載預先產好的檔案放入裝置, 搭配一份 `.brf` profile. 無須自行 import; 若日後要與 RudyMap 完全同源, 可改由 OSM Taiwan extract (Geofabrik) 自建 segment. (與底圖無關, 不依賴 RudyMap.)
 
 App 端 "檢查更新" 流程:
 1. 對各檔案 URL 發 **HTTP HEAD**, 取 `Last-Modified` / `ETag` / `Content-Length`.
@@ -141,7 +137,7 @@ App 端 "檢查更新" 流程:
 |------|------|------|
 | 底圖 + 樣式 | RudyMap (MOI.OSM Taiwan TOPO) `.map` + render theme | 第三方圖資; 僅自用下載, 不轉存散布 |
 | 高程 (DEM) | RudyMap `hgtmix` / `hgt90` (`.hgt`) | 同上 |
-| 路由圖 | OSM Taiwan extract (Geofabrik) -> GraphHopper import | ODbL; 自行產出 |
+| 路由資料 | BRouter `.rd5` segment (brouter.de, 預先產好) + `.brf` profile; 自建備援用 OSM Taiwan extract (Geofabrik) | ODbL; 直接下載, 必要時自行產出 |
 | GPX/KML 相容 | 綠野遊蹤, 山林日誌, Gaia GPS, Garmin Connect 格式測試樣本 | 自行收集驗證 |
 | 通訊點位 (v2) | 林務局山區手機可通訊點 開放資料 (TGOS) | 政府開放資料 |
 | 衛星疊圖 (v2) | NLSC 通用版/經建版電子地圖; ESRI/Bing Aerial | 各自授權 |
@@ -214,10 +210,10 @@ App 端 "檢查更新" 流程:
 
 驗證主要技術選擇可行, 並確認以下取決於 RudyMap 檔案內容與套件能力的未知項:
 
-- Flutter + `mapsforge_flutter` 跑得起來, 載入 RudyMap `.map` 顯示
+- Native Android + `mapsforge-map-android` 跑得起來, 載入 RudyMap `.map` 顯示
 - 評估 298MB `.map` 的載入/捏放/旋轉效能與體感, 中文字型顯示正常
 - 確認 `.map` 是否含 `name:en` (決定中英切換), 是否內嵌等高線
-- 確認 `hgtmix` 解壓後可餵 `mapsforge_flutter` 做 hillshade / 海拔查詢
+- 確認 `hgtmix` 解壓後可餵 `mapsforge-map-android` 做 hillshade / 海拔查詢
 - GPS 定位點顯示
 - 評估效能, 確認方向沒走錯
 
@@ -234,7 +230,7 @@ App 端 "檢查更新" 流程:
 
 ### Phase 2: 路線規劃 v0.2 (4-6 週)
 
-- GraphHopper 整合 (Flutter platform channel 包裝)
+- BRouter (`brouter-core`) in-process 整合 (原生 JVM, 無 platform channel)
 - 點按起終點 + waypoint 規劃流程
 - 海拔剖面圖 (互動)
 - 量測長度/爬升
@@ -260,10 +256,10 @@ App 端 "檢查更新" 流程:
 |------|------|------|
 | OSM 台灣山徑資料不完整 | 自動路線規劃結果可能不準 (尤其中級山) | 1. 保留手動拖曳節點微調的 fallback; 2. 鼓勵使用者貢獻回 OSM |
 | Android Doze/Battery Saver 限制背景定位 | 軌跡可能中斷 | Foreground Service + 顯眼通知 + 引導使用者關閉電池最佳化 |
-| 圖資體積 (底圖 ~298MB + DEM ~46MB + 路由圖 ~80MB) | 首次下載大, 佔空間 | App 內下載非預先打包; 提供 Lite (168MB) 與 hgt90 (8MB) 選項 |
-| `mapsforge_flutter` 為單人維護移植專案 | 效能/特性/長期維護風險 | Phase 0 實測 298MB `.map` 效能與捏放/旋轉/中文字型; 備案: 改包原生 mapsforge-map-android (PlatformView) 或 VTM |
+| 圖資體積 (底圖 ~298MB + DEM ~46MB + BRouter rd5 約數十 MB) | 首次下載大, 佔空間 | App 內下載非預先打包; 提供 Lite (168MB) 與 hgt90 (8MB) 選項; rd5 僅需台灣涵蓋的 1-2 個方格 |
+| `mapsforge-map-android` 標準 Canvas 渲染器在 298MB `.map` 的效能/樣式保真 | 大圖載入, 捏放/旋轉順暢度, 中文字型與 hillshade 呈現 | Phase 0 已以原生實測載入與縮放; 持續觀察大區域平移效能; 備案: 評估 VTM (OpenGL) 渲染器 |
 | 依賴 RudyMap 圖資內容與發布 | `.map` 缺 `name:en`/等高線, 或對方改檔名/結構/停更, 都會影響功能 | Phase 0 先驗證內容; 多鏡像容錯; 保留手動匯入備援; 中英切換視 `name:en` 有無而定 |
-| GraphHopper Flutter 整合非主流路徑 | Phase 2 開發時間風險 | Phase 0 就驗證可行; 備案: Valhalla mobile 或自寫簡單路徑搜尋 |
+| BRouter `brouter-core` in-process 嵌入非官方主要用法 (官方主推獨立 App/server) | Phase 2 開發時間風險 | 先做嵌入 spike 驗證可行 (參考 `BRouterWorker`); 備案: 改走 BRouter 獨立 App 的 intent/server 介面, 或 GraphHopper |
 | 山谷 GPS 多路徑反射軌跡飄移 | 錄製軌跡品質差 | Kalman filter + accuracy > 20m 丟棄 + 速度合理性檢查 |
 | GPX 各 App 格式差異 | 互通性問題 | Phase 2 結束前用 5+ 主流 App 實測來回匯入匯出 |
 
@@ -294,3 +290,4 @@ App 端 "檢查更新" 流程:
 
 - v0.1 - 2026-06-21 - 初版, 基於四輪需求訪談
 - v0.2 - 2026-06-21 - 取消 iOS (僅 Android); 圖資改直接取用 RudyMap `.map` + `.hgt` DEM + 隨附樣式, 渲染改用 `mapsforge_flutter`; 移除自有圖資 pipeline (PMTiles/Planetiler/GDAL) 與自有更新伺服器, 改為 App 內直接下載 RudyMap 鏡像 (HTTP HEAD 偵測新版); 取消自製地圖美術與夜間模式
+- v0.3 - 2026-06-22 - 放棄 Flutter, 改為 native Android (Kotlin) + Jetpack Compose, 地圖渲染改用 `org.mapsforge:mapsforge-map-android` (主因: 純 Dart 的 `mapsforge_flutter` 無法渲染樣式要求的方向性 hillshade, 且兩大引擎皆 JVM, 原生可同行程全保真); 路由引擎由 GraphHopper 改為 BRouter (`brouter-core` in-process, `.rd5` 路由資料每區極小); 本地儲存由 SQLite 改為檔案優先 (一條規劃路線一個 JSON/GPX 檔, 必要時再導入 Room)

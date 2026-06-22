@@ -54,4 +54,13 @@ dependencies {
     implementation(libs.mapsforge.map.android)
     implementation(libs.mapsforge.map.reader)
     implementation(libs.mapsforge.themes)
+
+    // BRouter: offline route planning, called in-process via brouter-core (mirrors how
+    // brouter-routing-app's BRouterWorker drives the engine). Routing data is BRouter .rd5
+    // segments + a .brf profile on disk - separate from the rendering .map.
+    implementation(libs.brouter.core)
+    implementation(libs.brouter.mapaccess)
+    implementation(libs.brouter.expressions)
+    implementation(libs.brouter.util)
+    implementation(libs.brouter.codec)
 }

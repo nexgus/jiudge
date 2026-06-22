@@ -34,6 +34,33 @@ $ADB -s $DEV push \
 
 - `hgt/` 為 `.hgt` DEM (RudyMap `hgtmix` 解壓), 供陰影使用; 缺少時地圖照常顯示, 僅無立體陰影.
 
+### 2.1 推送 BRouter 路由資料 (路徑規劃功能需要)
+
+路徑規劃以 BRouter 在程序內計算最短山徑. 路由資料 (`.rd5` segment + `.brf` profile) 放在
+`/data/local/tmp/rudymap/brouter/` 下, 與底圖同套 adb 流程. 缺少時地圖照常顯示, 僅 "規劃路徑"
+無法計算路徑 (`BRouterEngine.isReady()` 為 false).
+
+```bash
+# 本機備好 rd5 (台灣本島兩格) 與一份步行/登山 profile
+mkdir -p ~/rudymap-data/brouter/segments4 ~/rudymap-data/brouter/profiles2
+curl -L -o ~/rudymap-data/brouter/segments4/E120_N20.rd5 https://brouter.de/brouter/segments4/E120_N20.rd5
+curl -L -o ~/rudymap-data/brouter/segments4/E120_N25.rd5 https://brouter.de/brouter/segments4/E120_N25.rd5
+# profile 檔名 (去掉副檔名) 須等於 BRouterEngine.DEFAULT_PROFILE ("hiking-mountain"):
+curl -L -o ~/rudymap-data/brouter/profiles2/hiking-mountain.brf \
+  https://raw.githubusercontent.com/abrensch/brouter/master/misc/profiles2/trekking.brf
+# lookups.dat 為 BRouter 的 tag 查找表, 必備; 版本須與 brouter-core (1.7.9) 對齊:
+curl -L -o ~/rudymap-data/brouter/profiles2/lookups.dat \
+  https://raw.githubusercontent.com/abrensch/brouter/v1.7.9/misc/profiles2/lookups.dat
+
+# 推整個 brouter 目錄 (含 segments4/ 與 profiles2/)
+$ADB -s $DEV push ~/rudymap-data/brouter /data/local/tmp/rudymap/
+$ADB -s $DEV shell ls -lR /data/local/tmp/rudymap/brouter   # 確認落點
+```
+
+- `trekking.brf` 為官方泛用 profile, 先用來驗證管線; 登山取向建議改用 poutnik 的 hiking profile
+  (https://github.com/poutnikl/Brouter-profiles), 沿用相同檔名即可.
+- 離島: `E120_N20` + `E120_N25` 涵蓋本島; 澎湖/金門另需 `E115_N20.rd5`, 同放 `segments4/`.
+
 ## 3. 建置 debug APK
 
 ```bash

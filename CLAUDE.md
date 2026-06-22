@@ -17,9 +17,12 @@ This is a personal project. There is **no backend**, no user accounts, no teleme
 
 Map data is **not produced by this project**. The app consumes RudyMap (MOI.OSM Taiwan TOPO) data directly: the mapsforge `.map` basemap, its bundled render theme, and `.hgt` DEM. These are downloaded in-app from RudyMap's public mirrors for personal use only - never re-hosted or redistributed.
 
-## Architecture - Locked
+## Architecture
 
-Do not reconsider these choices without explicit discussion.
+These are deliberate, considered choices - treat them as the default and don't churn them
+casually. They are **not** immutable: finding a real problem or a clearly better approach is a
+reason to change, not something to suppress. When you do, raise it, discuss the trade-off, then
+change it - and update this table and the rationale notes below so the record stays honest.
 
 | Layer | Choice |
 |---|---|
@@ -27,28 +30,42 @@ Do not reconsider these choices without explicit discussion.
 | Map rendering | `org.mapsforge:mapsforge-map-android` (standard Canvas renderer; in-process JVM) |
 | Offline map format | mapsforge `.map` from RudyMap (consumed as-is, not produced here) |
 | Map style | RudyMap's bundled render theme, used as-is (no custom cartography) |
-| Routing engine | GraphHopper (Java), called in-process - no platform channel needed |
+| Routing engine | BRouter (`org.btools:brouter-core`, Java), called in-process - no platform channel needed |
+| Routing data | BRouter `.rd5` segments (5x5-deg tiles) + `.brf` profile, OSM-derived - separate from the rendering `.map`, which carries no routing topology |
 | DEM / hillshade | RudyMap `.hgt` DEM (`hgtmix`); mapsforge native hillshading + on-device elevation queries |
-| Local storage | SQLite (Room) for tracks/routes/settings; filesystem for `.map`/graph/DEM |
+| Local storage | Filesystem (one JSON/GPX file per planned route/track) for now; Room (SQLite) only if/when querying many records demands it. Filesystem for `.map`/`.rd5`/DEM |
 | GPS background | Android Foreground Service + Wake Lock + persistent notification |
 | Backend | None. Map data fetched in-app directly from RudyMap public mirrors (static HTTPS) |
 
-If a proposed library or approach contradicts this table, stop and ask first.
+If a proposed library or approach contradicts this table, raise it before proceeding - not
+because the table is sacred, but so the change is a decision on the record rather than a silent
+drift.
 
 **Why native, not Flutter (decided 2026-06-22):** the original Flutter plan relied on
 `mapsforge_flutter` (pure-Dart port). It cannot render the directional hillshade RudyMap's
 theme requires (the theme `<hillshading>` painter is stubbed out in 4.0.0; any DEM relief is
 DIY, low-res, and expensive), and its label de-clutter ignores the theme's `priority` weights.
-Since hillshade is a hard requirement and both core engines (mapsforge rendering, GraphHopper
+Since hillshade is a hard requirement and both core engines (mapsforge rendering, BRouter
 routing) are JVM libraries, native Android runs both in-process at full fidelity - matching the
 RudyMap reference app - with no platform-channel marshalling.
+
+**Why BRouter, not GraphHopper (decided 2026-06-22):** the `.map` basemap carries no routing
+topology (mapsforge is rendering-only, by the format authors' own design), so route planning
+needs a separate OSM-derived dataset regardless of engine - deriving a graph from the `.map`
+is lossy and topologically unreliable (tile-clipped geometry, quantized coords, lost shared-node
+connectivity, can't tell a junction from an overpass). The reference stack (OruxMaps/RudyMap)
+likewise routes off a separate engine, not the render tiles. BRouter fits this app better than
+GraphHopper: its `.rd5` segment data is tiny per region (all of Taiwan is ~1-2 of its 5x5-degree
+tiles vs a full-`pbf` graph build), its core (`brouter-core`) runs in-process, and its `.brf`
+profile system is purpose-built for foot/hike trail weighting. Same offline, no-backend,
+JVM-in-process properties as the original GraphHopper plan.
 
 ## Hard Constraints
 
 - **Fully offline.** Every feature except "Check for updates" and "Open in Google Maps" must work with no network. If an implementation needs connectivity at use-time, flag it before writing code.
 - **Background GPS must survive screen-off and Doze.** Always Foreground Service. Never `startService`-only for location.
 - **Android only.** No iOS. The whole app is native Kotlin/JVM; there are no platform channels and no cross-platform abstraction layer. Do not add abstraction whose only justification is "so iOS can plug in later".
-- **Consume RudyMap data as-is.** Do not build a custom tile/contour/hillshade pipeline (no Planetiler, no GDAL pre-bake, no PMTiles). Do not author custom map cartography; use RudyMap's bundled theme. If a feature needs map content RudyMap's `.map` does not contain, flag it before writing code.
+- **Consume RudyMap data as-is.** Do not build a custom tile/contour/hillshade pipeline (no Planetiler, no GDAL pre-bake, no PMTiles). Do not author custom map cartography; use RudyMap's bundled theme. If a feature needs map content RudyMap's `.map` does not contain, flag it before writing code. (Routing is the known exception: the `.map` has no routing topology, so route planning uses BRouter `.rd5` segments downloaded prebuilt from brouter.de - OSM-derived, not a custom cartography pipeline.)
 - **No backend.** Do not propose features requiring server state, accounts, or sync. The only network use is downloading RudyMap data in-app from their public mirrors; the app hosts and redistributes nothing.
 
 ## Performance Budgets
@@ -79,7 +96,7 @@ The spec breaks work into four phases:
 
 - **Phase 0**: technical prototype (native Android + `mapsforge-map-android` renders a RudyMap `.map` with hillshade, GPS dot; validates the open items in spec §6 Phase 0)
 - **Phase 1**: core usable (offline map + background track recording + basic GPX I/O)
-- **Phase 2**: route planning (GraphHopper integration + waypoints + elevation profile)
+- **Phase 2**: route planning (BRouter integration + waypoints + elevation profile)
 - **Phase 3**: update mechanism + polish
 
 Do not jump phases. If Phase 2 work would unblock something in Phase 1, raise it and let me decide; do not just do it.
@@ -135,5 +152,6 @@ See `docs/spec.md` §9 for context. Don't assume answers:
   - Theme: `MOI_OSM_Taiwan_TOPO_Rudy_hs_style.zip` (light + dark variants)
   - Static HTTP GET, no manifest/SHA256; version date (`vYYYY.MM.DD`) is on the page, not in filenames - detect new releases via HTTP `Last-Modified`/`ETag`. Released weekly (Thursdays).
 - mapsforge format, themes & Android library (`mapsforge-map-android`, latest 0.25.0 on Maven Central): https://github.com/mapsforge/mapsforge
-- OSM Taiwan extract (for GraphHopper routing graph only): https://download.geofabrik.de/asia/taiwan.html
-- GraphHopper: https://www.graphhopper.com/
+- BRouter (offline routing engine, embedded in-process via `org.btools:brouter-core`): https://brouter.de/ , source https://github.com/abrensch/brouter
+  - Routing data: `.rd5` segment files on 5x5-degree tiles (Taiwan = `E120_N20`, `E120_N25`), from https://brouter.de/brouter/segments4/ ; OSM-derived, separate from the rendering `.map`. Profiles (`.brf`) tune foot/hike weighting; in-process usage follows `brouter-routing-app`'s `BRouterWorker`.
+- OSM Taiwan extract (only needed if self-building BRouter segments instead of using prebuilt `.rd5`): https://download.geofabrik.de/asia/taiwan.html

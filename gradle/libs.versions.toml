@@ -6,6 +6,7 @@ activityCompose = "1.9.3"
 composeBom = "2024.10.01"
 lifecycle = "2.8.7"
 mapsforge = "0.25.0"
+brouter = "v1.7.9"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -21,6 +22,16 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 mapsforge-map-android = { group = "org.mapsforge", name = "mapsforge-map-android", version.ref = "mapsforge" }
 mapsforge-map-reader = { group = "org.mapsforge", name = "mapsforge-map-reader", version.ref = "mapsforge" }
 mapsforge-themes = { group = "org.mapsforge", name = "mapsforge-themes", version.ref = "mapsforge" }
+
+# BRouter offline routing engine, called in-process (no standalone app/server needed).
+# Sourced via JitPack (com.github.abrensch.brouter) - not on Maven Central; see settings.gradle.kts.
+# JitPack's per-module POMs do not declare the inter-module deps, so list every module the
+# in-process router needs explicitly (core + its mapaccess/expressions/util/codec siblings).
+brouter-core = { group = "com.github.abrensch.brouter", name = "brouter-core", version.ref = "brouter" }
+brouter-mapaccess = { group = "com.github.abrensch.brouter", name = "brouter-mapaccess", version.ref = "brouter" }
+brouter-expressions = { group = "com.github.abrensch.brouter", name = "brouter-expressions", version.ref = "brouter" }
+brouter-util = { group = "com.github.abrensch.brouter", name = "brouter-util", version.ref = "brouter" }
+brouter-codec = { group = "com.github.abrensch.brouter", name = "brouter-codec", version.ref = "brouter" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
