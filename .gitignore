@@ -1,16 +1,12 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.buildlog/
-.history
-.svn/
-migrate_working_dir/
+# Gradle / Android build
+.gradle/
+build/
+captures/
+.cxx/
+local.properties
+key.properties
 
-# IntelliJ related
+# IntelliJ / Android Studio
 *.iml
 *.ipr
 *.iws
@@ -19,28 +15,14 @@ migrate_working_dir/
 # VS Code
 .vscode/
 
-# Flutter/Dart/Pub related
-**/doc/api/
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-
-# Symbolication / obfuscation
-app.*.symbols
-app.*.map.json
-
-# Android build outputs
-/android/app/debug
-/android/app/profile
-/android/app/release
-/android/.gradle
-/android/local.properties
-/android/key.properties
+# Keystores / secrets
 *.keystore
 *.jks
+
+# Miscellaneous
+*.log
+.DS_Store
+.history
 
 # RudyMap data (downloaded at runtime / produced locally; never committed)
 /mapdata/

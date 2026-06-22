@@ -23,23 +23,31 @@ Do not reconsider these choices without explicit discussion.
 
 | Layer | Choice |
 |---|---|
-| App framework | Flutter 3.x (Dart), Android-only |
-| Map rendering | `mapsforge_flutter` (pure-Dart mapsforge standard renderer; in-process, no platform channel) |
+| App framework | Native Android (Kotlin), Jetpack Compose UI, Android-only |
+| Map rendering | `org.mapsforge:mapsforge-map-android` (standard Canvas renderer; in-process JVM) |
 | Offline map format | mapsforge `.map` from RudyMap (consumed as-is, not produced here) |
 | Map style | RudyMap's bundled render theme, used as-is (no custom cartography) |
-| Routing engine | GraphHopper (Java), embedded into Android via platform channel |
-| DEM / hillshade | RudyMap `.hgt` DEM (`hgtmix`), queried on-device for elevation + hillshade |
-| Local storage | SQLite for tracks/routes/settings; filesystem for `.map`/graph/DEM |
+| Routing engine | GraphHopper (Java), called in-process - no platform channel needed |
+| DEM / hillshade | RudyMap `.hgt` DEM (`hgtmix`); mapsforge native hillshading + on-device elevation queries |
+| Local storage | SQLite (Room) for tracks/routes/settings; filesystem for `.map`/graph/DEM |
 | GPS background | Android Foreground Service + Wake Lock + persistent notification |
 | Backend | None. Map data fetched in-app directly from RudyMap public mirrors (static HTTPS) |
 
 If a proposed library or approach contradicts this table, stop and ask first.
 
+**Why native, not Flutter (decided 2026-06-22):** the original Flutter plan relied on
+`mapsforge_flutter` (pure-Dart port). It cannot render the directional hillshade RudyMap's
+theme requires (the theme `<hillshading>` painter is stubbed out in 4.0.0; any DEM relief is
+DIY, low-res, and expensive), and its label de-clutter ignores the theme's `priority` weights.
+Since hillshade is a hard requirement and both core engines (mapsforge rendering, GraphHopper
+routing) are JVM libraries, native Android runs both in-process at full fidelity - matching the
+RudyMap reference app - with no platform-channel marshalling.
+
 ## Hard Constraints
 
 - **Fully offline.** Every feature except "Check for updates" and "Open in Google Maps" must work with no network. If an implementation needs connectivity at use-time, flag it before writing code.
 - **Background GPS must survive screen-off and Doze.** Always Foreground Service. Never `startService`-only for location.
-- **Android only.** No iOS. Native logic (GPS service, GraphHopper) sits behind platform channels for clean separation, not for cross-platform portability. Do not add abstraction whose only justification is "so iOS can plug in later".
+- **Android only.** No iOS. The whole app is native Kotlin/JVM; there are no platform channels and no cross-platform abstraction layer. Do not add abstraction whose only justification is "so iOS can plug in later".
 - **Consume RudyMap data as-is.** Do not build a custom tile/contour/hillshade pipeline (no Planetiler, no GDAL pre-bake, no PMTiles). Do not author custom map cartography; use RudyMap's bundled theme. If a feature needs map content RudyMap's `.map` does not contain, flag it before writing code.
 - **No backend.** Do not propose features requiring server state, accounts, or sync. The only network use is downloading RudyMap data in-app from their public mirrors; the app hosts and redistributes nothing.
 
@@ -69,7 +77,7 @@ If a request naturally invites one of these, mention it as v2 candidate and **st
 
 The spec breaks work into four phases:
 
-- **Phase 0**: technical prototype (Flutter + `mapsforge_flutter` renders a RudyMap `.map`, GPS dot; validates the open items in spec §6 Phase 0)
+- **Phase 0**: technical prototype (native Android + `mapsforge-map-android` renders a RudyMap `.map` with hillshade, GPS dot; validates the open items in spec §6 Phase 0)
 - **Phase 1**: core usable (offline map + background track recording + basic GPX I/O)
 - **Phase 2**: route planning (GraphHopper integration + waypoints + elevation profile)
 - **Phase 3**: update mechanism + polish
@@ -79,36 +87,33 @@ Do not jump phases. If Phase 2 work would unblock something in Phase 1, raise it
 ## Development Conventions
 
 ### Code style
-- Dart: follow `dart format` defaults. Lint with `flutter_lints` (strict).
 - Kotlin: ktlint default rules.
 - No `// TODO` without a tracking reference (GitHub issue number or spec section like `// TODO(spec §4.2)`).
 
-### Directory layout (Flutter)
+### Directory layout (native Android)
 ```
-lib/
-  features/       # feature modules: map, planning, recording, gpx, settings
-  core/           # shared infra: gps, storage, platform channels, networking
+app/src/main/kotlin/io/github/nexgus/jiudge/
+  feature/        # feature modules: map, planning, recording, gpx, settings
+  core/           # shared infra: gps, storage, mapdata, networking
   data/           # repositories, models, data sources
-  ui/             # shared widgets, theming, design tokens
-android/
-  app/src/main/kotlin/.../   # native code for platform channels
+  ui/             # Compose components, theming, design tokens
 docs/             # spec, design notes, architecture decisions
 ```
 
 ### Testing
-- Unit tests for pure Dart logic; target > 70% coverage in `core/` and `data/`
-- Widget tests for non-trivial widgets
+- Unit tests (JUnit) for pure Kotlin logic; target > 70% coverage in `core/` and `data/`
+- Instrumented/UI tests for non-trivial Compose screens
 - Integration tests reserved for critical user flows (recording, planning, GPX round-trip)
 
 ### Git
 - Branches: `feat/<short-desc>`, `fix/<short-desc>`, `chore/<short-desc>`
 - Commits in Conventional Commits format
-- Always run `dart format . && flutter analyze` before committing
+- Always run `./gradlew ktlintFormat lint` before committing
 - Do not commit build artifacts, generated files, or large binary assets
 
 ## Working With Me
 
-- **Ask before adding dependencies.** Every new pub.dev or Maven package is a long-term maintenance commitment for a solo dev. Justify it.
+- **Ask before adding dependencies.** Every new Maven/Gradle dependency is a long-term maintenance commitment for a solo dev. Justify it.
 - **Verify before claiming done.** A feature is done when it runs on a real Android device, not when it compiles.
 - **Surface open questions.** Don't silently pick an answer to ambiguity. See §"Open Questions" below.
 - **No silent scope expansion.** Stick to the smallest change that fulfills the request.
@@ -129,9 +134,6 @@ See `docs/spec.md` §9 for context. Don't assume answers:
   - DEM: `hgtmix.zip` (~46 MB, Taiwan 30 m + islands 90 m) or `hgt90.zip` (~8 MB) - `.hgt` format
   - Theme: `MOI_OSM_Taiwan_TOPO_Rudy_hs_style.zip` (light + dark variants)
   - Static HTTP GET, no manifest/SHA256; version date (`vYYYY.MM.DD`) is on the page, not in filenames - detect new releases via HTTP `Last-Modified`/`ETag`. Released weekly (Thursdays).
-- mapsforge format & themes: https://github.com/mapsforge/mapsforge
-- `mapsforge_flutter`: https://pub.dev/packages/mapsforge_flutter
+- mapsforge format, themes & Android library (`mapsforge-map-android`, latest 0.25.0 on Maven Central): https://github.com/mapsforge/mapsforge
 - OSM Taiwan extract (for GraphHopper routing graph only): https://download.geofabrik.de/asia/taiwan.html
 - GraphHopper: https://www.graphhopper.com/
-
-Verify exact Flutter package names against pub.dev - the ecosystem moves fast and `mapsforge_flutter` is a single-maintainer port, so confirm its current status and feature coverage (continuous zoom, rotation, hillshade, CJK fonts) before committing.

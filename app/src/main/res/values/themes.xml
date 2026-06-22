@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose-driven UI; this base theme only styles the launch window and system bars. -->
+    <style name="Theme.Jiudge" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
