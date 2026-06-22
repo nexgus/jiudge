@@ -8,6 +8,8 @@
 ```bash
 ADB=~/Library/Android/sdk/platform-tools/adb
 DEV=127.0.0.1:5555
+# App 資料根 (getExternalFilesDir, 見 core/storage/AppPaths):
+DATA=/storage/emulated/0/Android/data/io.github.nexgus.jiudge/files
 ```
 
 ## 1. 連線至 adb
@@ -19,17 +21,24 @@ $ADB devices   # 確認 $DEV 狀態為 device
 
 ## 2. 推送 RudyMap 資料到裝置
 
-App 從固定路徑 `/data/local/tmp/rudymap` 讀檔 (見 `MainActivity.DATA_DIR`).
-僅首次或 BlueStacks 完整重啟後需重推.
+App 從 `getExternalFilesDir` 下讀檔 (見 `core/storage/AppPaths`): 地圖在 `$DATA/map/`,
+BRouter 路由資料在 `$DATA/brouter/`. 此區為 app 專屬外部儲存, 位於 FUSE 掛載的外部空間,
+adb 推入的檔案 app 可正常讀取 (不同於內部 `/data/data`, 不會有 errno 13). 僅首次或解除安裝後需重推.
+
+> 註: `Android/data/<pkg>/` 目錄由系統在 app 安裝後建立. 若下面的 `mkdir`/`push` 被拒,
+> 先啟動 app 一次 (步驟 5) 讓系統建好 `files/`, 再重推.
 
 ```bash
-$ADB -s $DEV shell mkdir -p /data/local/tmp/rudymap
+$ADB -s $DEV shell mkdir -p $DATA/map
 $ADB -s $DEV push \
   ~/rudymap-data/MOI_OSM_Taiwan_TOPO_Rudy.map \
   ~/rudymap-data/MOI_OSM.xml \
   ~/rudymap-data/moiosmhs_res \
   ~/rudymap-data/hgt \
-  /data/local/tmp/rudymap/
+  $DATA/map/
+# 必要: adb 建立的目錄 owner 為 shell, app (另一 uid) 無法穿越 -> 放寬權限後 app 才讀得到.
+# (僅 dev adb-push 需要; Phase 1 由 app 自己下載寫入時無此問題)
+$ADB -s $DEV shell chmod -R 777 $DATA/map
 ```
 
 - `hgt/` 為 `.hgt` DEM (RudyMap `hgtmix` 解壓), 供陰影使用; 缺少時地圖照常顯示, 僅無立體陰影.
@@ -37,7 +46,7 @@ $ADB -s $DEV push \
 ### 2.1 推送 BRouter 路由資料 (路徑規劃功能需要)
 
 路徑規劃以 BRouter 在程序內計算最短山徑. 路由資料 (`.rd5` segment + `.brf` profile) 放在
-`/data/local/tmp/rudymap/brouter/` 下, 與底圖同套 adb 流程. 缺少時地圖照常顯示, 僅 "規劃路徑"
+`$DATA/brouter/` 下, 與底圖同套 adb 流程. 缺少時地圖照常顯示, 僅 "規劃路徑"
 無法計算路徑 (`BRouterEngine.isReady()` 為 false).
 
 ```bash
@@ -53,8 +62,10 @@ curl -L -o ~/rudymap-data/brouter/profiles2/lookups.dat \
   https://raw.githubusercontent.com/abrensch/brouter/v1.7.9/misc/profiles2/lookups.dat
 
 # 推整個 brouter 目錄 (含 segments4/ 與 profiles2/)
-$ADB -s $DEV push ~/rudymap-data/brouter /data/local/tmp/rudymap/
-$ADB -s $DEV shell ls -lR /data/local/tmp/rudymap/brouter   # 確認落點
+$ADB -s $DEV shell mkdir -p $DATA
+$ADB -s $DEV push ~/rudymap-data/brouter $DATA/
+$ADB -s $DEV shell chmod -R 777 $DATA/brouter   # 同上: app 才穿越得進去
+$ADB -s $DEV shell ls -lR $DATA/brouter   # 確認落點
 ```
 
 - `trekking.brf` 為官方泛用 profile, 先用來驗證管線; 登山取向建議改用 poutnik 的 hiking profile

@@ -1,8 +1,13 @@
 package io.github.nexgus.jiudge
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +24,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,14 +33,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import io.github.nexgus.jiudge.core.mapdata.DownloadService
+import io.github.nexgus.jiudge.core.mapdata.DownloadState
+import io.github.nexgus.jiudge.core.mapdata.MapDataCatalog
+import io.github.nexgus.jiudge.core.mapdata.MapDataDownload
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
+import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RouteStore
 import io.github.nexgus.jiudge.feature.map.RudyMapView
+import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.LoadRouteDialog
 import io.github.nexgus.jiudge.feature.planning.MapViewControls
@@ -54,7 +67,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val dataDir = File(DATA_DIR)
+        val paths = AppPaths(this)
+        val catalog = MapDataCatalog(paths)
         val routesDir = File(filesDir, "routes")
         setContent {
             MaterialTheme {
@@ -63,23 +77,35 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                 ) { padding ->
-                    if (File(dataDir, RudyMapView.BASEMAP_NAME).exists()) {
+                    val downloadState by MapDataDownload.state.collectAsState()
+                    // Re-check the disk whenever the download state changes (so finishing flips us to the map).
+                    val requiredReady = remember(downloadState) { catalog.missing(includeOptional = false).isEmpty() }
+                    val showDownload =
+                        downloadState is DownloadState.Running ||
+                            downloadState is DownloadState.Failed ||
+                            !requiredReady
+                    if (showDownload) {
+                        DownloadScreen(
+                            state = downloadState,
+                            totalBytes = catalog.totalDownloadBytes,
+                            onStart = startDownload(),
+                            onCancel = { DownloadService.cancel(this@MainActivity) },
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(padding),
+                        )
+                    } else {
                         MapScreen(
-                            dataDir = dataDir,
-                            engine = remember { BRouterEngine(dataDir) },
+                            mapDir = paths.mapDir,
+                            engine = remember { BRouterEngine(paths.brouterDir) },
                             routeStore = remember { RouteStore(routesDir) },
                             snackbarHostState = snackbarHostState,
                             onMapCreated = { mapView = it },
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(padding),
-                        )
-                    } else {
-                        MissingDataMessage(
-                            dataDir = dataDir.path,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(padding),
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(padding),
                         )
                     }
                 }
@@ -92,13 +118,6 @@ class MainActivity : ComponentActivity() {
         mapView = null
         super.onDestroy()
     }
-
-    companion object {
-        // Phase 0: prototype data is pushed via `adb push <bundle> /data/local/tmp/rudymap`.
-        // That path is world-readable; app-private dirs reject shell-owned files (errno 13).
-        // Phase 1 replaces this with an in-app download into getExternalFilesDir.
-        private const val DATA_DIR = "/data/local/tmp/rudymap"
-    }
 }
 
 /** The three route-planning UI modes (see docs/ui.md). */
@@ -106,7 +125,7 @@ private enum class PlanMode { MAP_VIEW, ROUTE_EDIT, ROUTE_VIEW }
 
 @Composable
 private fun MapScreen(
-    dataDir: File,
+    mapDir: File,
     engine: BRouterEngine,
     routeStore: RouteStore,
     snackbarHostState: SnackbarHostState,
@@ -135,7 +154,7 @@ private fun MapScreen(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                RudyMapView.create(ctx, dataDir).also {
+                RudyMapView.create(ctx, mapDir).also {
                     onMapCreated(it)
                     map.value = it
                 }
@@ -157,33 +176,47 @@ private fun MapScreen(
 
         // Zoom controls persist across all modes (map controls, independent of the action bar).
         ZoomButtons(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp),
+            modifier =
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp),
             zoomLevel = zoomLevel.value,
-            onZoomIn = { map.value?.model?.mapViewPosition?.zoomIn() },
-            onZoomOut = { map.value?.model?.mapViewPosition?.zoomOut() },
+            onZoomIn = {
+                map.value
+                    ?.model
+                    ?.mapViewPosition
+                    ?.zoomIn()
+            },
+            onZoomOut = {
+                map.value
+                    ?.model
+                    ?.mapViewPosition
+                    ?.zoomOut()
+            },
         )
 
         when (mode) {
-            PlanMode.MAP_VIEW -> MapViewControls(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(16.dp),
-                canClear = displayedRoute != null,
-                onClear = {
-                    viewer?.clear()
-                    displayedRoute = null
-                },
-                onPlan = { showChooser = true },
-            )
+            PlanMode.MAP_VIEW ->
+                MapViewControls(
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(16.dp),
+                    canClear = displayedRoute != null,
+                    onClear = {
+                        viewer?.clear()
+                        displayedRoute = null
+                    },
+                    onPlan = { showChooser = true },
+                )
 
             PlanMode.ROUTE_EDIT -> {
                 CrosshairOverlay(modifier = Modifier.fillMaxSize())
                 PlanningBottomBar(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth(),
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(),
                     waypointCount = planner?.waypoints?.size ?: 0,
                     busy = busy,
                     onAdd = {
@@ -212,21 +245,23 @@ private fun MapScreen(
                 )
             }
 
-            PlanMode.ROUTE_VIEW -> RouteViewControls(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(16.dp),
-                onEdit = {
-                    val route = displayedRoute
-                    if (route != null && planner != null) {
-                        viewer?.clear()
-                        planner.loadFrom(route)
-                        editBaseline = route
-                        mode = PlanMode.ROUTE_EDIT
-                    }
-                },
-                onLeave = { mode = PlanMode.MAP_VIEW },
-            )
+            PlanMode.ROUTE_VIEW ->
+                RouteViewControls(
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(16.dp),
+                    onEdit = {
+                        val route = displayedRoute
+                        if (route != null && planner != null) {
+                            viewer?.clear()
+                            planner.loadFrom(route)
+                            editBaseline = route
+                            mode = PlanMode.ROUTE_EDIT
+                        }
+                    },
+                    onLeave = { mode = PlanMode.MAP_VIEW },
+                )
         }
     }
 
@@ -327,23 +362,27 @@ private fun ZoomButtons(
     }
 }
 
+/**
+ * Builds the "start download" action: on Android 13+ it first requests POST_NOTIFICATIONS (so the
+ * progress notification is visible) and starts the service from the result callback; otherwise it
+ * starts immediately. The download proceeds whether or not the permission is granted.
+ */
 @Composable
-private fun MissingDataMessage(dataDir: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            text = "RudyMap data not found",
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            text = "Expected ${RudyMapView.BASEMAP_NAME}, ${RudyMapView.THEME_NAME} and " +
-                "${RudyMapView.DEM_DIR}/ under:\n$dataDir",
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-        )
+private fun startDownload(): () -> Unit {
+    val context = LocalContext.current
+    val launcher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { DownloadService.start(context) }
+    return {
+        val needsNotifPermission =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        if (needsNotifPermission) {
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            DownloadService.start(context)
+        }
     }
 }

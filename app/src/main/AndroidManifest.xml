@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only network use: downloading RudyMap/BRouter data from public mirrors (see CLAUDE.md). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Foreground service keeps the ~400 MB first-run download alive across screen-off/background. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Runtime-requested on Android 13+ so the download progress notification is visible. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".JiudgeApp"
         android:allowBackup="true"
@@ -18,6 +26,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".core.mapdata.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>
