@@ -1,0 +1,2303 @@
+{
+ "adminLevel": {
+  "2": "國界",
+  "4": "縣市界線",
+  "6": "縣市界線",
+  "7": "鄉鎮市區界線",
+  "8": "鄉鎮市區界線",
+  "9": "村里界線"
+ },
+ "generator": "scripts/gen_symbols.py",
+ "keyPriority": [
+  "mountain_pass",
+  "emergency",
+  "survey_point",
+  "man_made",
+  "tower",
+  "historic",
+  "memorial",
+  "tourism",
+  "information",
+  "amenity",
+  "natural",
+  "shelter_type",
+  "shelter",
+  "climbing",
+  "ladder",
+  "rungs",
+  "safety_rope",
+  "via_ferrata_flag",
+  "aerialway",
+  "aeroway",
+  "station",
+  "railway",
+  "power",
+  "generator:source",
+  "barrier",
+  "sport",
+  "leisure",
+  "ford",
+  "waterway",
+  "shop",
+  "vending",
+  "highway",
+  "route",
+  "place",
+  "piste:type",
+  "boundary",
+  "landuse",
+  "building",
+  "military",
+  "cycle_node",
+  "checkpoint:type"
+ ],
+ "surface": {
+  "asphalt": "柏油",
+  "compacted": "夯實碎石",
+  "gravel": "碎石",
+  "raw": "原始地面",
+  "rough_paved": "粗糙鋪面",
+  "smooth_paved": "平整鋪面",
+  "unpaved": "未鋪面",
+  "winter": "雪季路況"
+ },
+ "symbols": {
+  "aerialway=cable_car": {
+   "name": "纜車",
+   "svg": null
+  },
+  "aerialway=chair_lift": {
+   "name": "吊椅纜車",
+   "svg": null
+  },
+  "aerialway=drag_lift": {
+   "name": "拖曳索道",
+   "svg": null
+  },
+  "aerialway=ferry": {
+   "name": "渡輪",
+   "svg": null
+  },
+  "aerialway=gondola": {
+   "name": "吊廂纜車",
+   "svg": null
+  },
+  "aerialway=goods": {
+   "name": "貨運纜車",
+   "svg": null
+  },
+  "aerialway=magic_carpet": {
+   "name": "輸送帶纜道",
+   "svg": null
+  },
+  "aerialway=mixed_lift": {
+   "name": "混合纜車",
+   "svg": null
+  },
+  "aerialway=rope_tow": {
+   "name": "繩索拖曳",
+   "svg": null
+  },
+  "aeroway=aerodrome": {
+   "name": "機場",
+   "svg": "s_airport.svg"
+  },
+  "aeroway=airport": {
+   "name": "機場",
+   "svg": "s_airport.svg"
+  },
+  "aeroway=apron": {
+   "name": "停機坪",
+   "svg": null
+  },
+  "aeroway=helipad": {
+   "name": "直升機坪",
+   "svg": "s_helipad.svg"
+  },
+  "aeroway=runway": {
+   "name": "跑道",
+   "svg": null
+  },
+  "aeroway=taxiway": {
+   "name": "滑行道",
+   "svg": null
+  },
+  "aeroway=terminal": {
+   "name": "航廈",
+   "svg": null
+  },
+  "amenity=air_defense_shelter": {
+   "name": "防空避難所",
+   "svg": null
+  },
+  "amenity=alpine_hut": {
+   "name": "山屋",
+   "svg": null
+  },
+  "amenity=atm": {
+   "name": "自動提款機",
+   "svg": "s_atm.svg"
+  },
+  "amenity=bakery": {
+   "name": "麵包店",
+   "svg": null
+  },
+  "amenity=bank": {
+   "name": "銀行",
+   "svg": "s_bank.svg"
+  },
+  "amenity=bar": {
+   "name": "酒吧",
+   "svg": "s_bar.svg"
+  },
+  "amenity=bench": {
+   "name": "長椅",
+   "svg": "s_bench.svg"
+  },
+  "amenity=beverages": {
+   "name": "飲料店",
+   "svg": null
+  },
+  "amenity=bicycle": {
+   "name": "自行車",
+   "svg": null
+  },
+  "amenity=bicycle_rental": {
+   "name": "自行車租賃",
+   "svg": "s_bicycle_rental.svg"
+  },
+  "amenity=bicycle_rental_Moovo": {
+   "name": "Moovo 站",
+   "svg": "s_moovo_bike.svg"
+  },
+  "amenity=bicycle_rental_YouBike": {
+   "name": "YouBike 站",
+   "svg": "s_you_bike.svg"
+  },
+  "amenity=biergarten": {
+   "name": "啤酒花園",
+   "svg": "s_biergarten.svg"
+  },
+  "amenity=bus_station": {
+   "name": "公車總站",
+   "svg": "s_pt_bus_station_a.svg"
+  },
+  "amenity=cafe": {
+   "name": "咖啡館",
+   "svg": "s_cafe.svg"
+  },
+  "amenity=car": {
+   "name": "汽車服務",
+   "svg": null
+  },
+  "amenity=cemetery": {
+   "name": "墓地",
+   "svg": null
+  },
+  "amenity=cinema": {
+   "name": "電影院",
+   "svg": "s_cinema.svg"
+  },
+  "amenity=college": {
+   "name": "專科學校",
+   "svg": "s_university.svg"
+  },
+  "amenity=convenience": {
+   "name": "便利商店",
+   "svg": null
+  },
+  "amenity=doctors": {
+   "name": "診所",
+   "svg": "s_doctors.svg"
+  },
+  "amenity=doityourself": {
+   "name": "居家修繕店",
+   "svg": null
+  },
+  "amenity=drinking_water": {
+   "name": "飲用水",
+   "svg": "s_drinking_water.svg"
+  },
+  "amenity=embassy": {
+   "name": "大使館",
+   "svg": "s_embassy.svg"
+  },
+  "amenity=fast_food": {
+   "name": "速食店",
+   "svg": "s_fastfood.svg"
+  },
+  "amenity=ferry_terminal": {
+   "name": "渡輪碼頭",
+   "svg": "s_pt_ferry.svg"
+  },
+  "amenity=fire_station": {
+   "name": "消防隊",
+   "svg": "s_firebrigade.svg"
+  },
+  "amenity=fountain": {
+   "name": "噴泉",
+   "svg": "s_fountain.svg"
+  },
+  "amenity=fuel": {
+   "name": "加油站",
+   "svg": "s_fuel.svg"
+  },
+  "amenity=grave_yard": {
+   "name": "墓園",
+   "svg": null
+  },
+  "amenity=hospital": {
+   "name": "醫院",
+   "svg": "s_hospital.svg"
+  },
+  "amenity=hostel": {
+   "name": "青年旅館",
+   "svg": null
+  },
+  "amenity=hotel": {
+   "name": "旅館",
+   "svg": null
+  },
+  "amenity=kindergarten": {
+   "name": "幼兒園",
+   "svg": "s_kindergarten.svg"
+  },
+  "amenity=library": {
+   "name": "圖書館",
+   "svg": "s_library.svg"
+  },
+  "amenity=mall": {
+   "name": "購物中心",
+   "svg": null
+  },
+  "amenity=marketplace": {
+   "name": "市集",
+   "svg": "s_marketplace.svg"
+  },
+  "amenity=office": {
+   "name": "辦公處所",
+   "svg": null
+  },
+  "amenity=parking": {
+   "name": "停車場",
+   "svg": "s_parking.svg"
+  },
+  "amenity=pharmacy": {
+   "name": "藥局",
+   "svg": "s_pharmacy.svg"
+  },
+  "amenity=place_of_worship": {
+   "name": "宗教場所",
+   "svg": "s_place_of_worship.svg"
+  },
+  "amenity=police": {
+   "name": "警察局 / 派出所",
+   "svg": "s_police.svg"
+  },
+  "amenity=post_box": {
+   "name": "郵筒",
+   "svg": "s_postbox.svg"
+  },
+  "amenity=post_office": {
+   "name": "郵局",
+   "svg": "s_postoffice.svg"
+  },
+  "amenity=pub": {
+   "name": "酒館",
+   "svg": "s_pub.svg"
+  },
+  "amenity=recycling": {
+   "name": "回收站",
+   "svg": "s_recycling.svg"
+  },
+  "amenity=restaurant": {
+   "name": "餐廳",
+   "svg": "s_restaurant.svg"
+  },
+  "amenity=school": {
+   "name": "學校",
+   "svg": "s_school.svg"
+  },
+  "amenity=shelter": {
+   "name": "遮蔽所",
+   "svg": "s_shelter.svg"
+  },
+  "amenity=shower": {
+   "name": "淋浴間",
+   "svg": "s_shower.svg"
+  },
+  "amenity=sports": {
+   "name": "運動用品店",
+   "svg": null
+  },
+  "amenity=station": {
+   "name": "車站",
+   "svg": null
+  },
+  "amenity=supermarket": {
+   "name": "超市",
+   "svg": null
+  },
+  "amenity=telephone": {
+   "name": "公共電話",
+   "svg": "s_telephone.svg"
+  },
+  "amenity=theatre": {
+   "name": "劇院",
+   "svg": "s_theatre.svg"
+  },
+  "amenity=toilets": {
+   "name": "廁所",
+   "svg": "s_toilets.svg"
+  },
+  "amenity=university": {
+   "name": "大學",
+   "svg": "s_university.svg"
+  },
+  "amenity=water_point": {
+   "name": "取水點",
+   "svg": "s_drinking_water.svg"
+  },
+  "barrier=block": {
+   "name": "石墩",
+   "svg": "s_block.svg"
+  },
+  "barrier=bollard": {
+   "name": "車擋柱",
+   "svg": "s_bollard.svg"
+  },
+  "barrier=border_control": {
+   "name": "邊境管制",
+   "svg": "s_border_control.svg"
+  },
+  "barrier=chain": {
+   "name": "鐵鍊",
+   "svg": "s_lift_gate.svg"
+  },
+  "barrier=city_wall": {
+   "name": "城牆",
+   "svg": null
+  },
+  "barrier=cycle_barrier": {
+   "name": "自行車檔",
+   "svg": "s_cycle_barrier.svg"
+  },
+  "barrier=fence": {
+   "name": "圍籬",
+   "svg": null
+  },
+  "barrier=gate": {
+   "name": "柵門",
+   "svg": "s_gate.svg"
+  },
+  "barrier=kissing_gate": {
+   "name": "轉門",
+   "svg": "s_kissing_gate.svg"
+  },
+  "barrier=lift_gate": {
+   "name": "升降桿",
+   "svg": "s_lift_gate.svg"
+  },
+  "barrier=retaining_wall": {
+   "name": "擋土牆",
+   "svg": null
+  },
+  "barrier=stile": {
+   "name": "越牆梯磴",
+   "svg": "s_stile.svg"
+  },
+  "barrier=turnstile": {
+   "name": "旋轉柵門",
+   "svg": "s_turnstile.svg"
+  },
+  "barrier=wall": {
+   "name": "牆",
+   "svg": null
+  },
+  "boundary=forest_compartment": {
+   "name": "林班界",
+   "svg": null
+  },
+  "boundary=map_inner": {
+   "name": "圖框內界",
+   "svg": null
+  },
+  "boundary=national_park": {
+   "name": "國家公園界線",
+   "svg": null
+  },
+  "boundary=strict_protected": {
+   "name": "嚴格保護區界線",
+   "svg": null
+  },
+  "building=castle": {
+   "name": "城堡 (建物)",
+   "svg": "s_castle.svg"
+  },
+  "building=city_wall": {
+   "name": "城牆 (建物)",
+   "svg": null
+  },
+  "building=embassy": {
+   "name": "大使館 (建物)",
+   "svg": "s_embassy.svg"
+  },
+  "building=hotel": {
+   "name": "旅館 (建物)",
+   "svg": "s_hotel.svg"
+  },
+  "building=library": {
+   "name": "圖書館 (建物)",
+   "svg": "s_library.svg"
+  },
+  "building=museum": {
+   "name": "博物館 (建物)",
+   "svg": "s_museum.svg"
+  },
+  "building=ruins": {
+   "name": "廢墟 (建物)",
+   "svg": "s_ruins.svg"
+  },
+  "building=wall": {
+   "name": "牆 (建物)",
+   "svg": null
+  },
+  "checkpoint:type=stamp": {
+   "name": "紀念章打卡點",
+   "svg": "s_stamp.svg"
+  },
+  "climbing=cl_yes": {
+   "name": "可攀岩",
+   "svg": "s_climbing.svg"
+  },
+  "climbing=climbing": {
+   "name": "攀岩",
+   "svg": "s_climbing.svg"
+  },
+  "emergency=defibrillator": {
+   "name": "AED 自動電擊器",
+   "svg": "s_defibrillator.svg"
+  },
+  "emergency=landing_site": {
+   "name": "直升機降落點",
+   "svg": "s_landing_site.svg"
+  },
+  "emergency=phone": {
+   "name": "緊急電話",
+   "svg": "s_emergency_phone.svg"
+  },
+  "emergency=portable_altitude_chamber": {
+   "name": "攜帶式高壓氧艙",
+   "svg": "s_pac.svg"
+  },
+  "ford=fd_yes": {
+   "name": "渡河處",
+   "svg": "s_ford.svg"
+  },
+  "ford=ford": {
+   "name": "渡河處",
+   "svg": "s_ford.svg"
+  },
+  "generator:source=coal": {
+   "name": "燃煤發電",
+   "svg": "s_power_coal.svg"
+  },
+  "generator:source=gas": {
+   "name": "燃氣發電",
+   "svg": "s_power_gas.svg"
+  },
+  "generator:source=hydro": {
+   "name": "水力發電",
+   "svg": "s_power_water.svg"
+  },
+  "generator:source=nuclear": {
+   "name": "核能發電",
+   "svg": "s_power_nuclear.svg"
+  },
+  "generator:source=tidal": {
+   "name": "潮汐發電",
+   "svg": "s_power_water.svg"
+  },
+  "generator:source=wind": {
+   "name": "風力發電",
+   "svg": "s_power_wind.svg"
+  },
+  "highway=abandoned": {
+   "name": "廢棄道路",
+   "svg": null
+  },
+  "highway=bridleway": {
+   "name": "馬道",
+   "svg": null
+  },
+  "highway=bus_guideway": {
+   "name": "公車專用道",
+   "svg": null
+  },
+  "highway=bus_stop": {
+   "name": "公車站",
+   "svg": "s_pt_bus_stop.svg"
+  },
+  "highway=byway": {
+   "name": "鄉間小道",
+   "svg": null
+  },
+  "highway=construction": {
+   "name": "施工中道路",
+   "svg": null
+  },
+  "highway=cycleway": {
+   "name": "自行車道",
+   "svg": null
+  },
+  "highway=disused": {
+   "name": "停用道路",
+   "svg": null
+  },
+  "highway=emergency_access_point": {
+   "name": "緊急救護點",
+   "svg": "s_emergency_access_point.svg"
+  },
+  "highway=fd_yes": {
+   "name": "渡河處",
+   "svg": "s_ford.svg"
+  },
+  "highway=footway": {
+   "name": "人行步道",
+   "svg": null
+  },
+  "highway=ford": {
+   "name": "渡河處",
+   "svg": "s_ford.svg"
+  },
+  "highway=funicular": {
+   "name": "纜索鐵道",
+   "svg": null
+  },
+  "highway=light_rail": {
+   "name": "輕軌",
+   "svg": null
+  },
+  "highway=living_street": {
+   "name": "生活化道路",
+   "svg": null
+  },
+  "highway=mini_roundabout": {
+   "name": "小型圓環",
+   "svg": null
+  },
+  "highway=miniature": {
+   "name": "迷你鐵道",
+   "svg": null
+  },
+  "highway=motorway": {
+   "name": "高速公路",
+   "svg": null
+  },
+  "highway=motorway_junction": {
+   "name": "交流道",
+   "svg": null
+  },
+  "highway=motorway_link": {
+   "name": "高速公路匝道",
+   "svg": null
+  },
+  "highway=narrow_gauge": {
+   "name": "窄軌鐵路",
+   "svg": null
+  },
+  "highway=path": {
+   "name": "登山步道",
+   "svg": null
+  },
+  "highway=pedestrian": {
+   "name": "行人徒步區",
+   "svg": null
+  },
+  "highway=platform": {
+   "name": "月台",
+   "svg": null
+  },
+  "highway=preserved": {
+   "name": "保存鐵道",
+   "svg": null
+  },
+  "highway=primary": {
+   "name": "主要道路",
+   "svg": null
+  },
+  "highway=primary_link": {
+   "name": "主要道路匝道",
+   "svg": null
+  },
+  "highway=raceway": {
+   "name": "賽道",
+   "svg": null
+  },
+  "highway=residential": {
+   "name": "住宅區道路",
+   "svg": null
+  },
+  "highway=road": {
+   "name": "道路",
+   "svg": null
+  },
+  "highway=secondary": {
+   "name": "次要道路",
+   "svg": null
+  },
+  "highway=secondary_link": {
+   "name": "次要道路匝道",
+   "svg": null
+  },
+  "highway=service": {
+   "name": "服務道路",
+   "svg": null
+  },
+  "highway=steps": {
+   "name": "階梯",
+   "svg": null
+  },
+  "highway=subway": {
+   "name": "地鐵",
+   "svg": null
+  },
+  "highway=tertiary": {
+   "name": "三級道路",
+   "svg": null
+  },
+  "highway=tertiary_link": {
+   "name": "三級道路匝道",
+   "svg": null
+  },
+  "highway=track": {
+   "name": "林道",
+   "svg": null
+  },
+  "highway=traffic_signals": {
+   "name": "紅綠燈",
+   "svg": "s_traffic_signal.svg"
+  },
+  "highway=trailhead": {
+   "name": "登山口",
+   "svg": "s_trailhead.svg"
+  },
+  "highway=tram": {
+   "name": "路面電車",
+   "svg": null
+  },
+  "highway=trunk": {
+   "name": "快速道路",
+   "svg": null
+  },
+  "highway=trunk_link": {
+   "name": "快速道路匝道",
+   "svg": null
+  },
+  "highway=turning_circle": {
+   "name": "迴車道",
+   "svg": null
+  },
+  "highway=unclassified": {
+   "name": "未分級道路",
+   "svg": null
+  },
+  "historic=archaeological_site": {
+   "name": "考古遺址",
+   "svg": "s_archaeological.svg"
+  },
+  "historic=castle": {
+   "name": "城堡",
+   "svg": "s_castle.svg"
+  },
+  "historic=memorial": {
+   "name": "紀念物",
+   "svg": "s_memorial.svg"
+  },
+  "historic=monument": {
+   "name": "紀念碑",
+   "svg": "s_monument.svg"
+  },
+  "historic=ruins": {
+   "name": "廢墟",
+   "svg": "s_ruins.svg"
+  },
+  "historic=wayside_cross": {
+   "name": "路旁十字架",
+   "svg": "s_wayside_cross.svg"
+  },
+  "historic=wayside_shrine": {
+   "name": "路旁神龕",
+   "svg": "s_wayside_shrine.svg"
+  },
+  "information=alpine_hut": {
+   "name": "山屋",
+   "svg": null
+  },
+  "information=bakery": {
+   "name": "麵包店",
+   "svg": null
+  },
+  "information=beverages": {
+   "name": "飲料店",
+   "svg": null
+  },
+  "information=bicycle": {
+   "name": "自行車",
+   "svg": null
+  },
+  "information=board": {
+   "name": "資訊看板",
+   "svg": "s_info_board.svg"
+  },
+  "information=car": {
+   "name": "汽車服務",
+   "svg": null
+  },
+  "information=convenience": {
+   "name": "便利商店",
+   "svg": null
+  },
+  "information=doctors": {
+   "name": "診所",
+   "svg": null
+  },
+  "information=doityourself": {
+   "name": "居家修繕店",
+   "svg": null
+  },
+  "information=guidepost": {
+   "name": "指示牌",
+   "svg": "s_guidepost.svg"
+  },
+  "information=hostel": {
+   "name": "青年旅館",
+   "svg": null
+  },
+  "information=hotel": {
+   "name": "旅館",
+   "svg": null
+  },
+  "information=mall": {
+   "name": "購物中心",
+   "svg": null
+  },
+  "information=mobile": {
+   "name": "行動資訊",
+   "svg": "s_mobile.svg"
+  },
+  "information=office": {
+   "name": "辦公處所",
+   "svg": "s_info_office.svg"
+  },
+  "information=place_of_worship": {
+   "name": "宗教場所",
+   "svg": null
+  },
+  "information=restaurant": {
+   "name": "餐廳",
+   "svg": null
+  },
+  "information=shelter": {
+   "name": "遮蔽所",
+   "svg": null
+  },
+  "information=sports": {
+   "name": "運動用品店",
+   "svg": null
+  },
+  "information=station": {
+   "name": "車站",
+   "svg": null
+  },
+  "information=supermarket": {
+   "name": "超市",
+   "svg": null
+  },
+  "information=terminal": {
+   "name": "航廈",
+   "svg": "s_info_terminal.svg"
+  },
+  "information=theatre": {
+   "name": "劇院",
+   "svg": null
+  },
+  "information=toilets": {
+   "name": "廁所",
+   "svg": null
+  },
+  "information=trail_milestone": {
+   "name": "里程碑",
+   "svg": "s_trail_milestone.svg"
+  },
+  "ladder=ld_yes": {
+   "name": "梯子",
+   "svg": "s_ladder.svg"
+  },
+  "ladder=rn_yes": {
+   "name": "踏階",
+   "svg": null
+  },
+  "ladder=sr_yes": {
+   "name": "安全繩",
+   "svg": null
+  },
+  "landuse=allotments": {
+   "name": "市民農園",
+   "svg": null
+  },
+  "landuse=basin": {
+   "name": "蓄水池",
+   "svg": null
+  },
+  "landuse=brownfield": {
+   "name": "待開發地",
+   "svg": null
+  },
+  "landuse=camp_site": {
+   "name": "營地用地",
+   "svg": null
+  },
+  "landuse=caravan_site": {
+   "name": "露營車營地用地",
+   "svg": null
+  },
+  "landuse=cemetery": {
+   "name": "墓地用地",
+   "svg": null
+  },
+  "landuse=commercial": {
+   "name": "商業區",
+   "svg": null
+  },
+  "landuse=common": {
+   "name": "公共綠地",
+   "svg": null
+  },
+  "landuse=construction": {
+   "name": "施工區",
+   "svg": null
+  },
+  "landuse=farm": {
+   "name": "農場",
+   "svg": null
+  },
+  "landuse=farmland": {
+   "name": "農田",
+   "svg": null
+  },
+  "landuse=farmyard": {
+   "name": "農莊",
+   "svg": "s_farmyard.svg"
+  },
+  "landuse=field": {
+   "name": "田地",
+   "svg": null
+  },
+  "landuse=forest": {
+   "name": "林地",
+   "svg": null
+  },
+  "landuse=garages": {
+   "name": "車庫區",
+   "svg": null
+  },
+  "landuse=garden": {
+   "name": "庭園",
+   "svg": null
+  },
+  "landuse=grass": {
+   "name": "草地",
+   "svg": null
+  },
+  "landuse=grassland": {
+   "name": "草原",
+   "svg": null
+  },
+  "landuse=grave_yard": {
+   "name": "墓園",
+   "svg": null
+  },
+  "landuse=greenfield": {
+   "name": "未開發地",
+   "svg": null
+  },
+  "landuse=industrial": {
+   "name": "工業區",
+   "svg": null
+  },
+  "landuse=landfill": {
+   "name": "掩埋場",
+   "svg": null
+  },
+  "landuse=meadow": {
+   "name": "牧草地",
+   "svg": null
+  },
+  "landuse=military": {
+   "name": "軍事用地",
+   "svg": null
+  },
+  "landuse=orchard": {
+   "name": "果園",
+   "svg": null
+  },
+  "landuse=picnic_site": {
+   "name": "野餐區用地",
+   "svg": null
+  },
+  "landuse=quarry": {
+   "name": "採石場",
+   "svg": null
+  },
+  "landuse=railway": {
+   "name": "鐵路用地",
+   "svg": null
+  },
+  "landuse=recreation_ground": {
+   "name": "遊憩地",
+   "svg": null
+  },
+  "landuse=reservoir": {
+   "name": "水庫",
+   "svg": null
+  },
+  "landuse=residential": {
+   "name": "住宅區",
+   "svg": null
+  },
+  "landuse=retail": {
+   "name": "零售區",
+   "svg": null
+  },
+  "landuse=village_green": {
+   "name": "村里綠地",
+   "svg": null
+  },
+  "landuse=vineyard": {
+   "name": "葡萄園",
+   "svg": null
+  },
+  "landuse=wood": {
+   "name": "樹林",
+   "svg": null
+  },
+  "landuse=zoo": {
+   "name": "動物園用地",
+   "svg": null
+  },
+  "leisure=camp_site": {
+   "name": "營地",
+   "svg": null
+  },
+  "leisure=caravan_site": {
+   "name": "露營車營地",
+   "svg": null
+  },
+  "leisure=common": {
+   "name": "公共綠地",
+   "svg": null
+  },
+  "leisure=dog_park": {
+   "name": "寵物公園",
+   "svg": null
+  },
+  "leisure=garden": {
+   "name": "花園",
+   "svg": null
+  },
+  "leisure=golf": {
+   "name": "高爾夫",
+   "svg": "s_golf.svg"
+  },
+  "leisure=golf_course": {
+   "name": "高爾夫球場",
+   "svg": "s_golf.svg"
+  },
+  "leisure=ls_track": {
+   "name": "休閒步道",
+   "svg": null
+  },
+  "leisure=park": {
+   "name": "公園",
+   "svg": null
+  },
+  "leisure=picnic_site": {
+   "name": "野餐區",
+   "svg": "s_picnic_site.svg"
+  },
+  "leisure=picnic_table": {
+   "name": "野餐桌",
+   "svg": "s_picnic_site.svg"
+  },
+  "leisure=pitch": {
+   "name": "球場",
+   "svg": null
+  },
+  "leisure=playground": {
+   "name": "遊樂場",
+   "svg": "s_playground.svg"
+  },
+  "leisure=recreation_ground": {
+   "name": "遊憩場",
+   "svg": null
+  },
+  "leisure=shooting": {
+   "name": "射擊",
+   "svg": null
+  },
+  "leisure=slipway": {
+   "name": "下水滑道",
+   "svg": "s_slipway.svg"
+  },
+  "leisure=sports_centre": {
+   "name": "運動中心",
+   "svg": "s_gym.svg"
+  },
+  "leisure=stadium": {
+   "name": "體育場",
+   "svg": "s_stadium.svg"
+  },
+  "leisure=swimming": {
+   "name": "游泳",
+   "svg": null
+  },
+  "leisure=swimming_pool": {
+   "name": "游泳池",
+   "svg": null
+  },
+  "leisure=village_green": {
+   "name": "村里綠地",
+   "svg": null
+  },
+  "leisure=water_park": {
+   "name": "水上樂園",
+   "svg": "s_swimming_outdoor.svg"
+  },
+  "leisure=zoo": {
+   "name": "動物園",
+   "svg": null
+  },
+  "man_made=communications_tower": {
+   "name": "通訊塔",
+   "svg": "s_tower_communication.svg"
+  },
+  "man_made=dyke": {
+   "name": "堤防",
+   "svg": null
+  },
+  "man_made=emb_yes": {
+   "name": "堤岸",
+   "svg": null
+  },
+  "man_made=embankment": {
+   "name": "堤岸",
+   "svg": null
+  },
+  "man_made=groyne": {
+   "name": "丁壩",
+   "svg": null
+  },
+  "man_made=lighthouse": {
+   "name": "燈塔",
+   "svg": "s_lighthouse.svg"
+  },
+  "man_made=mast": {
+   "name": "桅桿",
+   "svg": "s_tower_mast.svg"
+  },
+  "man_made=pier": {
+   "name": "棧橋",
+   "svg": null
+  },
+  "man_made=pipeline": {
+   "name": "管線",
+   "svg": null
+  },
+  "man_made=summit_board": {
+   "name": "山峰",
+   "svg": "s_peak_small_m.svg"
+  },
+  "man_made=survey_point": {
+   "name": "測量基準點",
+   "svg": "s_sp_trig.svg"
+  },
+  "man_made=tower": {
+   "name": "塔",
+   "svg": "s_tower_communication.svg"
+  },
+  "man_made=water_well": {
+   "name": "水井",
+   "svg": "s_water_well.svg"
+  },
+  "man_made=windmill": {
+   "name": "風車",
+   "svg": "s_windmill.svg"
+  },
+  "memorial=plaque": {
+   "name": "紀念牌",
+   "svg": "s_memorial_plaque.svg"
+  },
+  "memorial=statue": {
+   "name": "紀念雕像",
+   "svg": "s_memorial_statue.svg"
+  },
+  "memorial=stolperstein": {
+   "name": "絆腳石紀念磚",
+   "svg": "s_memorial_stolperstein.svg"
+  },
+  "memorial=stone": {
+   "name": "紀念石",
+   "svg": "s_memorial_stone.svg"
+  },
+  "memorial=war_memorial": {
+   "name": "戰爭紀念碑",
+   "svg": "s_memorial_war.svg"
+  },
+  "mountain_pass=yes": {
+   "name": "埡口",
+   "svg": null
+  },
+  "natural=beach": {
+   "name": "海灘",
+   "svg": null
+  },
+  "natural=canyon": {
+   "name": "峽谷",
+   "svg": null
+  },
+  "natural=cave_entrance": {
+   "name": "洞穴口",
+   "svg": "s_cave_entrance.svg"
+  },
+  "natural=cliff": {
+   "name": "懸崖",
+   "svg": null
+  },
+  "natural=crater": {
+   "name": "火山口",
+   "svg": null
+  },
+  "natural=crevasse": {
+   "name": "冰隙",
+   "svg": null
+  },
+  "natural=desert": {
+   "name": "沙漠",
+   "svg": null
+  },
+  "natural=fell": {
+   "name": "高地草坡",
+   "svg": null
+  },
+  "natural=fjord": {
+   "name": "峽灣",
+   "svg": null
+  },
+  "natural=forest": {
+   "name": "森林",
+   "svg": null
+  },
+  "natural=geyser": {
+   "name": "間歇泉",
+   "svg": "s_geyser.svg"
+  },
+  "natural=giant_tree": {
+   "name": "老樹",
+   "svg": "p_giant_tree.svg"
+  },
+  "natural=glacier": {
+   "name": "冰川",
+   "svg": null
+  },
+  "natural=gorge": {
+   "name": "峽谷",
+   "svg": null
+  },
+  "natural=grass": {
+   "name": "草地",
+   "svg": null
+  },
+  "natural=grassland": {
+   "name": "草原",
+   "svg": null
+  },
+  "natural=heath": {
+   "name": "荒原",
+   "svg": null
+  },
+  "natural=hot_spring": {
+   "name": "溫泉",
+   "svg": "s_hot_spring.svg"
+  },
+  "natural=marsh": {
+   "name": "沼澤",
+   "svg": null
+  },
+  "natural=meadow": {
+   "name": "牧草地",
+   "svg": null
+  },
+  "natural=nosea": {
+   "name": "非海域遮罩",
+   "svg": null
+  },
+  "natural=peak": {
+   "name": "山峰",
+   "svg": "s_peak.svg"
+  },
+  "natural=peninsula": {
+   "name": "半島",
+   "svg": null
+  },
+  "natural=rapids": {
+   "name": "急流",
+   "svg": "s_rapids.svg"
+  },
+  "natural=rock": {
+   "name": "岩石",
+   "svg": null
+  },
+  "natural=sand": {
+   "name": "沙地",
+   "svg": null
+  },
+  "natural=scree": {
+   "name": "碎石坡",
+   "svg": null
+  },
+  "natural=scrub": {
+   "name": "灌叢",
+   "svg": null
+  },
+  "natural=sea": {
+   "name": "海域",
+   "svg": null
+  },
+  "natural=shingle": {
+   "name": "礫灘",
+   "svg": null
+  },
+  "natural=spring": {
+   "name": "湧泉",
+   "svg": "s_spring.svg"
+  },
+  "natural=tree": {
+   "name": "樹木",
+   "svg": null
+  },
+  "natural=valley": {
+   "name": "山谷",
+   "svg": null
+  },
+  "natural=volcano": {
+   "name": "火山",
+   "svg": "s_volcano.svg"
+  },
+  "natural=water": {
+   "name": "水域",
+   "svg": null
+  },
+  "natural=waterfall": {
+   "name": "瀑布",
+   "svg": "s_waterfall.svg"
+  },
+  "natural=wetland": {
+   "name": "濕地",
+   "svg": null
+  },
+  "natural=wood": {
+   "name": "樹林",
+   "svg": null
+  },
+  "piste:type=downhill": {
+   "name": "滑雪道",
+   "svg": null
+  },
+  "piste:type=nordic": {
+   "name": "越野滑雪道",
+   "svg": null
+  },
+  "piste:type=sled": {
+   "name": "雪橇道",
+   "svg": null
+  },
+  "place=city": {
+   "name": "城市",
+   "svg": "s_city.svg"
+  },
+  "place=county": {
+   "name": "縣市",
+   "svg": "s_city.svg"
+  },
+  "place=hamlet": {
+   "name": "小村",
+   "svg": "s_city_4.svg"
+  },
+  "place=town": {
+   "name": "鄉鎮",
+   "svg": "s_city_4.svg"
+  },
+  "place=village": {
+   "name": "村莊",
+   "svg": "s_city_4.svg"
+  },
+  "power=generator": {
+   "name": "發電機組",
+   "svg": null
+  },
+  "power=line": {
+   "name": "高壓電線",
+   "svg": null
+  },
+  "power=minor_line": {
+   "name": "配電線",
+   "svg": null
+  },
+  "power=plant": {
+   "name": "發電廠",
+   "svg": null
+  },
+  "power=station": {
+   "name": "變電所",
+   "svg": null
+  },
+  "power=tower": {
+   "name": "高壓電塔",
+   "svg": "s_power_tower.svg"
+  },
+  "railway=abandoned": {
+   "name": "廢棄鐵路",
+   "svg": null
+  },
+  "railway=alpine_hut": {
+   "name": "山屋",
+   "svg": null
+  },
+  "railway=bakery": {
+   "name": "麵包店",
+   "svg": null
+  },
+  "railway=beverages": {
+   "name": "飲料店",
+   "svg": null
+  },
+  "railway=bicycle": {
+   "name": "自行車",
+   "svg": null
+  },
+  "railway=bus_guideway": {
+   "name": "導軌公車",
+   "svg": null
+  },
+  "railway=car": {
+   "name": "汽車服務",
+   "svg": null
+  },
+  "railway=convenience": {
+   "name": "便利商店",
+   "svg": null
+  },
+  "railway=crossing": {
+   "name": "平交道",
+   "svg": "s_railway-crossing-small.svg"
+  },
+  "railway=disused": {
+   "name": "停用鐵路",
+   "svg": null
+  },
+  "railway=doctors": {
+   "name": "診所",
+   "svg": null
+  },
+  "railway=doityourself": {
+   "name": "居家修繕店",
+   "svg": null
+  },
+  "railway=funicular": {
+   "name": "纜索鐵道",
+   "svg": null
+  },
+  "railway=halt": {
+   "name": "招呼站",
+   "svg": "s_pt_rail_thsr.svg"
+  },
+  "railway=hostel": {
+   "name": "青年旅館",
+   "svg": null
+  },
+  "railway=hotel": {
+   "name": "旅館",
+   "svg": null
+  },
+  "railway=level_crossing": {
+   "name": "平交道",
+   "svg": "s_railway-crossing.svg"
+  },
+  "railway=light_rail": {
+   "name": "輕軌",
+   "svg": "s_pt_tram.svg"
+  },
+  "railway=mall": {
+   "name": "購物中心",
+   "svg": null
+  },
+  "railway=miniature": {
+   "name": "迷你鐵道",
+   "svg": null
+  },
+  "railway=narrow_gauge": {
+   "name": "窄軌鐵路",
+   "svg": null
+  },
+  "railway=office": {
+   "name": "辦公處所",
+   "svg": null
+  },
+  "railway=place_of_worship": {
+   "name": "宗教場所",
+   "svg": null
+  },
+  "railway=platform": {
+   "name": "月台",
+   "svg": null
+  },
+  "railway=preserved": {
+   "name": "保存鐵道",
+   "svg": null
+  },
+  "railway=rail": {
+   "name": "鐵路",
+   "svg": null
+  },
+  "railway=restaurant": {
+   "name": "餐廳",
+   "svg": null
+  },
+  "railway=shelter": {
+   "name": "遮蔽所",
+   "svg": null
+  },
+  "railway=sports": {
+   "name": "運動用品店",
+   "svg": null
+  },
+  "railway=station": {
+   "name": "車站",
+   "svg": "s_pt_rail_thsr.svg"
+  },
+  "railway=subway": {
+   "name": "地鐵",
+   "svg": null
+  },
+  "railway=supermarket": {
+   "name": "超市",
+   "svg": null
+  },
+  "railway=theatre": {
+   "name": "劇院",
+   "svg": null
+  },
+  "railway=toilets": {
+   "name": "廁所",
+   "svg": null
+  },
+  "railway=tram": {
+   "name": "路面電車",
+   "svg": null
+  },
+  "railway=tram_stop": {
+   "name": "電車站",
+   "svg": "s_pt_tram.svg"
+  },
+  "religion=buddhist": {
+   "name": "佛教",
+   "svg": "s_buddhist.svg"
+  },
+  "religion=christian": {
+   "name": "基督教",
+   "svg": "s_church.svg"
+  },
+  "religion=hindu": {
+   "name": "印度教",
+   "svg": "s_hindu.svg"
+  },
+  "religion=jewish": {
+   "name": "猶太教",
+   "svg": "s_synagogue.svg"
+  },
+  "religion=muslim": {
+   "name": "伊斯蘭教",
+   "svg": "s_mosque.svg"
+  },
+  "religion=shinto": {
+   "name": "神道教",
+   "svg": "s_shinto.svg"
+  },
+  "route=cable_car": {
+   "name": "纜車路線",
+   "svg": null
+  },
+  "route=ferry": {
+   "name": "渡輪航線",
+   "svg": null
+  },
+  "route=gondola": {
+   "name": "纜車路線",
+   "svg": null
+  },
+  "rungs=ld_yes": {
+   "name": "梯子",
+   "svg": null
+  },
+  "rungs=rn_yes": {
+   "name": "踏階",
+   "svg": "s_rungs.svg"
+  },
+  "rungs=sr_yes": {
+   "name": "安全繩",
+   "svg": null
+  },
+  "safety_rope=ld_yes": {
+   "name": "梯子",
+   "svg": null
+  },
+  "safety_rope=rn_yes": {
+   "name": "踏階",
+   "svg": null
+  },
+  "safety_rope=sr_yes": {
+   "name": "安全繩",
+   "svg": "s_safety_rope.svg"
+  },
+  "shelter=no": {
+   "name": "無遮蔽所",
+   "svg": "s_pt_bus_stop.svg"
+  },
+  "shelter=yes": {
+   "name": "有遮蔽所",
+   "svg": "s_pt_bus_stop_shelter.svg"
+  },
+  "shelter_type=basic_hut": {
+   "name": "簡易山屋",
+   "svg": "s_shelter_basic_hut.svg"
+  },
+  "shelter_type=lean_to": {
+   "name": "遮雨棚",
+   "svg": "s_shelter.svg"
+  },
+  "shelter_type=picnic_shelter": {
+   "name": "野餐亭",
+   "svg": "s_shelter_picnic.svg"
+  },
+  "shelter_type=rock_shelter": {
+   "name": "岩窟遮蔽",
+   "svg": "s_shelter_rock.svg"
+  },
+  "shelter_type=weather_shelter": {
+   "name": "避雨亭",
+   "svg": "s_shelter.svg"
+  },
+  "shop=alpine_hut": {
+   "name": "山屋",
+   "svg": null
+  },
+  "shop=bakery": {
+   "name": "麵包店",
+   "svg": "s_bakery.svg"
+  },
+  "shop=beverages": {
+   "name": "飲料店",
+   "svg": "s_beverages.svg"
+  },
+  "shop=bicycle": {
+   "name": "自行車",
+   "svg": "s_bicycle_shop.svg"
+  },
+  "shop=bicycle_tube": {
+   "name": "自行車補給",
+   "svg": "s_bicycle_shop.svg"
+  },
+  "shop=books": {
+   "name": "書店",
+   "svg": "s_books.svg"
+  },
+  "shop=butcher": {
+   "name": "肉舖",
+   "svg": "s_butcher.svg"
+  },
+  "shop=car": {
+   "name": "汽車服務",
+   "svg": "s_car_shop.svg"
+  },
+  "shop=chemist": {
+   "name": "藥妝店",
+   "svg": "s_chemist.svg"
+  },
+  "shop=convenience": {
+   "name": "便利商店",
+   "svg": "s_convenience.svg"
+  },
+  "shop=doctors": {
+   "name": "診所",
+   "svg": null
+  },
+  "shop=doityourself": {
+   "name": "居家修繕店",
+   "svg": "s_doityourself.svg"
+  },
+  "shop=hostel": {
+   "name": "青年旅館",
+   "svg": null
+  },
+  "shop=hotel": {
+   "name": "旅館",
+   "svg": null
+  },
+  "shop=laundry": {
+   "name": "洗衣店",
+   "svg": "s_laundry.svg"
+  },
+  "shop=mall": {
+   "name": "購物中心",
+   "svg": "s_mall.svg"
+  },
+  "shop=office": {
+   "name": "辦公處所",
+   "svg": null
+  },
+  "shop=organic": {
+   "name": "有機商店",
+   "svg": "s_organic.svg"
+  },
+  "shop=place_of_worship": {
+   "name": "宗教場所",
+   "svg": null
+  },
+  "shop=restaurant": {
+   "name": "餐廳",
+   "svg": null
+  },
+  "shop=shelter": {
+   "name": "遮蔽所",
+   "svg": null
+  },
+  "shop=sports": {
+   "name": "運動用品店",
+   "svg": "s_sports_shop.svg"
+  },
+  "shop=station": {
+   "name": "車站",
+   "svg": null
+  },
+  "shop=supermarket": {
+   "name": "超市",
+   "svg": "s_supermarket.svg"
+  },
+  "shop=theatre": {
+   "name": "劇院",
+   "svg": null
+  },
+  "shop=toilets": {
+   "name": "廁所",
+   "svg": null
+  },
+  "shop=travel_agency": {
+   "name": "旅行社",
+   "svg": "s_travel_agency.svg"
+  },
+  "sport=cl_yes": {
+   "name": "可攀岩",
+   "svg": "s_climbing.svg"
+  },
+  "sport=climbing": {
+   "name": "攀岩",
+   "svg": "s_climbing.svg"
+  },
+  "sport=golf": {
+   "name": "高爾夫",
+   "svg": "s_golf.svg"
+  },
+  "sport=golf_course": {
+   "name": "高爾夫",
+   "svg": "s_golf.svg"
+  },
+  "sport=shooting": {
+   "name": "射擊",
+   "svg": "s_shooting.svg"
+  },
+  "sport=soccer": {
+   "name": "足球",
+   "svg": "s_soccer.svg"
+  },
+  "sport=sports_centre": {
+   "name": "運動中心",
+   "svg": null
+  },
+  "sport=stadium": {
+   "name": "體育場",
+   "svg": null
+  },
+  "sport=swimming": {
+   "name": "游泳",
+   "svg": "s_swimming_outdoor.svg"
+  },
+  "sport=tennis": {
+   "name": "網球",
+   "svg": "s_tennis.svg"
+  },
+  "sport=water_park": {
+   "name": "水上樂園",
+   "svg": null
+  },
+  "station=light_rail": {
+   "name": "輕軌站",
+   "svg": "s_pt_subway_new_taipei.svg"
+  },
+  "station=subway": {
+   "name": "地鐵站",
+   "svg": "s_pt_subway_taipei.svg"
+  },
+  "station=tram_stop": {
+   "name": "電車站",
+   "svg": "s_pt_tram.svg"
+  },
+  "survey_point=bm_aero": {
+   "name": "航測水準點",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_cgs": {
+   "name": "內政部水準點",
+   "svg": "s_sp_bm_new.svg"
+  },
+  "survey_point=bm_japan1": {
+   "name": "日治水準點 (一型)",
+   "svg": "s_sp_bm_japan1.svg"
+  },
+  "survey_point=bm_japan2": {
+   "name": "日治水準點 (二型)",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_kaohsiung": {
+   "name": "高雄水準點",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_new": {
+   "name": "新水準點",
+   "svg": "s_sp_bm_new.svg"
+  },
+  "survey_point=bm_old": {
+   "name": "舊水準點",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_port": {
+   "name": "港務水準點",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_reservoir": {
+   "name": "水庫水準點",
+   "svg": "s_sp_bm_water.svg"
+  },
+  "survey_point=bm_sinica": {
+   "name": "中研院水準點",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_tainan": {
+   "name": "台南水準點",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_taipower": {
+   "name": "台電水準點",
+   "svg": "s_sp_bm_japan2.svg"
+  },
+  "survey_point=bm_water": {
+   "name": "水利水準點",
+   "svg": "s_sp_bm_water.svg"
+  },
+  "survey_point=farm_bureau": {
+   "name": "農林基點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=farm_hengchun": {
+   "name": "恆春農場基點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_aero": {
+   "name": "林務航測點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_boundary": {
+   "name": "林班界點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_exfo": {
+   "name": "舊林務基點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_exfo_JP": {
+   "name": "日治林務基點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_monopoly": {
+   "name": "專賣局基點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_mountain": {
+   "name": "高山基點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_suppl": {
+   "name": "森林補點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_trig": {
+   "name": "森林三角點",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=forest_trig_aero": {
+   "name": "森林三角點 (航測)",
+   "svg": "s_sp_forest_trig.svg"
+  },
+  "survey_point=hsinchu_water": {
+   "name": "新竹水利基點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=kaohsiung": {
+   "name": "高雄圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=keelung": {
+   "name": "基隆圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=kinmen": {
+   "name": "金門圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=miaoli": {
+   "name": "苗栗圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=miaoli_old": {
+   "name": "苗栗舊圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=military_zone": {
+   "name": "軍事管制基點",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=military_zone_A": {
+   "name": "軍事管制基點 (甲)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=mine": {
+   "name": "礦業基點",
+   "svg": "s_sp_mine.svg"
+  },
+  "survey_point=mine_suppl": {
+   "name": "礦業補點",
+   "svg": "s_sp_mine_suppl.svg"
+  },
+  "survey_point=navy_suppl_JP": {
+   "name": "海軍補點 (日治)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=navy_suppl_TW": {
+   "name": "海軍補點 (戰後)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=navy_trig_JP": {
+   "name": "海軍三角點 (日治)",
+   "svg": "s_sp_navy_trig.svg"
+  },
+  "survey_point=navy_trig_TW": {
+   "name": "海軍三角點 (戰後)",
+   "svg": "s_sp_navy_trig.svg"
+  },
+  "survey_point=penghu": {
+   "name": "澎湖圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=polygon_IT": {
+   "name": "圖根多邊點 (義式)",
+   "svg": "s_sp_polygon.svg"
+  },
+  "survey_point=polygon_TW": {
+   "name": "圖根多邊點 (戰後)",
+   "svg": "s_sp_polygon.svg"
+  },
+  "survey_point=replica": {
+   "name": "仿置基石",
+   "svg": "s_sp_replica.svg"
+  },
+  "survey_point=riverbank": {
+   "name": "河岸點",
+   "svg": "s_sp_bm_water.svg"
+  },
+  "survey_point=satellite_1st": {
+   "name": "一等衛星控制點",
+   "svg": "s_sp_satellite.svg"
+  },
+  "survey_point=satellite_2nd": {
+   "name": "二等衛星控制點",
+   "svg": "s_sp_satellite.svg"
+  },
+  "survey_point=satellite_3rd": {
+   "name": "三等衛星控制點",
+   "svg": "s_sp_satellite.svg"
+  },
+  "survey_point=satellite_4th": {
+   "name": "四等衛星控制點",
+   "svg": "s_sp_satellite.svg"
+  },
+  "survey_point=satellite_gps": {
+   "name": "衛星控制點 (GPS)",
+   "svg": "s_sp_satellite.svg"
+  },
+  "survey_point=sectionstake": {
+   "name": "段界樁",
+   "svg": "s_sp_bm_water.svg"
+  },
+  "survey_point=sinica_trig": {
+   "name": "中研院三角點",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=suppl": {
+   "name": "圖根補點",
+   "svg": "s_sp_suppl.svg"
+  },
+  "survey_point=suppl_CS": {
+   "name": "補點 (副點)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=suppl_FB": {
+   "name": "補點 (林務)",
+   "svg": "s_sp_suppl.svg"
+  },
+  "survey_point=suppl_GO": {
+   "name": "補點 (政府)",
+   "svg": "s_sp_suppl.svg"
+  },
+  "survey_point=suppl_IA": {
+   "name": "補點 (航測)",
+   "svg": "s_sp_suppl.svg"
+  },
+  "survey_point=suppl_TW": {
+   "name": "補點 (戰後)",
+   "svg": "s_sp_suppl.svg"
+  },
+  "survey_point=suppl_UN": {
+   "name": "補點 (不明)",
+   "svg": "s_sp_suppl.svg"
+  },
+  "survey_point=suppl_declination": {
+   "name": "補點 (磁偏觀測)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=suppl_eclipse": {
+   "name": "補點 (日食觀測)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=suppl_port": {
+   "name": "補點 (港務)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=suppl_taipower": {
+   "name": "補點 (台電)",
+   "svg": "s_sp_navy_suppl.svg"
+  },
+  "survey_point=taipei": {
+   "name": "台北圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=taipei_tax": {
+   "name": "台北稅務基點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=taipeic": {
+   "name": "台北市圖根點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=taiwanp": {
+   "name": "臺灣省精測點",
+   "svg": "s_sp_taiwanp.svg"
+  },
+  "survey_point=trig_1st": {
+   "name": "一等三角點",
+   "svg": "s_sp_trig.svg"
+  },
+  "survey_point=trig_1st_IC": {
+   "name": "一等三角點 (附樁)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_2nd": {
+   "name": "二等三角點",
+   "svg": "s_sp_trig.svg"
+  },
+  "survey_point=trig_2nd_CS": {
+   "name": "二等三角點 (副點)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_2nd_IC": {
+   "name": "二等三角點 (附樁)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_2nd_MC": {
+   "name": "二等三角點 (中心樁)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_2nd_RE": {
+   "name": "二等三角點 (重測)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_3rd": {
+   "name": "三等三角點",
+   "svg": "s_sp_trig.svg"
+  },
+  "survey_point=trig_3rd_CS": {
+   "name": "三等三角點 (副點)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_3rd_IC": {
+   "name": "三等三角點 (附樁)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_3rd_MC": {
+   "name": "三等三角點 (中心樁)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=trig_3rd_RE": {
+   "name": "三等三角點 (重測)",
+   "svg": "s_sp_trig_C.svg"
+  },
+  "survey_point=water_boundary": {
+   "name": "水利界點",
+   "svg": "s_sp_water_suppl.svg"
+  },
+  "survey_point=water_reservoir": {
+   "name": "水庫基點",
+   "svg": "s_sp_water_suppl.svg"
+  },
+  "survey_point=water_suppl": {
+   "name": "水利補點",
+   "svg": "s_sp_water_suppl.svg"
+  },
+  "survey_point=water_taipei": {
+   "name": "台北水利基點",
+   "svg": "s_sp_water_suppl.svg"
+  },
+  "survey_point=water_trig": {
+   "name": "水利三角點",
+   "svg": "s_sp_water_trig.svg"
+  },
+  "tourism=alpine_hut": {
+   "name": "山屋",
+   "svg": "s_alpine_hut.svg"
+  },
+  "tourism=apartment": {
+   "name": "公寓",
+   "svg": "s_apartment.svg"
+  },
+  "tourism=attraction": {
+   "name": "景點",
+   "svg": "s_attraction.svg"
+  },
+  "tourism=bakery": {
+   "name": "麵包店",
+   "svg": null
+  },
+  "tourism=beverages": {
+   "name": "飲料店",
+   "svg": null
+  },
+  "tourism=bicycle": {
+   "name": "自行車",
+   "svg": null
+  },
+  "tourism=camp_site": {
+   "name": "營地",
+   "svg": "s_camp_site.svg"
+  },
+  "tourism=car": {
+   "name": "汽車服務",
+   "svg": null
+  },
+  "tourism=caravan_site": {
+   "name": "露營車營地",
+   "svg": "s_caravan_site.svg"
+  },
+  "tourism=chalet": {
+   "name": "度假小屋",
+   "svg": "s_chalet.svg"
+  },
+  "tourism=convenience": {
+   "name": "便利商店",
+   "svg": null
+  },
+  "tourism=doctors": {
+   "name": "診所",
+   "svg": null
+  },
+  "tourism=doityourself": {
+   "name": "居家修繕店",
+   "svg": null
+  },
+  "tourism=hostel": {
+   "name": "青年旅館",
+   "svg": "s_hostel.svg"
+  },
+  "tourism=hotel": {
+   "name": "旅館",
+   "svg": "s_hotel.svg"
+  },
+  "tourism=information": {
+   "name": "旅遊資訊",
+   "svg": "s_information.svg"
+  },
+  "tourism=mall": {
+   "name": "購物中心",
+   "svg": null
+  },
+  "tourism=museum": {
+   "name": "博物館",
+   "svg": "s_museum.svg"
+  },
+  "tourism=office": {
+   "name": "辦公處所",
+   "svg": null
+  },
+  "tourism=picnic_site": {
+   "name": "野餐區",
+   "svg": "s_picnic_site.svg"
+  },
+  "tourism=picnic_table": {
+   "name": "野餐桌",
+   "svg": "s_picnic_site.svg"
+  },
+  "tourism=place_of_worship": {
+   "name": "宗教場所",
+   "svg": null
+  },
+  "tourism=recreation_ground": {
+   "name": "遊憩區",
+   "svg": null
+  },
+  "tourism=restaurant": {
+   "name": "餐廳",
+   "svg": null
+  },
+  "tourism=shelter": {
+   "name": "遮蔽所",
+   "svg": null
+  },
+  "tourism=sports": {
+   "name": "運動用品店",
+   "svg": null
+  },
+  "tourism=station": {
+   "name": "車站",
+   "svg": null
+  },
+  "tourism=supermarket": {
+   "name": "超市",
+   "svg": null
+  },
+  "tourism=theatre": {
+   "name": "劇院",
+   "svg": null
+  },
+  "tourism=toilets": {
+   "name": "廁所",
+   "svg": null
+  },
+  "tourism=viewpoint": {
+   "name": "觀景點",
+   "svg": "s_viewpoint.svg"
+  },
+  "tourism=wilderness_hut": {
+   "name": "荒野小屋",
+   "svg": "s_wilderness_hut.svg"
+  },
+  "tourism=zoo": {
+   "name": "動物園",
+   "svg": "s_zoo.svg"
+  },
+  "tower=communication": {
+   "name": "通訊塔",
+   "svg": "s_tower_communication.svg"
+  },
+  "tower=observation": {
+   "name": "瞭望塔",
+   "svg": "s_tower_observation.svg"
+  },
+  "vending=bicycle": {
+   "name": "自行車",
+   "svg": "s_bicycle_shop.svg"
+  },
+  "vending=bicycle_tube": {
+   "name": "自行車補給",
+   "svg": "s_bicycle_shop.svg"
+  },
+  "via_ferrata_flag=set": {
+   "name": "攀岩鐵道",
+   "svg": "s_via_ferrata.svg"
+  },
+  "via_ferrata_flag=yes": {
+   "name": "攀岩鐵道",
+   "svg": "s_via_ferrata.svg"
+  },
+  "waterway=canal": {
+   "name": "運河",
+   "svg": null
+  },
+  "waterway=dam": {
+   "name": "水壩",
+   "svg": null
+  },
+  "waterway=ditch": {
+   "name": "溝渠",
+   "svg": null
+  },
+  "waterway=dock": {
+   "name": "船塢",
+   "svg": null
+  },
+  "waterway=drain": {
+   "name": "排水溝",
+   "svg": null
+  },
+  "waterway=drinking_water": {
+   "name": "飲水點",
+   "svg": "s_drinking_water.svg"
+  },
+  "waterway=rapids": {
+   "name": "急流",
+   "svg": "s_rapids.svg"
+  },
+  "waterway=river": {
+   "name": "河流",
+   "svg": null
+  },
+  "waterway=riverbank": {
+   "name": "河岸點",
+   "svg": null
+  },
+  "waterway=stream": {
+   "name": "溪流",
+   "svg": null
+  },
+  "waterway=water_point": {
+   "name": "取水點",
+   "svg": "s_drinking_water.svg"
+  },
+  "waterway=waterfall": {
+   "name": "瀑布",
+   "svg": "s_waterfall.svg"
+  },
+  "waterway=weir": {
+   "name": "攔河堰",
+   "svg": "s_weir.svg"
+  }
+ },
+ "version": "2026.06.18"
+}

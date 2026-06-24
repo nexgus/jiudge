@@ -23,6 +23,7 @@ key.properties
 *.log
 .DS_Store
 .history
+.tmp/
 
 # RudyMap data (downloaded at runtime / produced locally; never committed)
 /mapdata/

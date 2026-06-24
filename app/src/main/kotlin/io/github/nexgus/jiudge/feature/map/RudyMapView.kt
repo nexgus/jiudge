@@ -49,7 +49,10 @@ object RudyMapView {
                 mapScaleBar.isVisible = false
                 setBuiltInZoomControls(false)
                 setZoomLevelMin(0)
-                setZoomLevelMax(21) // RudyMap's `.map` tops out around zoom 21.
+                // `.map` detail tops out around zoom 21; beyond that mapsforge over-zooms
+                // (vector geometry and labels are scaled up, no new detail). Allow one
+                // over-zoom level (22) to match RudyMap's reach.
+                setZoomLevelMax(22)
             }
 
         val tileCache =

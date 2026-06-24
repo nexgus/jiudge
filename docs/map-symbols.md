@@ -1,0 +1,574 @@
+# 地圖符號對照表
+
+**地圖資料版本: v2026.06.18** (RudyMap MOI.OSM Taiwan TOPO)
+
+本表列出渲染主題 `MOI_OSM.xml` 會在地圖上畫出的所有物件, 以及對應的 OSM 標籤與中文意義. 供 "?" 符號辨識功能與使用者查閱之用. 由 `scripts/gen_symbols.py` 自動產生, 請勿手動編輯.
+
+- 排序: 先依 `value` (英文內容), 再依 `key`. 中文翻譯不參與排序.
+- 同一個 `value` 常掛在多個 `key` 下 (RudyMap 對 POI 的寬鬆比對), 因此會出現多列.
+- 測量基準點 (`survey_point`) 子類眾多, 中文為盡力翻譯, 專業名稱可能需校訂.
+- 完整標籤為 `key=value`.
+
+共 559 列, 402 種物件.
+
+| value | key | 中文 |
+|---|---|---|
+| `abandoned` | `highway` | 廢棄道路 |
+| `abandoned` | `railway` | 廢棄鐵路 |
+| `aerodrome` | `aeroway` | 機場 |
+| `air_defense_shelter` | `amenity` | 防空避難所 |
+| `airport` | `aeroway` | 機場 |
+| `allotments` | `landuse` | 市民農園 |
+| `alpine_hut` | `amenity` | 山屋 |
+| `alpine_hut` | `information` | 山屋 |
+| `alpine_hut` | `railway` | 山屋 |
+| `alpine_hut` | `shop` | 山屋 |
+| `alpine_hut` | `tourism` | 山屋 |
+| `apartment` | `tourism` | 公寓 |
+| `apron` | `aeroway` | 停機坪 |
+| `archaeological_site` | `historic` | 考古遺址 |
+| `atm` | `amenity` | 自動提款機 |
+| `attraction` | `tourism` | 景點 |
+| `bakery` | `amenity` | 麵包店 |
+| `bakery` | `information` | 麵包店 |
+| `bakery` | `railway` | 麵包店 |
+| `bakery` | `shop` | 麵包店 |
+| `bakery` | `tourism` | 麵包店 |
+| `bank` | `amenity` | 銀行 |
+| `bar` | `amenity` | 酒吧 |
+| `basic_hut` | `shelter_type` | 簡易山屋 |
+| `basin` | `landuse` | 蓄水池 |
+| `beach` | `natural` | 海灘 |
+| `bench` | `amenity` | 長椅 |
+| `beverages` | `amenity` | 飲料店 |
+| `beverages` | `information` | 飲料店 |
+| `beverages` | `railway` | 飲料店 |
+| `beverages` | `shop` | 飲料店 |
+| `beverages` | `tourism` | 飲料店 |
+| `bicycle` | `amenity` | 自行車 |
+| `bicycle` | `information` | 自行車 |
+| `bicycle` | `railway` | 自行車 |
+| `bicycle` | `shop` | 自行車 |
+| `bicycle` | `tourism` | 自行車 |
+| `bicycle` | `vending` | 自行車 |
+| `bicycle_rental` | `amenity` | 自行車租賃 |
+| `bicycle_rental_Moovo` | `amenity` | Moovo 站 |
+| `bicycle_rental_YouBike` | `amenity` | YouBike 站 |
+| `bicycle_tube` | `shop` | 自行車補給 |
+| `bicycle_tube` | `vending` | 自行車補給 |
+| `biergarten` | `amenity` | 啤酒花園 |
+| `block` | `barrier` | 石墩 |
+| `bm_aero` | `survey_point` | 航測水準點 |
+| `bm_cgs` | `survey_point` | 內政部水準點 |
+| `bm_japan1` | `survey_point` | 日治水準點 (一型) |
+| `bm_japan2` | `survey_point` | 日治水準點 (二型) |
+| `bm_kaohsiung` | `survey_point` | 高雄水準點 |
+| `bm_new` | `survey_point` | 新水準點 |
+| `bm_old` | `survey_point` | 舊水準點 |
+| `bm_port` | `survey_point` | 港務水準點 |
+| `bm_reservoir` | `survey_point` | 水庫水準點 |
+| `bm_sinica` | `survey_point` | 中研院水準點 |
+| `bm_tainan` | `survey_point` | 台南水準點 |
+| `bm_taipower` | `survey_point` | 台電水準點 |
+| `bm_water` | `survey_point` | 水利水準點 |
+| `board` | `information` | 資訊看板 |
+| `bollard` | `barrier` | 車擋柱 |
+| `books` | `shop` | 書店 |
+| `border_control` | `barrier` | 邊境管制 |
+| `bridleway` | `highway` | 馬道 |
+| `brownfield` | `landuse` | 待開發地 |
+| `buddhist` | `religion` | 佛教 |
+| `bus_guideway` | `highway` | 公車專用道 |
+| `bus_guideway` | `railway` | 導軌公車 |
+| `bus_station` | `amenity` | 公車總站 |
+| `bus_stop` | `highway` | 公車站 |
+| `butcher` | `shop` | 肉舖 |
+| `byway` | `highway` | 鄉間小道 |
+| `cable_car` | `aerialway` | 纜車 |
+| `cable_car` | `route` | 纜車路線 |
+| `cafe` | `amenity` | 咖啡館 |
+| `camp_site` | `landuse` | 營地用地 |
+| `camp_site` | `leisure` | 營地 |
+| `camp_site` | `tourism` | 營地 |
+| `canal` | `waterway` | 運河 |
+| `canyon` | `natural` | 峽谷 |
+| `car` | `amenity` | 汽車服務 |
+| `car` | `information` | 汽車服務 |
+| `car` | `railway` | 汽車服務 |
+| `car` | `shop` | 汽車服務 |
+| `car` | `tourism` | 汽車服務 |
+| `caravan_site` | `landuse` | 露營車營地用地 |
+| `caravan_site` | `leisure` | 露營車營地 |
+| `caravan_site` | `tourism` | 露營車營地 |
+| `castle` | `building` | 城堡 (建物) |
+| `castle` | `historic` | 城堡 |
+| `cave_entrance` | `natural` | 洞穴口 |
+| `cemetery` | `amenity` | 墓地 |
+| `cemetery` | `landuse` | 墓地用地 |
+| `chain` | `barrier` | 鐵鍊 |
+| `chair_lift` | `aerialway` | 吊椅纜車 |
+| `chalet` | `tourism` | 度假小屋 |
+| `chemist` | `shop` | 藥妝店 |
+| `christian` | `religion` | 基督教 |
+| `cinema` | `amenity` | 電影院 |
+| `city` | `place` | 城市 |
+| `city_wall` | `barrier` | 城牆 |
+| `city_wall` | `building` | 城牆 (建物) |
+| `cl_yes` | `climbing` | 可攀岩 |
+| `cl_yes` | `sport` | 可攀岩 |
+| `cliff` | `natural` | 懸崖 |
+| `climbing` | `climbing` | 攀岩 |
+| `climbing` | `sport` | 攀岩 |
+| `coal` | `generator:source` | 燃煤發電 |
+| `college` | `amenity` | 專科學校 |
+| `commercial` | `landuse` | 商業區 |
+| `common` | `landuse` | 公共綠地 |
+| `common` | `leisure` | 公共綠地 |
+| `communication` | `tower` | 通訊塔 |
+| `communications_tower` | `man_made` | 通訊塔 |
+| `construction` | `highway` | 施工中道路 |
+| `construction` | `landuse` | 施工區 |
+| `convenience` | `amenity` | 便利商店 |
+| `convenience` | `information` | 便利商店 |
+| `convenience` | `railway` | 便利商店 |
+| `convenience` | `shop` | 便利商店 |
+| `convenience` | `tourism` | 便利商店 |
+| `county` | `place` | 縣市 |
+| `crater` | `natural` | 火山口 |
+| `crevasse` | `natural` | 冰隙 |
+| `crossing` | `railway` | 平交道 |
+| `cycle_barrier` | `barrier` | 自行車檔 |
+| `cycleway` | `highway` | 自行車道 |
+| `dam` | `waterway` | 水壩 |
+| `defibrillator` | `emergency` | AED 自動電擊器 |
+| `desert` | `natural` | 沙漠 |
+| `disused` | `highway` | 停用道路 |
+| `disused` | `railway` | 停用鐵路 |
+| `ditch` | `waterway` | 溝渠 |
+| `dock` | `waterway` | 船塢 |
+| `doctors` | `amenity` | 診所 |
+| `doctors` | `information` | 診所 |
+| `doctors` | `railway` | 診所 |
+| `doctors` | `shop` | 診所 |
+| `doctors` | `tourism` | 診所 |
+| `dog_park` | `leisure` | 寵物公園 |
+| `doityourself` | `amenity` | 居家修繕店 |
+| `doityourself` | `information` | 居家修繕店 |
+| `doityourself` | `railway` | 居家修繕店 |
+| `doityourself` | `shop` | 居家修繕店 |
+| `doityourself` | `tourism` | 居家修繕店 |
+| `downhill` | `piste:type` | 滑雪道 |
+| `drag_lift` | `aerialway` | 拖曳索道 |
+| `drain` | `waterway` | 排水溝 |
+| `drinking_water` | `amenity` | 飲用水 |
+| `drinking_water` | `waterway` | 飲水點 |
+| `dyke` | `man_made` | 堤防 |
+| `emb_yes` | `man_made` | 堤岸 |
+| `embankment` | `man_made` | 堤岸 |
+| `embassy` | `amenity` | 大使館 |
+| `embassy` | `building` | 大使館 (建物) |
+| `emergency_access_point` | `highway` | 緊急救護點 |
+| `farm` | `landuse` | 農場 |
+| `farm_bureau` | `survey_point` | 農林基點 |
+| `farm_hengchun` | `survey_point` | 恆春農場基點 |
+| `farmland` | `landuse` | 農田 |
+| `farmyard` | `landuse` | 農莊 |
+| `fast_food` | `amenity` | 速食店 |
+| `fd_yes` | `ford` | 渡河處 |
+| `fd_yes` | `highway` | 渡河處 |
+| `fell` | `natural` | 高地草坡 |
+| `fence` | `barrier` | 圍籬 |
+| `ferry` | `aerialway` | 渡輪 |
+| `ferry` | `route` | 渡輪航線 |
+| `ferry_terminal` | `amenity` | 渡輪碼頭 |
+| `field` | `landuse` | 田地 |
+| `fire_station` | `amenity` | 消防隊 |
+| `fjord` | `natural` | 峽灣 |
+| `footway` | `highway` | 人行步道 |
+| `ford` | `ford` | 渡河處 |
+| `ford` | `highway` | 渡河處 |
+| `forest` | `landuse` | 林地 |
+| `forest` | `natural` | 森林 |
+| `forest_aero` | `survey_point` | 林務航測點 |
+| `forest_boundary` | `survey_point` | 林班界點 |
+| `forest_compartment` | `boundary` | 林班界 |
+| `forest_exfo` | `survey_point` | 舊林務基點 |
+| `forest_exfo_JP` | `survey_point` | 日治林務基點 |
+| `forest_monopoly` | `survey_point` | 專賣局基點 |
+| `forest_mountain` | `survey_point` | 高山基點 |
+| `forest_suppl` | `survey_point` | 森林補點 |
+| `forest_trig` | `survey_point` | 森林三角點 |
+| `forest_trig_aero` | `survey_point` | 森林三角點 (航測) |
+| `fountain` | `amenity` | 噴泉 |
+| `fuel` | `amenity` | 加油站 |
+| `funicular` | `highway` | 纜索鐵道 |
+| `funicular` | `railway` | 纜索鐵道 |
+| `garages` | `landuse` | 車庫區 |
+| `garden` | `landuse` | 庭園 |
+| `garden` | `leisure` | 花園 |
+| `gas` | `generator:source` | 燃氣發電 |
+| `gate` | `barrier` | 柵門 |
+| `generator` | `power` | 發電機組 |
+| `geyser` | `natural` | 間歇泉 |
+| `giant_tree` | `natural` | 老樹 |
+| `glacier` | `natural` | 冰川 |
+| `golf` | `leisure` | 高爾夫 |
+| `golf` | `sport` | 高爾夫 |
+| `golf_course` | `leisure` | 高爾夫球場 |
+| `golf_course` | `sport` | 高爾夫 |
+| `gondola` | `aerialway` | 吊廂纜車 |
+| `gondola` | `route` | 纜車路線 |
+| `goods` | `aerialway` | 貨運纜車 |
+| `gorge` | `natural` | 峽谷 |
+| `grass` | `landuse` | 草地 |
+| `grass` | `natural` | 草地 |
+| `grassland` | `landuse` | 草原 |
+| `grassland` | `natural` | 草原 |
+| `grave_yard` | `amenity` | 墓園 |
+| `grave_yard` | `landuse` | 墓園 |
+| `greenfield` | `landuse` | 未開發地 |
+| `groyne` | `man_made` | 丁壩 |
+| `guidepost` | `information` | 指示牌 |
+| `halt` | `railway` | 招呼站 |
+| `hamlet` | `place` | 小村 |
+| `heath` | `natural` | 荒原 |
+| `helipad` | `aeroway` | 直升機坪 |
+| `hindu` | `religion` | 印度教 |
+| `hospital` | `amenity` | 醫院 |
+| `hostel` | `amenity` | 青年旅館 |
+| `hostel` | `information` | 青年旅館 |
+| `hostel` | `railway` | 青年旅館 |
+| `hostel` | `shop` | 青年旅館 |
+| `hostel` | `tourism` | 青年旅館 |
+| `hot_spring` | `natural` | 溫泉 |
+| `hotel` | `amenity` | 旅館 |
+| `hotel` | `building` | 旅館 (建物) |
+| `hotel` | `information` | 旅館 |
+| `hotel` | `railway` | 旅館 |
+| `hotel` | `shop` | 旅館 |
+| `hotel` | `tourism` | 旅館 |
+| `hsinchu_water` | `survey_point` | 新竹水利基點 |
+| `hydro` | `generator:source` | 水力發電 |
+| `industrial` | `landuse` | 工業區 |
+| `information` | `tourism` | 旅遊資訊 |
+| `jewish` | `religion` | 猶太教 |
+| `kaohsiung` | `survey_point` | 高雄圖根點 |
+| `keelung` | `survey_point` | 基隆圖根點 |
+| `kindergarten` | `amenity` | 幼兒園 |
+| `kinmen` | `survey_point` | 金門圖根點 |
+| `kissing_gate` | `barrier` | 轉門 |
+| `landfill` | `landuse` | 掩埋場 |
+| `landing_site` | `emergency` | 直升機降落點 |
+| `laundry` | `shop` | 洗衣店 |
+| `ld_yes` | `ladder` | 梯子 |
+| `ld_yes` | `rungs` | 梯子 |
+| `ld_yes` | `safety_rope` | 梯子 |
+| `lean_to` | `shelter_type` | 遮雨棚 |
+| `level_crossing` | `railway` | 平交道 |
+| `library` | `amenity` | 圖書館 |
+| `library` | `building` | 圖書館 (建物) |
+| `lift_gate` | `barrier` | 升降桿 |
+| `light_rail` | `highway` | 輕軌 |
+| `light_rail` | `railway` | 輕軌 |
+| `light_rail` | `station` | 輕軌站 |
+| `lighthouse` | `man_made` | 燈塔 |
+| `line` | `power` | 高壓電線 |
+| `living_street` | `highway` | 生活化道路 |
+| `ls_track` | `leisure` | 休閒步道 |
+| `magic_carpet` | `aerialway` | 輸送帶纜道 |
+| `mall` | `amenity` | 購物中心 |
+| `mall` | `information` | 購物中心 |
+| `mall` | `railway` | 購物中心 |
+| `mall` | `shop` | 購物中心 |
+| `mall` | `tourism` | 購物中心 |
+| `map_inner` | `boundary` | 圖框內界 |
+| `marketplace` | `amenity` | 市集 |
+| `marsh` | `natural` | 沼澤 |
+| `mast` | `man_made` | 桅桿 |
+| `meadow` | `landuse` | 牧草地 |
+| `meadow` | `natural` | 牧草地 |
+| `memorial` | `historic` | 紀念物 |
+| `miaoli` | `survey_point` | 苗栗圖根點 |
+| `miaoli_old` | `survey_point` | 苗栗舊圖根點 |
+| `military` | `landuse` | 軍事用地 |
+| `military_zone` | `survey_point` | 軍事管制基點 |
+| `military_zone_A` | `survey_point` | 軍事管制基點 (甲) |
+| `mine` | `survey_point` | 礦業基點 |
+| `mine_suppl` | `survey_point` | 礦業補點 |
+| `mini_roundabout` | `highway` | 小型圓環 |
+| `miniature` | `highway` | 迷你鐵道 |
+| `miniature` | `railway` | 迷你鐵道 |
+| `minor_line` | `power` | 配電線 |
+| `mixed_lift` | `aerialway` | 混合纜車 |
+| `mobile` | `information` | 行動資訊 |
+| `monument` | `historic` | 紀念碑 |
+| `motorway` | `highway` | 高速公路 |
+| `motorway_junction` | `highway` | 交流道 |
+| `motorway_link` | `highway` | 高速公路匝道 |
+| `museum` | `building` | 博物館 (建物) |
+| `museum` | `tourism` | 博物館 |
+| `muslim` | `religion` | 伊斯蘭教 |
+| `narrow_gauge` | `highway` | 窄軌鐵路 |
+| `narrow_gauge` | `railway` | 窄軌鐵路 |
+| `national_park` | `boundary` | 國家公園界線 |
+| `navy_suppl_JP` | `survey_point` | 海軍補點 (日治) |
+| `navy_suppl_TW` | `survey_point` | 海軍補點 (戰後) |
+| `navy_trig_JP` | `survey_point` | 海軍三角點 (日治) |
+| `navy_trig_TW` | `survey_point` | 海軍三角點 (戰後) |
+| `no` | `shelter` | 無遮蔽所 |
+| `nordic` | `piste:type` | 越野滑雪道 |
+| `nosea` | `natural` | 非海域遮罩 |
+| `nuclear` | `generator:source` | 核能發電 |
+| `observation` | `tower` | 瞭望塔 |
+| `office` | `amenity` | 辦公處所 |
+| `office` | `information` | 辦公處所 |
+| `office` | `railway` | 辦公處所 |
+| `office` | `shop` | 辦公處所 |
+| `office` | `tourism` | 辦公處所 |
+| `orchard` | `landuse` | 果園 |
+| `organic` | `shop` | 有機商店 |
+| `park` | `leisure` | 公園 |
+| `parking` | `amenity` | 停車場 |
+| `path` | `highway` | 登山步道 |
+| `peak` | `natural` | 山峰 |
+| `pedestrian` | `highway` | 行人徒步區 |
+| `penghu` | `survey_point` | 澎湖圖根點 |
+| `peninsula` | `natural` | 半島 |
+| `pharmacy` | `amenity` | 藥局 |
+| `phone` | `emergency` | 緊急電話 |
+| `picnic_shelter` | `shelter_type` | 野餐亭 |
+| `picnic_site` | `landuse` | 野餐區用地 |
+| `picnic_site` | `leisure` | 野餐區 |
+| `picnic_site` | `tourism` | 野餐區 |
+| `picnic_table` | `leisure` | 野餐桌 |
+| `picnic_table` | `tourism` | 野餐桌 |
+| `pier` | `man_made` | 棧橋 |
+| `pipeline` | `man_made` | 管線 |
+| `pitch` | `leisure` | 球場 |
+| `place_of_worship` | `amenity` | 宗教場所 |
+| `place_of_worship` | `information` | 宗教場所 |
+| `place_of_worship` | `railway` | 宗教場所 |
+| `place_of_worship` | `shop` | 宗教場所 |
+| `place_of_worship` | `tourism` | 宗教場所 |
+| `plant` | `power` | 發電廠 |
+| `plaque` | `memorial` | 紀念牌 |
+| `platform` | `highway` | 月台 |
+| `platform` | `railway` | 月台 |
+| `playground` | `leisure` | 遊樂場 |
+| `police` | `amenity` | 警察局 / 派出所 |
+| `polygon_IT` | `survey_point` | 圖根多邊點 (義式) |
+| `polygon_TW` | `survey_point` | 圖根多邊點 (戰後) |
+| `portable_altitude_chamber` | `emergency` | 攜帶式高壓氧艙 |
+| `post_box` | `amenity` | 郵筒 |
+| `post_office` | `amenity` | 郵局 |
+| `preserved` | `highway` | 保存鐵道 |
+| `preserved` | `railway` | 保存鐵道 |
+| `primary` | `highway` | 主要道路 |
+| `primary_link` | `highway` | 主要道路匝道 |
+| `pub` | `amenity` | 酒館 |
+| `quarry` | `landuse` | 採石場 |
+| `raceway` | `highway` | 賽道 |
+| `rail` | `railway` | 鐵路 |
+| `railway` | `landuse` | 鐵路用地 |
+| `rapids` | `natural` | 急流 |
+| `rapids` | `waterway` | 急流 |
+| `recreation_ground` | `landuse` | 遊憩地 |
+| `recreation_ground` | `leisure` | 遊憩場 |
+| `recreation_ground` | `tourism` | 遊憩區 |
+| `recycling` | `amenity` | 回收站 |
+| `replica` | `survey_point` | 仿置基石 |
+| `reservoir` | `landuse` | 水庫 |
+| `residential` | `highway` | 住宅區道路 |
+| `residential` | `landuse` | 住宅區 |
+| `restaurant` | `amenity` | 餐廳 |
+| `restaurant` | `information` | 餐廳 |
+| `restaurant` | `railway` | 餐廳 |
+| `restaurant` | `shop` | 餐廳 |
+| `restaurant` | `tourism` | 餐廳 |
+| `retail` | `landuse` | 零售區 |
+| `retaining_wall` | `barrier` | 擋土牆 |
+| `river` | `waterway` | 河流 |
+| `riverbank` | `survey_point` | 河岸點 |
+| `riverbank` | `waterway` | 河岸點 |
+| `rn_yes` | `ladder` | 踏階 |
+| `rn_yes` | `rungs` | 踏階 |
+| `rn_yes` | `safety_rope` | 踏階 |
+| `road` | `highway` | 道路 |
+| `rock` | `natural` | 岩石 |
+| `rock_shelter` | `shelter_type` | 岩窟遮蔽 |
+| `rope_tow` | `aerialway` | 繩索拖曳 |
+| `ruins` | `building` | 廢墟 (建物) |
+| `ruins` | `historic` | 廢墟 |
+| `runway` | `aeroway` | 跑道 |
+| `sand` | `natural` | 沙地 |
+| `satellite_1st` | `survey_point` | 一等衛星控制點 |
+| `satellite_2nd` | `survey_point` | 二等衛星控制點 |
+| `satellite_3rd` | `survey_point` | 三等衛星控制點 |
+| `satellite_4th` | `survey_point` | 四等衛星控制點 |
+| `satellite_gps` | `survey_point` | 衛星控制點 (GPS) |
+| `school` | `amenity` | 學校 |
+| `scree` | `natural` | 碎石坡 |
+| `scrub` | `natural` | 灌叢 |
+| `sea` | `natural` | 海域 |
+| `secondary` | `highway` | 次要道路 |
+| `secondary_link` | `highway` | 次要道路匝道 |
+| `sectionstake` | `survey_point` | 段界樁 |
+| `service` | `highway` | 服務道路 |
+| `set` | `via_ferrata_flag` | 攀岩鐵道 |
+| `shelter` | `amenity` | 遮蔽所 |
+| `shelter` | `information` | 遮蔽所 |
+| `shelter` | `railway` | 遮蔽所 |
+| `shelter` | `shop` | 遮蔽所 |
+| `shelter` | `tourism` | 遮蔽所 |
+| `shingle` | `natural` | 礫灘 |
+| `shinto` | `religion` | 神道教 |
+| `shooting` | `leisure` | 射擊 |
+| `shooting` | `sport` | 射擊 |
+| `shower` | `amenity` | 淋浴間 |
+| `sinica_trig` | `survey_point` | 中研院三角點 |
+| `sled` | `piste:type` | 雪橇道 |
+| `slipway` | `leisure` | 下水滑道 |
+| `soccer` | `sport` | 足球 |
+| `sports` | `amenity` | 運動用品店 |
+| `sports` | `information` | 運動用品店 |
+| `sports` | `railway` | 運動用品店 |
+| `sports` | `shop` | 運動用品店 |
+| `sports` | `tourism` | 運動用品店 |
+| `sports_centre` | `leisure` | 運動中心 |
+| `sports_centre` | `sport` | 運動中心 |
+| `spring` | `natural` | 湧泉 |
+| `sr_yes` | `ladder` | 安全繩 |
+| `sr_yes` | `rungs` | 安全繩 |
+| `sr_yes` | `safety_rope` | 安全繩 |
+| `stadium` | `leisure` | 體育場 |
+| `stadium` | `sport` | 體育場 |
+| `stamp` | `checkpoint:type` | 紀念章打卡點 |
+| `station` | `amenity` | 車站 |
+| `station` | `information` | 車站 |
+| `station` | `power` | 變電所 |
+| `station` | `railway` | 車站 |
+| `station` | `shop` | 車站 |
+| `station` | `tourism` | 車站 |
+| `statue` | `memorial` | 紀念雕像 |
+| `steps` | `highway` | 階梯 |
+| `stile` | `barrier` | 越牆梯磴 |
+| `stolperstein` | `memorial` | 絆腳石紀念磚 |
+| `stone` | `memorial` | 紀念石 |
+| `stream` | `waterway` | 溪流 |
+| `strict_protected` | `boundary` | 嚴格保護區界線 |
+| `subway` | `highway` | 地鐵 |
+| `subway` | `railway` | 地鐵 |
+| `subway` | `station` | 地鐵站 |
+| `summit_board` | `man_made` | 山峰 |
+| `supermarket` | `amenity` | 超市 |
+| `supermarket` | `information` | 超市 |
+| `supermarket` | `railway` | 超市 |
+| `supermarket` | `shop` | 超市 |
+| `supermarket` | `tourism` | 超市 |
+| `suppl` | `survey_point` | 圖根補點 |
+| `suppl_CS` | `survey_point` | 補點 (副點) |
+| `suppl_declination` | `survey_point` | 補點 (磁偏觀測) |
+| `suppl_eclipse` | `survey_point` | 補點 (日食觀測) |
+| `suppl_FB` | `survey_point` | 補點 (林務) |
+| `suppl_GO` | `survey_point` | 補點 (政府) |
+| `suppl_IA` | `survey_point` | 補點 (航測) |
+| `suppl_port` | `survey_point` | 補點 (港務) |
+| `suppl_taipower` | `survey_point` | 補點 (台電) |
+| `suppl_TW` | `survey_point` | 補點 (戰後) |
+| `suppl_UN` | `survey_point` | 補點 (不明) |
+| `survey_point` | `man_made` | 測量基準點 |
+| `swimming` | `leisure` | 游泳 |
+| `swimming` | `sport` | 游泳 |
+| `swimming_pool` | `leisure` | 游泳池 |
+| `taipei` | `survey_point` | 台北圖根點 |
+| `taipei_tax` | `survey_point` | 台北稅務基點 |
+| `taipeic` | `survey_point` | 台北市圖根點 |
+| `taiwanp` | `survey_point` | 臺灣省精測點 |
+| `taxiway` | `aeroway` | 滑行道 |
+| `telephone` | `amenity` | 公共電話 |
+| `tennis` | `sport` | 網球 |
+| `terminal` | `aeroway` | 航廈 |
+| `terminal` | `information` | 航廈 |
+| `tertiary` | `highway` | 三級道路 |
+| `tertiary_link` | `highway` | 三級道路匝道 |
+| `theatre` | `amenity` | 劇院 |
+| `theatre` | `information` | 劇院 |
+| `theatre` | `railway` | 劇院 |
+| `theatre` | `shop` | 劇院 |
+| `theatre` | `tourism` | 劇院 |
+| `tidal` | `generator:source` | 潮汐發電 |
+| `toilets` | `amenity` | 廁所 |
+| `toilets` | `information` | 廁所 |
+| `toilets` | `railway` | 廁所 |
+| `toilets` | `shop` | 廁所 |
+| `toilets` | `tourism` | 廁所 |
+| `tower` | `man_made` | 塔 |
+| `tower` | `power` | 高壓電塔 |
+| `town` | `place` | 鄉鎮 |
+| `track` | `highway` | 林道 |
+| `traffic_signals` | `highway` | 紅綠燈 |
+| `trail_milestone` | `information` | 里程碑 |
+| `trailhead` | `highway` | 登山口 |
+| `tram` | `highway` | 路面電車 |
+| `tram` | `railway` | 路面電車 |
+| `tram_stop` | `railway` | 電車站 |
+| `tram_stop` | `station` | 電車站 |
+| `travel_agency` | `shop` | 旅行社 |
+| `tree` | `natural` | 樹木 |
+| `trig_1st` | `survey_point` | 一等三角點 |
+| `trig_1st_IC` | `survey_point` | 一等三角點 (附樁) |
+| `trig_2nd` | `survey_point` | 二等三角點 |
+| `trig_2nd_CS` | `survey_point` | 二等三角點 (副點) |
+| `trig_2nd_IC` | `survey_point` | 二等三角點 (附樁) |
+| `trig_2nd_MC` | `survey_point` | 二等三角點 (中心樁) |
+| `trig_2nd_RE` | `survey_point` | 二等三角點 (重測) |
+| `trig_3rd` | `survey_point` | 三等三角點 |
+| `trig_3rd_CS` | `survey_point` | 三等三角點 (副點) |
+| `trig_3rd_IC` | `survey_point` | 三等三角點 (附樁) |
+| `trig_3rd_MC` | `survey_point` | 三等三角點 (中心樁) |
+| `trig_3rd_RE` | `survey_point` | 三等三角點 (重測) |
+| `trunk` | `highway` | 快速道路 |
+| `trunk_link` | `highway` | 快速道路匝道 |
+| `turning_circle` | `highway` | 迴車道 |
+| `turnstile` | `barrier` | 旋轉柵門 |
+| `unclassified` | `highway` | 未分級道路 |
+| `university` | `amenity` | 大學 |
+| `valley` | `natural` | 山谷 |
+| `viewpoint` | `tourism` | 觀景點 |
+| `village` | `place` | 村莊 |
+| `village_green` | `landuse` | 村里綠地 |
+| `village_green` | `leisure` | 村里綠地 |
+| `vineyard` | `landuse` | 葡萄園 |
+| `volcano` | `natural` | 火山 |
+| `wall` | `barrier` | 牆 |
+| `wall` | `building` | 牆 (建物) |
+| `war_memorial` | `memorial` | 戰爭紀念碑 |
+| `water` | `natural` | 水域 |
+| `water_boundary` | `survey_point` | 水利界點 |
+| `water_park` | `leisure` | 水上樂園 |
+| `water_park` | `sport` | 水上樂園 |
+| `water_point` | `amenity` | 取水點 |
+| `water_point` | `waterway` | 取水點 |
+| `water_reservoir` | `survey_point` | 水庫基點 |
+| `water_suppl` | `survey_point` | 水利補點 |
+| `water_taipei` | `survey_point` | 台北水利基點 |
+| `water_trig` | `survey_point` | 水利三角點 |
+| `water_well` | `man_made` | 水井 |
+| `waterfall` | `natural` | 瀑布 |
+| `waterfall` | `waterway` | 瀑布 |
+| `wayside_cross` | `historic` | 路旁十字架 |
+| `wayside_shrine` | `historic` | 路旁神龕 |
+| `weather_shelter` | `shelter_type` | 避雨亭 |
+| `weir` | `waterway` | 攔河堰 |
+| `wetland` | `natural` | 濕地 |
+| `wilderness_hut` | `tourism` | 荒野小屋 |
+| `wind` | `generator:source` | 風力發電 |
+| `windmill` | `man_made` | 風車 |
+| `wood` | `landuse` | 樹林 |
+| `wood` | `natural` | 樹林 |
+| `yes` | `mountain_pass` | 埡口 |
+| `yes` | `shelter` | 有遮蔽所 |
+| `yes` | `via_ferrata_flag` | 攀岩鐵道 |
+| `zoo` | `landuse` | 動物園用地 |
+| `zoo` | `leisure` | 動物園 |
+| `zoo` | `tourism` | 動物園 |

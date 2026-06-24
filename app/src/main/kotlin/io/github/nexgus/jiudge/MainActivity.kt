@@ -8,14 +8,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -32,7 +35,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +52,12 @@ import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RouteFolder
 import io.github.nexgus.jiudge.data.route.RouteStore
+import io.github.nexgus.jiudge.feature.identify.IdentifyBar
+import io.github.nexgus.jiudge.feature.identify.IdentifyChooser
+import io.github.nexgus.jiudge.feature.identify.IdentifyHint
+import io.github.nexgus.jiudge.feature.identify.IdentifyResultCard
+import io.github.nexgus.jiudge.feature.identify.SymbolIdentifier
+import io.github.nexgus.jiudge.feature.identify.SymbolTable
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
@@ -144,6 +155,39 @@ private fun MapScreen(
 
     var mode by remember { mutableStateOf(PlanMode.MAP_VIEW) }
     var busy by remember { mutableStateOf(false) }
+
+    // Symbol-identify mode: "?" toggles a centre crosshair; "辨識" names the symbol under it. Aiming
+    // by panning (not by tapping a tiny icon) keeps it precise regardless of finger size.
+    var identifyMode by remember { mutableStateOf(false) }
+    var identifyBusy by remember { mutableStateOf(false) }
+    var identifyResult by remember { mutableStateOf<SymbolIdentifier.Match?>(null) }
+    // Candidates awaiting a choice when several features share the crosshair spot.
+    var identifyCandidates by remember { mutableStateOf<List<SymbolIdentifier.Match>?>(null) }
+    val appContext = LocalContext.current.applicationContext
+    val symbolTable = remember { SymbolTable.load(appContext) }
+    val identifier =
+        remember(mapDir, symbolTable) {
+            SymbolIdentifier(File(mapDir, RudyMapView.BASEMAP_NAME), symbolTable)
+        }
+    DisposableEffect(identifier) { onDispose { identifier.close() } }
+
+    fun runIdentify() {
+        val mapView = map.value ?: return
+        val center = mapView.model.mapViewPosition.center
+        val zoom = mapView.model.mapViewPosition.zoomLevel
+        val tileSize = mapView.model.displayModel.tileSize
+        scope.launch {
+            identifyBusy = true
+            val matches = withContext(Dispatchers.IO) { identifier.identify(center, zoom, tileSize) }
+            identifyBusy = false
+            when {
+                matches.isEmpty() -> snackbarHostState.showSnackbar("準心處沒有可辨識的符號")
+                matches.size == 1 -> identifyResult = matches.first()
+                else -> identifyCandidates = matches
+            }
+        }
+    }
+
     var showChooser by remember { mutableStateOf(false) }
     var showSave by remember { mutableStateOf(false) }
     var loadList by remember { mutableStateOf<List<RouteStore.Summary>?>(null) }
@@ -201,6 +245,101 @@ private fun MapScreen(
             }
         }
 
+        // Identify toggle ("?") persists across all modes, opposite the zoom controls. When on, it
+        // is highlighted and a centre crosshair appears for aiming.
+        FloatingActionButton(
+            onClick = {
+                identifyMode = !identifyMode
+                if (!identifyMode) {
+                    identifyResult = null
+                    identifyCandidates = null
+                }
+            },
+            containerColor =
+                if (identifyMode) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    FloatingActionButtonDefaults.containerColor
+                },
+            modifier =
+                Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp),
+        ) {
+            Text(text = "?", fontSize = 24.sp)
+        }
+
+        // Aim with the centre crosshair, then "辨識" reads the symbol there. Hidden once a result
+        // card or chooser is up so the reticle does not sit over the answer.
+        if (identifyMode && identifyResult == null && identifyCandidates == null) {
+            CrosshairOverlay(modifier = Modifier.fillMaxSize())
+            IdentifyHint(
+                modifier =
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 16.dp),
+            )
+            IdentifyBar(
+                busy = identifyBusy,
+                onIdentify = { runIdentify() },
+                onCancel = {
+                    identifyMode = false
+                },
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth(),
+            )
+        }
+
+        // A result card or a chooser is up: lock the map and highlight the relevant point(s).
+        if (identifyResult != null || identifyCandidates != null) {
+            // Lock the map: consume all touches so it cannot pan or zoom while choosing/reading.
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent().changes.forEach { it.consume() }
+                                }
+                            }
+                        },
+            )
+            // Highlight: a translucent yellow disc on the chosen feature; small dots on the other
+            // candidates while choosing, so the user sees where each one sits.
+            map.value?.let { mapView ->
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    identifyCandidates?.forEach { candidate ->
+                        val p = mapView.mapViewProjection.toPixels(candidate.position) ?: return@forEach
+                        drawCircle(Color(0x66000000), 5.dp.toPx(), Offset(p.x.toFloat(), p.y.toFloat()))
+                    }
+                    identifyResult?.let { result ->
+                        val p = mapView.mapViewProjection.toPixels(result.position)
+                        if (p != null) {
+                            drawCircle(Color(0x80FFEB3B), 16.dp.toPx(), Offset(p.x.toFloat(), p.y.toFloat()))
+                        }
+                    }
+                }
+            }
+            identifyResult?.let { result ->
+                IdentifyResultCard(
+                    themeDir = mapDir,
+                    table = symbolTable,
+                    result = result,
+                    onDismiss = { identifyResult = null },
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            // Lift the card clear of the system navigation bar so all content shows.
+                            .navigationBarsPadding()
+                            .padding(bottom = 16.dp),
+                )
+            }
+        }
+
         // Zoom controls persist across all modes (map controls, independent of the action bar).
         ZoomButtons(
             modifier =
@@ -222,74 +361,89 @@ private fun MapScreen(
             },
         )
 
-        when (mode) {
-            PlanMode.MAP_VIEW ->
-                MapViewControls(
-                    modifier =
-                        Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(16.dp),
-                    canClear = displayedRoute != null,
-                    onClear = {
-                        viewer?.clear()
-                        displayedRoute = null
-                    },
-                    onPlan = { showChooser = true },
-                )
-
-            PlanMode.ROUTE_EDIT -> {
-                CrosshairOverlay(modifier = Modifier.fillMaxSize())
-                PlanningBottomBar(
-                    modifier =
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth(),
-                    waypointCount = planner?.waypoints?.size ?: 0,
-                    busy = busy,
-                    onAdd = {
-                        val p = planner ?: return@PlanningBottomBar
-                        scope.launch {
-                            busy = true
-                            val error = p.addWaypointAtCenter()
-                            busy = false
-                            if (error != null) snackbarHostState.showSnackbar("無法連到此點: $error")
-                        }
-                    },
-                    onRemove = { planner?.removeLastWaypoint() },
-                    onSave = { showSave = true },
-                    onCancel = {
-                        planner?.clear()
-                        val baseline = editBaseline
-                        if (baseline != null) {
-                            viewer?.show(baseline)
-                            displayedRoute = baseline
-                            mode = PlanMode.ROUTE_VIEW
-                        } else {
-                            displayedRoute = null
-                            mode = PlanMode.MAP_VIEW
-                        }
-                    },
-                )
-            }
-
-            PlanMode.ROUTE_VIEW ->
-                RouteViewControls(
-                    modifier =
-                        Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(16.dp),
-                    onEdit = {
-                        val route = displayedRoute
-                        if (route != null && planner != null) {
+        // Hide the bottom mode controls during identify (its own bar/card owns the bottom).
+        if (!identifyMode && identifyResult == null) {
+            when (mode) {
+                PlanMode.MAP_VIEW ->
+                    MapViewControls(
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(16.dp),
+                        canClear = displayedRoute != null,
+                        onClear = {
                             viewer?.clear()
-                            planner.loadFrom(route)
-                            editBaseline = route
-                            mode = PlanMode.ROUTE_EDIT
-                        }
-                    },
-                    onLeave = { mode = PlanMode.MAP_VIEW },
-                )
+                            displayedRoute = null
+                        },
+                        onPlan = { showChooser = true },
+                    )
+
+                PlanMode.ROUTE_EDIT -> {
+                    CrosshairOverlay(modifier = Modifier.fillMaxSize())
+                    PlanningBottomBar(
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth(),
+                        waypointCount = planner?.waypoints?.size ?: 0,
+                        busy = busy,
+                        onAdd = {
+                            val p = planner ?: return@PlanningBottomBar
+                            scope.launch {
+                                busy = true
+                                val error = p.addWaypointAtCenter()
+                                busy = false
+                                if (error != null) snackbarHostState.showSnackbar("無法連到此點: $error")
+                            }
+                        },
+                        onRemove = { planner?.removeLastWaypoint() },
+                        onSave = { showSave = true },
+                        onCancel = {
+                            planner?.clear()
+                            val baseline = editBaseline
+                            if (baseline != null) {
+                                viewer?.show(baseline)
+                                displayedRoute = baseline
+                                mode = PlanMode.ROUTE_VIEW
+                            } else {
+                                displayedRoute = null
+                                mode = PlanMode.MAP_VIEW
+                            }
+                        },
+                    )
+                }
+
+                PlanMode.ROUTE_VIEW ->
+                    RouteViewControls(
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(16.dp),
+                        onEdit = {
+                            val route = displayedRoute
+                            if (route != null && planner != null) {
+                                viewer?.clear()
+                                planner.loadFrom(route)
+                                editBaseline = route
+                                mode = PlanMode.ROUTE_EDIT
+                            }
+                        },
+                        onLeave = { mode = PlanMode.MAP_VIEW },
+                    )
+            }
         }
+    }
+
+    identifyCandidates?.let { candidates ->
+        IdentifyChooser(
+            themeDir = mapDir,
+            candidates = candidates,
+            onPick = { picked ->
+                identifyResult = picked
+                identifyCandidates = null
+            },
+            onDismiss = { identifyCandidates = null },
+        )
     }
 
     if (showChooser) {
