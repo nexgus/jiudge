@@ -31,7 +31,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.1"
+        versionName = "0.2.0"
 
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         buildConfigField("boolean", "GIT_DIRTY", "$gitDirty")
@@ -64,6 +64,7 @@ android {
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

@@ -9,6 +9,11 @@
     <!-- Runtime-requested on Android 13+ so the download progress notification is visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Current-location marker on the map. Foreground-only (subscribed while the map is visible,
+         dropped on pause); background track recording will add a foreground service separately. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- Route plans live in a fixed public folder (Documents/Jiudge) so they survive uninstall and a
          reinstall can re-read them (see CLAUDE.md storage rationale). On Android 11+ this needs All
          files access; on Android 10 and below, legacy WRITE_EXTERNAL_STORAGE. -->

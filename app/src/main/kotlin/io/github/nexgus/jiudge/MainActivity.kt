@@ -13,13 +13,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
@@ -44,12 +49,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.github.nexgus.jiudge.core.location.HeadingProvider
+import io.github.nexgus.jiudge.core.location.LocationProvider
 import io.github.nexgus.jiudge.core.mapdata.DownloadService
 import io.github.nexgus.jiudge.core.mapdata.DownloadState
 import io.github.nexgus.jiudge.core.mapdata.MapDataCatalog
@@ -68,6 +81,7 @@ import io.github.nexgus.jiudge.feature.identify.IdentifyHint
 import io.github.nexgus.jiudge.feature.identify.IdentifyResultCard
 import io.github.nexgus.jiudge.feature.identify.SymbolIdentifier
 import io.github.nexgus.jiudge.feature.identify.SymbolTable
+import io.github.nexgus.jiudge.feature.map.CurrentLocationLayer
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
@@ -80,8 +94,11 @@ import io.github.nexgus.jiudge.feature.planning.RouteViewControls
 import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.mapsforge.core.model.LatLong
 import org.mapsforge.map.android.view.MapView
 import org.mapsforge.map.model.common.Observer
 import java.io.File
@@ -96,41 +113,56 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 val snackbarHostState = remember { SnackbarHostState() }
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    snackbarHost = { SnackbarHost(snackbarHostState) },
-                ) { padding ->
-                    val downloadState by MapDataDownload.state.collectAsState()
-                    // Re-check the disk whenever the download state changes (so finishing flips us to the map).
-                    val requiredReady = remember(downloadState) { catalog.missing(includeOptional = false).isEmpty() }
-                    val showDownload =
-                        downloadState is DownloadState.Running ||
-                            downloadState is DownloadState.Failed ||
-                            !requiredReady
-                    if (showDownload) {
-                        DownloadScreen(
-                            state = downloadState,
-                            totalBytes = catalog.totalDownloadBytes,
-                            onStart = startDownload(),
-                            onCancel = { DownloadService.cancel(this@MainActivity) },
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .padding(padding),
-                        )
-                    } else {
-                        MapScreen(
-                            mapDir = paths.mapDir,
-                            engine = remember { BRouterEngine(paths.brouterDir) },
-                            routeStore = remember { RouteStore() },
-                            snackbarHostState = snackbarHostState,
-                            onMapCreated = { mapView = it },
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .padding(padding),
-                        )
+                // Wrap the Scaffold so the status-bar scrim can be drawn at this outer level, where the
+                // status bar inset is still available (the Scaffold consumes it to 0 for its content).
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
+                        snackbarHost = { SnackbarHost(snackbarHostState) },
+                    ) { padding ->
+                        val downloadState by MapDataDownload.state.collectAsState()
+                        // Re-check the disk whenever the download state changes (so finishing flips us to the map).
+                        val requiredReady = remember(downloadState) { catalog.missing(includeOptional = false).isEmpty() }
+                        val showDownload =
+                            downloadState is DownloadState.Running ||
+                                downloadState is DownloadState.Failed ||
+                                !requiredReady
+                        if (showDownload) {
+                            DownloadScreen(
+                                state = downloadState,
+                                totalBytes = catalog.totalDownloadBytes,
+                                onStart = startDownload(),
+                                onCancel = { DownloadService.cancel(this@MainActivity) },
+                                modifier =
+                                    Modifier
+                                        .fillMaxSize()
+                                        .padding(padding),
+                            )
+                        } else {
+                            MapScreen(
+                                mapDir = paths.mapDir,
+                                engine = remember { BRouterEngine(paths.brouterDir) },
+                                routeStore = remember { RouteStore() },
+                                snackbarHostState = snackbarHostState,
+                                onMapCreated = { mapView = it },
+                                modifier =
+                                    Modifier
+                                        .fillMaxSize()
+                                        .padding(padding),
+                            )
+                        }
                     }
+
+                    // Opaque bar behind the system status bar so its clock/battery sit on a solid
+                    // strip, not on the map. Outside the Scaffold so the inset is not yet consumed.
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .windowInsetsTopHeight(WindowInsets.statusBars)
+                                .background(Color(0xFF202124)),
+                    )
                 }
             }
         }
@@ -145,6 +177,19 @@ class MainActivity : ComponentActivity() {
 
 /** The three route-planning UI modes (see docs/ui.md). */
 private enum class PlanMode { MAP_VIEW, ROUTE_EDIT, ROUTE_VIEW }
+
+// Whether the GPS accuracy circle is drawn. Hard-coded on for now; a future Settings screen
+// (feature/settings, not yet built) will expose this as a user toggle.
+private const val SHOW_ACCURACY_CIRCLE = true
+
+// Low-accuracy warning thresholds, with hysteresis to stop the banner flickering when the radius
+// hovers near the limit: it appears once the fix is coarser than SHOW, and only hides once it
+// improves past the tighter HIDE. Good open-sky GPS stays well under both.
+private const val LOW_ACCURACY_SHOW_M = 50f
+private const val LOW_ACCURACY_HIDE_M = 35f
+
+// Once shown, the banner stays up at least this long so a brief coarse fix does not just flash by.
+private const val LOW_ACCURACY_MIN_VISIBLE_MS = 3_000L
 
 @Composable
 private fun MapScreen(
@@ -276,6 +321,175 @@ private fun MapScreen(
         }
     }
 
+    // Current-location ("my location"): a blue dot + facing cone, fed by GPS and the compass only
+    // while the map is visible (foreground-only, see CLAUDE.md). The overlay layer lives for the
+    // life of the MapView; the recenter FAB below drives it.
+    val density = LocalDensity.current.density
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val locationProvider = remember { LocationProvider(context) }
+    val headingProvider = remember { HeadingProvider(context) }
+    var locationGranted by remember { mutableStateOf(locationProvider.hasPermission()) }
+    // Center the map on the first fix: true at launch when permission is already held (so a returning
+    // user opens straight onto their location), and re-armed when the recenter FAB is tapped.
+    var recenterOnFix by remember { mutableStateOf(locationProvider.hasPermission()) }
+
+    val locationLayer =
+        remember(map.value) {
+            map.value?.let { mv ->
+                CurrentLocationLayer(density).also { mv.layerManager.layers.add(it) }
+            }
+        }
+
+    val locationPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            val granted =
+                result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                    result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            if (granted) {
+                locationGranted = true
+                recenterOnFix = true
+            } else {
+                scope.launch { snackbarHostState.showSnackbar("未授予定位權限, 無法顯示目前位置") }
+            }
+        }
+
+    // Subscribe to GPS + compass only while permission is held and the screen is resumed; release on
+    // pause so nothing runs in the background.
+    DisposableEffect(lifecycleOwner, locationGranted, locationLayer) {
+        if (!locationGranted || locationLayer == null) {
+            onDispose {}
+        } else {
+            val observer =
+                LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_RESUME -> {
+                            locationProvider.start()
+                            headingProvider.start()
+                        }
+                        Lifecycle.Event.ON_PAUSE -> {
+                            locationProvider.stop()
+                            headingProvider.stop()
+                        }
+                        else -> Unit
+                    }
+                }
+            // ON_RESUME will not re-fire if we are already resumed when this effect runs (e.g. the
+            // user just granted permission), so start now in that case.
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                locationProvider.start()
+                headingProvider.start()
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                locationProvider.stop()
+                headingProvider.stop()
+            }
+        }
+    }
+
+    // Feed fixes + heading into the overlay by collecting in an effect (not collectAsState) so the
+    // frequent compass ticks redraw only the map layer, not the whole MapScreen composable.
+    LaunchedEffect(locationLayer) {
+        val layer = locationLayer ?: return@LaunchedEffect
+        combine(
+            locationProvider.fix,
+            headingProvider.heading,
+            locationProvider.serviceEnabled,
+        ) { fix, heading, enabled -> Triple(fix, heading, enabled) }
+            .collect { (fix, heading, enabled) ->
+                // The compass reads magnetic north; shift it by the local declination so the facing
+                // cone lines up with the true-north map. GPS movement bearing is already true north.
+                val trueHeading =
+                    if (heading != null && fix != null) {
+                        (heading + fix.declinationDeg + 360f) % 360f
+                    } else {
+                        heading
+                    }
+                layer.update(
+                    fix = fix,
+                    headingDeg = trueHeading,
+                    hasCompass = headingProvider.hasCompass,
+                    showAccuracy = SHOW_ACCURACY_CIRCLE,
+                    // Location service off but we still hold a last fix: grey it to mark it stale.
+                    frozen = !enabled && fix != null,
+                )
+                if (recenterOnFix && fix != null) {
+                    recenterOnFix = false
+                    map.value
+                        ?.model
+                        ?.mapViewPosition
+                        ?.center = LatLong(fix.latitude, fix.longitude)
+                }
+            }
+    }
+
+    // Collected in composition (1 Hz, unlike the high-rate heading) to drive the GPS warning banner,
+    // the FAB highlight, and the recenter behaviour.
+    val currentFix by locationProvider.fix.collectAsState()
+    val serviceEnabled by locationProvider.serviceEnabled.collectAsState()
+
+    // The GPS warning banner shows whenever we lack a GPS-level precise fix - no fix, a coarse
+    // WiFi/cell fix, or the location service being off. Once a precise GPS fix lands it clears, but
+    // only after a minimum on-screen time so it never just flashes by; a small accuracy hysteresis
+    // band stops it flickering at the threshold.
+    var gpsWarnVisible by remember { mutableStateOf(false) }
+    var gpsWarnShownAt by remember { mutableStateOf(0L) }
+    var gpsWarnAccuracy by remember { mutableStateOf<Float?>(null) }
+    // Measured height of the full-width warning banner, used to push the top controls below it.
+    var gpsWarnHeightPx by remember { mutableStateOf(0) }
+    val accuracy = currentFix?.accuracyMeters
+    val haveGpsFix = serviceEnabled && currentFix?.fromGps == true && accuracy != null
+    LaunchedEffect(locationGranted, haveGpsFix, accuracy) {
+        gpsWarnAccuracy = accuracy
+        when {
+            !locationGranted -> gpsWarnVisible = false
+            // No precise GPS yet (no fix, coarse network fix, or service off): warn.
+            !haveGpsFix || accuracy > LOW_ACCURACY_SHOW_M -> {
+                if (!gpsWarnVisible) {
+                    gpsWarnVisible = true
+                    gpsWarnShownAt = System.currentTimeMillis()
+                }
+            }
+            // Precise GPS acquired: clear, but keep the banner up for its minimum time first.
+            accuracy <= LOW_ACCURACY_HIDE_M -> {
+                if (gpsWarnVisible) {
+                    val remaining = LOW_ACCURACY_MIN_VISIBLE_MS - (System.currentTimeMillis() - gpsWarnShownAt)
+                    if (remaining > 0) delay(remaining)
+                    gpsWarnVisible = false
+                }
+            }
+            // GPS fix in the hysteresis band (HIDE..SHOW): leave visibility unchanged.
+        }
+    }
+
+    fun recenterOnCurrentLocation() {
+        if (!locationGranted) {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+            return
+        }
+        if (!serviceEnabled) {
+            // No point waiting for a fix that cannot come; send the user to enable location.
+            context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            return
+        }
+        val fix = locationProvider.fix.value
+        if (fix != null) {
+            map.value
+                ?.model
+                ?.mapViewPosition
+                ?.center = LatLong(fix.latitude, fix.longitude)
+        } else {
+            recenterOnFix = true
+            scope.launch { snackbarHostState.showSnackbar("正在定位中, 取得位置後將自動置中") }
+        }
+    }
+
     Box(modifier = modifier) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -300,12 +514,20 @@ private fun MapScreen(
             }
         }
 
+        // The full-width warning banner sits flush below the status bar and persists across all modes
+        // (including identify) so a low-accuracy warning is never hidden. When shown, the top controls
+        // and the identify hint are pushed down by its measured height so it never covers them.
+        val warnVisible = gpsWarnVisible
+        val controlsTopOffset =
+            if (warnVisible) with(LocalDensity.current) { gpsWarnHeightPx.toDp() } else 0.dp
+
         // Top-start controls, opposite the zoom column: the overflow ("⋮") menu on top, then the
         // identify ("?") toggle. Both persist across all modes.
         Column(
             modifier =
                 Modifier
                     .align(Alignment.TopStart)
+                    .padding(top = controlsTopOffset)
                     .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -341,11 +563,14 @@ private fun MapScreen(
         // card or chooser is up so the reticle does not sit over the answer.
         if (identifyMode && identifyResult == null && identifyCandidates == null) {
             CrosshairOverlay(modifier = Modifier.fillMaxSize())
+            // Centred horizontally (its original, roomy position) but dropped to the "?" button's row
+            // so it reads as that button's instruction. Follows controlsTopOffset to stay below the
+            // warning banner. No width cap, so the text stays on one line as before.
             IdentifyHint(
                 modifier =
                     Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 16.dp),
+                        .padding(top = controlsTopOffset + 90.dp),
             )
             IdentifyBar(
                 busy = identifyBusy,
@@ -413,6 +638,7 @@ private fun MapScreen(
             modifier =
                 Modifier
                     .align(Alignment.TopEnd)
+                    .padding(top = controlsTopOffset)
                     .padding(16.dp),
             zoomLevel = zoomLevel.value,
             onZoomIn = {
@@ -428,6 +654,47 @@ private fun MapScreen(
                     ?.zoomOut()
             },
         )
+
+        // GPS warning banner: a full-width bar flush below the status bar, shown while there is no
+        // GPS-level precise fix. When the location service is off it reads as such and taps through to
+        // the system location settings; otherwise it is a "waiting for / low-accuracy GPS" notice.
+        // Hidden during identify, whose hint owns top-center.
+        if (warnVisible) {
+            GpsWarningBanner(
+                serviceEnabled = serviceEnabled,
+                accuracyMeters = if (currentFix != null) gpsWarnAccuracy else null,
+                onClick =
+                    if (serviceEnabled) {
+                        null
+                    } else {
+                        { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+                    },
+                modifier =
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .onSizeChanged { gpsWarnHeightPx = it.height },
+            )
+        }
+
+        // Recenter-on-me button, bottom-end, on the same baseline as the bottom-start controls (same
+        // padding, no extra inset) so they share one horizontal line. Hidden during identify and route
+        // editing so it does not collide with their bottom bars; highlighted only when location is
+        // both granted and the service is on.
+        if (!identifyMode &&
+            identifyResult == null &&
+            identifyCandidates == null &&
+            mode != PlanMode.ROUTE_EDIT
+        ) {
+            MyLocationButton(
+                onClick = { recenterOnCurrentLocation() },
+                active = locationGranted && serviceEnabled,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp),
+            )
+        }
 
         // Hide the bottom mode controls during identify (its own bar/card owns the bottom).
         if (!identifyMode && identifyResult == null) {
@@ -674,6 +941,65 @@ private fun ZoomButtons(
         FloatingActionButton(onClick = onZoomOut) {
             Text(text = "−", fontSize = 24.sp) // minus sign
         }
+    }
+}
+
+/**
+ * "Recenter on my location" FAB. Tapping requests location permission the first time, then centers
+ * the map on the current fix. [active] highlights it once location is on, matching the identify
+ * toggle's lit state.
+ */
+@Composable
+private fun MyLocationButton(
+    onClick: () -> Unit,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    FloatingActionButton(
+        onClick = onClick,
+        modifier = modifier,
+        containerColor =
+            if (active) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                FloatingActionButtonDefaults.containerColor
+            },
+    ) {
+        // U+25CE bullseye - a "locate me" glyph, consistent with the app's text-based FAB icons.
+        Text(text = "◎", fontSize = 24.sp)
+    }
+}
+
+/**
+ * Banner shown while there is no GPS-level precise fix. When [serviceEnabled] is false it warns that
+ * the location service is off and (via [onClick]) taps through to settings; otherwise it is a
+ * waiting/low-accuracy notice, reporting [accuracyMeters] when a coarse fix is available.
+ */
+@Composable
+private fun GpsWarningBanner(
+    serviceEnabled: Boolean,
+    accuracyMeters: Float?,
+    onClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val text =
+        when {
+            !serviceEnabled -> "定位服務已關閉, 點此開啟"
+            accuracyMeters != null -> "定位精度較低 (約 ±${accuracyMeters.toInt()} m), 等待 GPS 訊號..."
+            else -> "尚未取得定位, 等待 GPS 訊號..."
+        }
+    Surface(
+        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
+        color = Color(0xFFFFE0B2), // light amber
+        contentColor = Color(0xFF7A4F01), // dark amber, readable on the fill
+        shape = RectangleShape, // full-width bar flush under the status bar
+        shadowElevation = 6.dp,
+    ) {
+        Text(
+            text = text,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
     }
 }
 

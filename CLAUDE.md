@@ -117,6 +117,9 @@ belongs to a later phase". The old "never jump phases" rule is retired.
 - Route planning via BRouter - waypoints, save/load (`feature/planning`, `core/routing`, `data/route`)
 - Map-symbol identify ("?") (`feature/identify`)
 - Main menu / about (`feature/about`)
+- Current-location marker + recenter button - foreground GPS + compass facing cone, OruxMaps-style
+  (`feature/map/CurrentLocationLayer`, `core/location`). Foreground-only (subscribed while the map is
+  visible, released on pause); this is *not* the background track recording below
 
 **Not yet built (known remaining work):**
 - Background track recording (foreground-service GPS) + GPX import/export - this was the original
@@ -136,8 +139,8 @@ the v1 out-of-scope list below off-limits without an explicit go-ahead.
 ### Directory layout (native Android)
 ```
 app/src/main/kotlin/io/github/nexgus/jiudge/
-  feature/        # feature modules: map, planning, identify, mapdata, about (planned: recording, gpx, settings)
-  core/           # shared infra: mapdata, routing, storage (planned: gps, networking)
+  feature/        # feature modules: map (+ current-location overlay), planning, identify, mapdata, about (planned: recording, gpx, settings)
+  core/           # shared infra: mapdata, routing, storage, location (foreground GPS + compass; planned: background recording service, networking)
   data/           # repositories, models, data sources (currently: route)
   ui/             # Compose components, theming, design tokens (planned)
 docs/             # spec, design notes, architecture decisions
