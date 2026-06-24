@@ -27,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,11 +48,14 @@ import io.github.nexgus.jiudge.core.mapdata.DownloadService
 import io.github.nexgus.jiudge.core.mapdata.DownloadState
 import io.github.nexgus.jiudge.core.mapdata.MapDataCatalog
 import io.github.nexgus.jiudge.core.mapdata.MapDataDownload
+import io.github.nexgus.jiudge.core.mapdata.MapVersion
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RouteFolder
 import io.github.nexgus.jiudge.data.route.RouteStore
+import io.github.nexgus.jiudge.feature.about.AboutDialog
+import io.github.nexgus.jiudge.feature.about.MainMenuButton
 import io.github.nexgus.jiudge.feature.identify.IdentifyBar
 import io.github.nexgus.jiudge.feature.identify.IdentifyChooser
 import io.github.nexgus.jiudge.feature.identify.IdentifyHint
@@ -156,6 +160,14 @@ private fun MapScreen(
     var mode by remember { mutableStateOf(PlanMode.MAP_VIEW) }
     var busy by remember { mutableStateOf(false) }
 
+    // Main menu / "關於": the installed map version is read off the main thread once, so the dialog
+    // can show it immediately when opened (null until loaded, or if no theme is installed).
+    var aboutOpen by remember { mutableStateOf(false) }
+    var mapVersion by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(mapDir) {
+        mapVersion = withContext(Dispatchers.IO) { MapVersion.installed(mapDir) }
+    }
+
     // Symbol-identify mode: "?" toggles a centre crosshair; "辨識" names the symbol under it. Aiming
     // by panning (not by tapping a tiny icon) keeps it precise regardless of finger size.
     var identifyMode by remember { mutableStateOf(false) }
@@ -245,28 +257,41 @@ private fun MapScreen(
             }
         }
 
-        // Identify toggle ("?") persists across all modes, opposite the zoom controls. When on, it
-        // is highlighted and a centre crosshair appears for aiming.
-        FloatingActionButton(
-            onClick = {
-                identifyMode = !identifyMode
-                if (!identifyMode) {
-                    identifyResult = null
-                    identifyCandidates = null
-                }
-            },
-            containerColor =
-                if (identifyMode) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    FloatingActionButtonDefaults.containerColor
-                },
+        // Top-start controls, opposite the zoom column: the overflow ("⋮") menu on top, then the
+        // identify ("?") toggle. Both persist across all modes.
+        Column(
             modifier =
                 Modifier
                     .align(Alignment.TopStart)
                     .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(text = "?", fontSize = 24.sp)
+            MainMenuButton(
+                onAbout = { aboutOpen = true },
+                onCheckUpdate = {
+                    // TODO(spec Phase 3): wire to the map-data update check/download mechanism.
+                    scope.launch { snackbarHostState.showSnackbar("地圖更新功能尚未推出 (Phase 3)") }
+                },
+            )
+            // Identify toggle: highlighted when on, with a centre crosshair for aiming.
+            FloatingActionButton(
+                onClick = {
+                    identifyMode = !identifyMode
+                    if (!identifyMode) {
+                        identifyResult = null
+                        identifyCandidates = null
+                    }
+                },
+                containerColor =
+                    if (identifyMode) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        FloatingActionButtonDefaults.containerColor
+                    },
+            ) {
+                Text(text = "?", fontSize = 24.sp)
+            }
         }
 
         // Aim with the centre crosshair, then "辨識" reads the symbol there. Hidden once a result
@@ -528,6 +553,10 @@ private fun MapScreen(
             },
             onDismiss = { loadList = null },
         )
+    }
+
+    if (aboutOpen) {
+        AboutDialog(mapVersion = mapVersion, onDismiss = { aboutOpen = false })
     }
 }
 

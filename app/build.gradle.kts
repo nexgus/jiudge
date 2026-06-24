@@ -6,6 +6,22 @@ plugins {
 // ktlint, run via the CLI rather than the ktlint-gradle plugin (see libs.versions.toml note).
 val ktlint: Configuration by configurations.creating
 
+// Git build metadata, resolved at configuration time and baked into BuildConfig so the About
+// dialog can show exactly which commit an APK was built from. `gitHash` is the short SHA;
+// `gitDirty` flags an uncommitted working tree. Both degrade gracefully (to "unknown"/false) when
+// git is unavailable, so a source-only build still compiles.
+fun git(vararg args: String): String? =
+    runCatching {
+        providers
+            .exec { commandLine("git", *args) }
+            .standardOutput.asText
+            .get()
+            .trim()
+    }.getOrNull()
+
+val gitHash: String = git("rev-parse", "--short", "HEAD")?.takeIf { it.isNotEmpty() } ?: "unknown"
+val gitDirty: Boolean = !git("status", "--porcelain").isNullOrEmpty()
+
 android {
     namespace = "io.github.nexgus.jiudge"
     compileSdk = 35
@@ -16,6 +32,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
+        buildConfigField("boolean", "GIT_DIRTY", "$gitDirty")
     }
 
     buildTypes {
@@ -38,6 +57,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
