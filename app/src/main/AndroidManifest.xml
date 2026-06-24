@@ -9,9 +9,18 @@
     <!-- Runtime-requested on Android 13+ so the download progress notification is visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Route plans live in a fixed public folder (Documents/Jiudge) so they survive uninstall and a
+         reinstall can re-read them (see CLAUDE.md storage rationale). On Android 11+ this needs All
+         files access; on Android 10 and below, legacy WRITE_EXTERNAL_STORAGE. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
     <application
         android:name=".JiudgeApp"
         android:allowBackup="true"
+        android:requestLegacyExternalStorage="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"

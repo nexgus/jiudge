@@ -1,9 +1,13 @@
 package io.github.nexgus.jiudge
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -17,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +30,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -51,8 +57,8 @@ import io.github.nexgus.jiudge.core.mapdata.MapDataDownload
 import io.github.nexgus.jiudge.core.mapdata.MapVersion
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.storage.AppPaths
+import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
-import io.github.nexgus.jiudge.data.route.RouteFolder
 import io.github.nexgus.jiudge.data.route.RouteStore
 import io.github.nexgus.jiudge.feature.about.AboutDialog
 import io.github.nexgus.jiudge.feature.about.MainMenuButton
@@ -116,7 +122,7 @@ class MainActivity : ComponentActivity() {
                         MapScreen(
                             mapDir = paths.mapDir,
                             engine = remember { BRouterEngine(paths.brouterDir) },
-                            routeStore = remember { RouteStore(applicationContext) },
+                            routeStore = remember { RouteStore() },
                             snackbarHostState = snackbarHostState,
                             onMapCreated = { mapView = it },
                             modifier =
@@ -207,29 +213,66 @@ private fun MapScreen(
     var displayedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
     // What ROUTE_EDIT "取消" reverts to: set when entering edit, refreshed on save.
     var editBaseline by remember { mutableStateOf<PlannedRoute?>(null) }
+    // Raised on 新增, lowered after the first save: a brand-new route must not reuse an existing
+    // name, but re-saving an edited route may keep its own name.
+    var isNewRoute by remember { mutableStateOf(false) }
+    // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
+    var saveNameDraft by remember { mutableStateOf<String?>(null) }
 
-    // SAF folder gate: saving/loading routes needs the user-picked folder. Pick it on first use,
-    // then run the deferred action; if the user cancels the picker, the action is dropped.
+    // Storage-access gate: saving/loading routes writes the fixed public folder Documents/Jiudge,
+    // which needs All files access on Android 11+ (a Settings toggle) or legacy WRITE_EXTERNAL_STORAGE
+    // below. We defer the action behind a rationale dialog, then send the user to grant it; the action
+    // runs once access is held, or is dropped if denied.
     val context = LocalContext.current
-    var pendingFolderAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val folderPicker =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            val action = pendingFolderAction
-            pendingFolderAction = null
-            if (uri != null) {
-                RouteFolder.persist(context, uri)
-                action?.invoke()
-            } else {
-                scope.launch { snackbarHostState.showSnackbar("需選擇資料夾才能儲存或載入路徑") }
-            }
+    var pendingStorageAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showStorageRationale by remember { mutableStateOf(false) }
+
+    fun hasStorageAccess(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
         }
 
-    fun withFolder(action: () -> Unit) {
-        if (RouteFolder.current(context) != null) {
+    fun runOrDropPending(granted: Boolean) {
+        val action = pendingStorageAction
+        pendingStorageAction = null
+        if (granted) {
+            action?.invoke()
+        } else {
+            scope.launch { snackbarHostState.showSnackbar("未取得存取權, 無法儲存或讀取路線") }
+        }
+    }
+
+    val allFilesAccessLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            runOrDropPending(hasStorageAccess())
+        }
+    val writePermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            runOrDropPending(granted)
+        }
+
+    fun requestStorageAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            allFilesAccessLauncher.launch(
+                Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.fromParts("package", context.packageName, null),
+                ),
+            )
+        } else {
+            writePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+
+    fun withStorageAccess(action: () -> Unit) {
+        if (hasStorageAccess()) {
             action()
         } else {
-            pendingFolderAction = action
-            folderPicker.launch(null)
+            pendingStorageAction = action
+            showStorageRationale = true
         }
     }
 
@@ -450,6 +493,7 @@ private fun MapScreen(
                                 viewer?.clear()
                                 planner.loadFrom(route)
                                 editBaseline = route
+                                isNewRoute = false
                                 mode = PlanMode.ROUTE_EDIT
                             }
                         },
@@ -480,6 +524,7 @@ private fun MapScreen(
                     planner?.clear()
                     displayedRoute = null
                     editBaseline = null
+                    isNewRoute = true
                     mode = PlanMode.ROUTE_EDIT
                 } else {
                     scope.launch {
@@ -489,7 +534,7 @@ private fun MapScreen(
             },
             onLoad = {
                 showChooser = false
-                withFolder {
+                withStorageAccess {
                     scope.launch {
                         try {
                             loadList = withContext(Dispatchers.IO) { routeStore.list() }
@@ -505,23 +550,30 @@ private fun MapScreen(
 
     if (showSave) {
         SaveRouteDialog(
-            initialName = editBaseline?.name ?: "",
+            initialName = saveNameDraft ?: editBaseline?.name ?: "",
             onConfirm = { name ->
                 val p = planner
                 showSave = false
                 if (p != null) {
                     val saved = p.toPlannedRoute(name, System.currentTimeMillis())
-                    withFolder {
+                    withStorageAccess {
                         scope.launch {
                             try {
-                                withContext(Dispatchers.IO) { routeStore.save(saved) }
+                                withContext(Dispatchers.IO) { routeStore.save(saved, checkDuplicate = isNewRoute) }
                                 // Keep the route on screen: leave editing for view mode, not cleared.
                                 p.clear()
                                 viewer?.show(saved)
                                 displayedRoute = saved
                                 editBaseline = saved
+                                isNewRoute = false
+                                saveNameDraft = null
                                 mode = PlanMode.ROUTE_VIEW
                                 snackbarHostState.showSnackbar("已儲存規劃路徑: $name")
+                            } catch (e: DuplicateRouteNameException) {
+                                // Keep the typed name and reopen so the user can rename in place.
+                                saveNameDraft = name
+                                showSave = true
+                                snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
                             } catch (e: Exception) {
                                 snackbarHostState.showSnackbar("儲存失敗: ${e.message}")
                             }
@@ -529,7 +581,38 @@ private fun MapScreen(
                     }
                 }
             },
-            onDismiss = { showSave = false },
+            onDismiss = {
+                showSave = false
+                saveNameDraft = null
+            },
+        )
+    }
+
+    if (showStorageRationale) {
+        AlertDialog(
+            onDismissRequest = {
+                showStorageRationale = false
+                pendingStorageAction = null
+            },
+            title = { Text("需要 \"所有檔案存取權\"") },
+            text = {
+                Text(
+                    "Jiudge 會將你規劃的路線存放在 \"文件/Jiudge\" 資料夾. 為了讓這些路線在解除安裝後仍然保留, " +
+                        "重新安裝後也能直接讀回, app 需要系統的 \"所有檔案存取權\". 此權限僅用於讀寫本 app 自己的路線檔.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showStorageRationale = false
+                    requestStorageAccess()
+                }) { Text("前往設定") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showStorageRationale = false
+                    pendingStorageAction = null
+                }) { Text("稍後再說") }
+            },
         )
     }
 
@@ -541,7 +624,7 @@ private fun MapScreen(
                 // Opening a saved file shows it in view mode (per docs/ui.md); "編輯" enters editing.
                 scope.launch {
                     try {
-                        val route = withContext(Dispatchers.IO) { routeStore.load(summary.uri) }
+                        val route = withContext(Dispatchers.IO) { routeStore.load(summary.file) }
                         planner?.clear()
                         viewer?.show(route)
                         displayedRoute = route

@@ -13,7 +13,7 @@ For the full specification, read `docs/spec.md`.
 
 A custom outdoor hiking map app that addresses two pain points of existing Taiwan hiking apps: **UI/operation experience** and **route planning/tracking quality**.
 
-This is a personal project. There is **no backend**, no user accounts, no telemetry, no analytics. Everything runs on-device. Distribution is APK side-load and (later) Play Store. **Android only** - iOS is not in scope.
+This is a personal project. There is **no backend**, no user accounts, no telemetry, no analytics. Everything runs on-device. Distribution is **APK side-load**. Play Store is **not** a near-term target: route storage relies on `MANAGE_EXTERNAL_STORAGE` (All files access), which Google Play restricts to file-manager-class apps - listing on Play would require re-architecting route storage first (see the storage rationale below). **Android only** - iOS is not in scope.
 
 Map data is **not produced by this project**. The app consumes RudyMap (MOI.OSM Taiwan TOPO) data directly: the mapsforge `.map` basemap, its bundled render theme, and `.hgt` DEM. These are downloaded in-app from RudyMap's public mirrors for personal use only - never re-hosted or redistributed.
 
@@ -33,7 +33,7 @@ change it - and update this table and the rationale notes below so the record st
 | Routing engine | BRouter (`org.btools:brouter-core`, Java), called in-process - no platform channel needed |
 | Routing data | BRouter `.rd5` segments (5x5-deg tiles) + `.brf` profile, OSM-derived - separate from the rendering `.map`, which carries no routing topology |
 | DEM / hillshade | RudyMap `.hgt` DEM (`hgtmix`); mapsforge native hillshading + on-device elevation queries |
-| Local storage | One JSON/GPX file per planned route/track. **User routes live in a user-picked SAF folder** (`Jiudge/plans/`, `Jiudge/tracks/`) via `DocumentFile`, so they survive uninstall; downloadable `.map`/`.rd5`/DEM live under `getExternalFilesDir` (`core/storage/AppPaths`). Room (SQLite) only if/when querying many records demands it |
+| Local storage | One JSON/GPX file per planned route/track. **User routes live in a fixed public folder** `Documents/Jiudge/` (`plans/`, `tracks/`) written via `java.io.File`, gated by the `MANAGE_EXTERNAL_STORAGE` (All files access) permission, so they survive uninstall and a reinstalled app re-reads them after the user re-grants. Downloadable `.map`/`.rd5`/DEM live under `getExternalFilesDir` (`core/storage/AppPaths`). Room (SQLite) only if/when querying many records demands it |
 | GPS background | Android Foreground Service + Wake Lock + persistent notification |
 | Backend | None. Map data fetched in-app directly from RudyMap public mirrors (static HTTPS) |
 
@@ -59,6 +59,20 @@ GraphHopper: its `.rd5` segment data is tiny per region (all of Taiwan is ~1-2 o
 tiles vs a full-`pbf` graph build), its core (`brouter-core`) runs in-process, and its `.brf`
 profile system is purpose-built for foot/hike trail weighting. Same offline, no-backend,
 JVM-in-process properties as the original GraphHopper plan.
+
+**Why MANAGE_EXTERNAL_STORAGE for routes, not SAF (decided 2026-06-24):** routes must survive
+uninstall, be readable again after reinstall, and live in a fixed predictable folder with no
+per-use picker. SAF (`OPEN_DOCUMENT_TREE`) cannot auto-create a fixed folder - it is
+consent-gated, and Android 11+ blocks granting standard shared dirs (Documents/Download/root)
+wholesale, forcing the user through a confusing "create new folder" pick on every fresh install.
+MediaStore does not help either: it is media-only by Google's own guidance, and a reinstalled app
+loses access to its own non-media (`.json`) files because that needs the now-gutted
+`READ_EXTERNAL_STORAGE`. `MANAGE_EXTERNAL_STORAGE` is the only API delivering fixed-path +
+no-picker + reinstall-recoverable at once. Its cost is Play Store eligibility (see Distribution),
+which we accept because this is a personal, side-loaded app. Before going to Settings, the app
+shows a rationale dialog explaining the permission. If Play Store ever becomes a goal, route
+storage must move back to SAF (per-install folder pick) or app-specific storage (no
+uninstall survival).
 
 ## Hard Constraints
 
@@ -90,16 +104,28 @@ In scope for v1: see `docs/spec.md` §1.1.
 
 If a request naturally invites one of these, mention it as v2 candidate and **stop**; do not implement without explicit go-ahead.
 
-## Phase Discipline
+## Development Status
 
-The spec breaks work into four phases:
+Work here is **feature-driven, not strict-phase-linear** - features land when they are useful,
+not in a fixed order. `docs/spec.md` still describes a Phase 0-3 plan for reference, but the
+project deliberately did not follow it in sequence, so do **not** block or gate work on "that
+belongs to a later phase". The old "never jump phases" rule is retired.
 
-- **Phase 0**: technical prototype (native Android + `mapsforge-map-android` renders a RudyMap `.map` with hillshade, GPS dot; validates the open items in spec §6 Phase 0)
-- **Phase 1**: core usable (offline map + background track recording + basic GPX I/O)
-- **Phase 2**: route planning (BRouter integration + waypoints + elevation profile)
-- **Phase 3**: update mechanism + polish
+**Built so far:**
+- Offline map rendering with hillshade (`feature/map`)
+- In-app download of map / DEM / BRouter data (`feature/mapdata`, `core/mapdata`)
+- Route planning via BRouter - waypoints, save/load (`feature/planning`, `core/routing`, `data/route`)
+- Map-symbol identify ("?") (`feature/identify`)
+- Main menu / about (`feature/about`)
 
-Do not jump phases. If Phase 2 work would unblock something in Phase 1, raise it and let me decide; do not just do it.
+**Not yet built (known remaining work):**
+- Background track recording (foreground-service GPS) + GPX import/export - this was the original
+  "Phase 1 core" and is still outstanding
+- Elevation profile during planning
+- Update-check mechanism
+
+Still applies: build what is asked, do not silently expand scope (see Working With Me), and keep
+the v1 out-of-scope list below off-limits without an explicit go-ahead.
 
 ## Development Conventions
 
@@ -110,10 +136,10 @@ Do not jump phases. If Phase 2 work would unblock something in Phase 1, raise it
 ### Directory layout (native Android)
 ```
 app/src/main/kotlin/io/github/nexgus/jiudge/
-  feature/        # feature modules: map, planning, recording, gpx, settings
-  core/           # shared infra: gps, storage, mapdata, networking
-  data/           # repositories, models, data sources
-  ui/             # Compose components, theming, design tokens
+  feature/        # feature modules: map, planning, identify, mapdata, about (planned: recording, gpx, settings)
+  core/           # shared infra: mapdata, routing, storage (planned: gps, networking)
+  data/           # repositories, models, data sources (currently: route)
+  ui/             # Compose components, theming, design tokens (planned)
 docs/             # spec, design notes, architecture decisions
 ```
 
@@ -141,7 +167,7 @@ See `docs/spec.md` §9 for context. Don't assume answers:
 
 1. Whether to include Forestry Bureau comm-point/shelter overlay in v1
 2. Whether auto-routed paths support manual node-drag adjustment afterward
-3. Whether RudyMap's `.map` carries `name:en` tags (decides if zh/en label switching is feasible) - resolve in Phase 0
+3. ~~Whether RudyMap's `.map` carries `name:en` tags~~ - **resolved**: it carries both zh + en, so zh/en label switching is feasible
 4. Live cumulative ascent shown during waypoint dragging
 
 ## Key External References

@@ -46,6 +46,21 @@ fi
 
 ./gradlew ktlintCheck "$task"
 
+apk="app/build/outputs/apk/$variant/app-$variant.apk"
+
 echo
-echo "Build complete ($variant). Artifact:"
-find "app/build/outputs/apk/$variant" -name '*.apk' -print
+echo "Build complete ($variant)."
+echo "Artifact: $apk"
+
+# For release, drop a shareable copy named with the version and commit, so an APK handed to someone
+# is self-describing (e.g. jiudge-0.1.0-25d6af9.apk). The hash/dirty here are read the same way the
+# build stamps BuildConfig, so the filename matches the in-app "關於" version.
+if [ "$variant" = release ]; then
+    version="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)"
+    hash="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    dirty=""
+    [ -n "$(git status --porcelain 2>/dev/null)" ] && dirty="-dirty"
+    dist="app/build/outputs/apk/$variant/jiudge-${version}-${hash}${dirty}.apk"
+    cp -f "$apk" "$dist"
+    echo "Shareable copy: $dist"
+fi
