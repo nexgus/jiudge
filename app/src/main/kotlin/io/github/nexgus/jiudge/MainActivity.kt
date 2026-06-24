@@ -93,6 +93,7 @@ import io.github.nexgus.jiudge.feature.planning.RoutePlanner
 import io.github.nexgus.jiudge.feature.planning.RouteViewControls
 import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
+import io.github.nexgus.jiudge.feature.planning.fitToRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
@@ -894,6 +895,8 @@ private fun MapScreen(
                         val route = withContext(Dispatchers.IO) { routeStore.load(summary.file) }
                         planner?.clear()
                         viewer?.show(route)
+                        // Frame the whole trace on file load (only here - not on save/cancel).
+                        map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints })
                         displayedRoute = route
                         mode = PlanMode.ROUTE_VIEW
                     } catch (e: Exception) {
