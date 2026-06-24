@@ -13,6 +13,8 @@ import org.mapsforge.map.layer.hills.SimpleShadingAlgorithm
 import org.mapsforge.map.layer.renderer.TileRendererLayer
 import org.mapsforge.map.reader.MapFile
 import org.mapsforge.map.rendertheme.ExternalRenderTheme
+import org.mapsforge.map.rendertheme.XmlRenderThemeMenuCallback
+import org.mapsforge.map.rendertheme.XmlRenderThemeStyleMenu
 import java.io.File
 
 /**
@@ -35,6 +37,26 @@ object RudyMapView {
     private const val INITIAL_LAT = 25.1363861
     private const val INITIAL_LNG = 121.4275306
     private const val INITIAL_ZOOM: Byte = 15
+
+    // The render theme is RudyMap's `<stylemenu>` theme: a base layer (`elmt-hiking`) plus
+    // overlays, each carrying an `enabled` flag and a set of categories. mapsforge only honours
+    // those flags when a menu callback is supplied; with none, it renders *every* rule regardless
+    // of `enabled`, so author-disabled overlays (air-defense shelters, giant trees, base stations,
+    // some borders) leak onto the map. This callback applies the theme's own intent: take the
+    // default layer's categories plus those of its enabled overlays, and let mapsforge drop the
+    // rest. Returning null would fall back to "render everything", so we keep that as the
+    // defensive path if the expected layer is missing.
+    private val styleMenuCallback =
+        XmlRenderThemeMenuCallback { style: XmlRenderThemeStyleMenu ->
+            val baseLayer = style.getLayer(style.defaultValue) ?: return@XmlRenderThemeMenuCallback null
+            val categories = baseLayer.categories
+            for (overlay in baseLayer.overlays) {
+                if (overlay.isEnabled) {
+                    categories.addAll(overlay.categories)
+                }
+            }
+            categories
+        }
 
     fun create(
         context: Context,
@@ -75,7 +97,7 @@ object RudyMapView {
                 AndroidGraphicFactory.INSTANCE,
                 buildHillsConfig(mapDir),
             ).apply {
-                setXmlRenderTheme(ExternalRenderTheme(File(mapDir, THEME_NAME)))
+                setXmlRenderTheme(ExternalRenderTheme(File(mapDir, THEME_NAME), styleMenuCallback))
             }
         mapView.layerManager.layers.add(tileRendererLayer)
 
