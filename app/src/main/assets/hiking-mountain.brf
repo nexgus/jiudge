@@ -1,0 +1,87 @@
+# Jiudge hiking foot profile.
+#
+# Authored for this app (not a stock BRouter profile). Two rules only, by project requirement:
+#
+#   1. Pure shortest distance. Every foot-accessible way has costfactor 1, with NO preference
+#      between road / trail / steps. BRouter minimises length * costfactor, so its lowest-cost
+#      path is simply the shortest one.
+#
+#   2. Never route onto a way RudyMap renders as a tough path ("艱難路線"). This is the STRICT
+#      profile - it blocks tough paths outright (costfactor 9998). The "unless the user placed a
+#      waypoint on it" exception is NOT done here with cost: a single cost cannot both avoid tough
+#      paths hard AND go straight to a waypoint sitting on one (a high cost makes BRouter detour to
+#      minimise tough metres rather than head where the user pointed). Instead the app routes a leg
+#      whose endpoint lies on a tough path with the companion profile hiking-mountain-tough.brf,
+#      which drops this block (see RoutePlanner / ToughPathDetector). Keep the two files in sync.
+#
+# 9998 is deliberate: BRouter rejects a segment for routing when costfactor > 9998 (brouter-core
+# v1.7.9, OsmPath), and 10000 is the conventional "hard exclude" that also removes the way before
+# waypoint matching. 9998 is the highest still-routable value, so tough paths are avoided by every
+# ordinary route yet remain in the graph.
+#
+# "艱難路線" is matched verbatim from RudyMap's render theme (MOI_OSM.xml, cat="hike-tough"), so the
+# set of blocked ways equals the set RudyMap draws as tough:
+#   trail_visibility = bad|horrible|no
+#     OR
+#   sac_scale = demanding_alpine_hiking|difficult_alpine_hiking
+# (RudyMap's theme also lists T5/T6 as aliases, but BRouter's lookups.dat only knows the textual
+# values - which is what real OSM data carries - so listing T5/T6 here would be a parse error.)
+
+---context:global
+
+assign validForFoot = true
+
+# No turn-instruction processing and no elevation shaping: cost must stay equal to plain distance.
+assign turnInstructionMode = 0
+assign processUnusedTags    = false
+assign downhillcost   = 0
+assign downhillcutoff = 1.5
+assign uphillcost     = 0
+assign uphillcutoff   = 1.5
+
+---context:way   # tags of the current way
+
+# Pure distance: no turn penalty, no per-classifier initial cost.
+assign turncost    = 0
+assign initialcost = 0
+
+# --- foot access --------------------------------------------------------------
+assign defaultaccess =
+       if access= then true
+       else if access=private|no then false
+       else true
+
+assign footaccess =
+       if foot= then defaultaccess
+       else not foot=private|no|use_sidepath
+
+# --- RudyMap "艱難路線" (hike-tough), matched verbatim -------------------------
+assign is_tough =
+       or trail_visibility=bad|horrible|no
+          sac_scale=demanding_alpine_hiking|difficult_alpine_hiking
+
+# --- cost = distance for every walkable way; block everything else -------------
+# Two BRouter thresholds matter here (verified against brouter-core v1.7.9):
+#   * costfactor > 9998  -> OsmPath rejects the segment for routing (cannot be traversed), AND the
+#     way is filtered out before waypoint matching, so a tap cannot even snap onto it.
+#   * 10000 is the conventional "hard exclude" - the way is gone entirely.
+# Hard-excluded ways (not walkable at all) use 10000. Tough paths use 9998: that is the HIGHEST
+# routable value, so they are avoided by every ordinary route (9998x distance), yet a waypoint
+# placed directly on one still snaps to it and the route is allowed to traverse it - the
+# "only when explicitly placed there" exception. (At 10000 the way is deleted and the tap snaps
+# to a neighbouring normal path instead, which is the bug this value fixes.)
+assign costfactor =
+       if      ( and highway= not route=ferry )                  then 10000   # not a routable way
+       else if ( highway=motorway|motorway_link )                then 10000   # no foot traffic
+       else if ( highway=trunk|trunk_link )                      then 10000
+       else if ( highway=proposed|abandoned|construction )       then 10000
+       else if ( not footaccess )                                then 10000
+       else if ( is_tough )                                      then 9998    # RudyMap hike-tough
+       else 1.0
+
+---context:node  # tags of the current node
+
+# Block locked/forbidden nodes (gates etc.); everything else is free.
+assign initialcost =
+       if access=private|no then 1000000
+       else 0

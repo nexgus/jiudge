@@ -4,6 +4,7 @@ import androidx.compose.runtime.mutableStateListOf
 import io.github.nexgus.jiudge.core.elevation.DemElevation
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.routing.RoutingException
+import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,12 +19,15 @@ import org.mapsforge.map.android.view.MapView
  *
  * Waypoints are Compose snapshot state so the bottom-bar button states recompose as they change.
  * [density] feeds the zoom-aware overlay; [dem] feeds its slope colouring (null -> grey route).
+ * [toughDetector] (null when the basemap is unavailable) lets a leg whose endpoint sits on a
+ * RudyMap "艱難路線" be routed through it instead of detoured around (the strict profile blocks it).
  */
 class RoutePlanner(
     private val mapView: MapView,
     private val engine: BRouterEngine,
     private val density: Float,
     private val dem: DemElevation?,
+    private val toughDetector: ToughPathDetector? = null,
 ) {
     private val _waypoints = mutableStateListOf<LatLong>()
     val waypoints: List<LatLong> get() = _waypoints
@@ -53,9 +57,16 @@ class RoutePlanner(
             pushOverlay()
             return null
         }
+        val from = _waypoints.last()
         val path =
             try {
-                withContext(Dispatchers.Default) { engine.route(_waypoints.last(), center) }
+                withContext(Dispatchers.Default) {
+                    // Allow tough paths on this leg only when an endpoint actually sits on one, so the
+                    // route heads straight to a waypoint placed there rather than detouring around it.
+                    val allowTough =
+                        toughDetector?.let { it.isOnToughPath(from) || it.isOnToughPath(center) } ?: false
+                    engine.route(from, center, allowTough)
+                }
             } catch (e: RoutingException) {
                 return e.message ?: "routing failed"
             }

@@ -30,6 +30,10 @@ class BRouterEngine(
     private val segmentDir = File(brouterDir, "segments4")
     private val profileFile = File(profilesDir, "$profileName.brf")
 
+    // Companion profile that drops the "艱難路線" block, used for a single leg when the user placed a
+    // waypoint on a tough path (see [route]'s allowTough). Falls back to the strict profile if absent.
+    private val toughProfileFile = File(profilesDir, "$TOUGH_PROFILE.brf")
+
     // BRouter reads the tag-lookup table next to the profiles; routing fails without it.
     private val lookupsFile = File(profilesDir, "lookups.dat")
 
@@ -40,6 +44,11 @@ class BRouterEngine(
      * Computes the shortest on-trail route from [from] to [to] and returns its geometry as an
      * ordered list of [LatLong] (both endpoints included, snapped to the routable network).
      *
+     * With [allowTough] true the leg is routed with the companion profile that does NOT block
+     * RudyMap "艱難路線" paths - used only when an endpoint sits on a tough path, so the route can go
+     * straight there instead of detouring around it (see RoutePlanner). The default strict profile
+     * keeps tough paths blocked.
+     *
      * Runs the A* search synchronously - call off the main thread. Always throws [RoutingException]
      * on failure (no path, waypoint off-network, missing/corrupt data) so callers never have to
      * handle BRouter's raw exception types - and a data problem surfaces as a message, not a crash.
@@ -47,10 +56,12 @@ class BRouterEngine(
     fun route(
         from: LatLong,
         to: LatLong,
+        allowTough: Boolean = false,
     ): List<LatLong> {
         require(isReady()) { "BRouter data missing under ${segmentDir.parent}" }
 
-        val rc = RoutingContext().apply { localFunction = profileFile.absolutePath }
+        val profile = if (allowTough && toughProfileFile.isFile) toughProfileFile else profileFile
+        val rc = RoutingContext().apply { localFunction = profile.absolutePath }
         val waypoints = listOf(from.toWaypoint("from"), to.toWaypoint("to"))
 
         val track =
@@ -77,8 +88,11 @@ class BRouterEngine(
         }
 
     companion object {
-        /** Bundled hiking profile name (drops the `.brf` suffix). */
+        /** Bundled strict hiking profile name (drops the `.brf` suffix). */
         const val DEFAULT_PROFILE = "hiking-mountain"
+
+        /** Companion profile that allows "艱難路線" paths, for a leg whose endpoint sits on one. */
+        const val TOUGH_PROFILE = "hiking-mountain-tough"
 
         private const val SCALE = 1_000_000.0
         private const val LON_OFFSET = 180.0

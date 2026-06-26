@@ -50,13 +50,10 @@ $ADB -s $DEV shell chmod -R 777 $DATA/map
 無法計算路徑 (`BRouterEngine.isReady()` 為 false).
 
 ```bash
-# 本機備好 rd5 (台灣本島兩格) 與一份步行/登山 profile
+# 本機備好 rd5 (台灣本島兩格); profile 不需手動備, 已隨 APK 打包並於啟動時複製到 profiles2/
 mkdir -p ~/rudymap-data/brouter/segments4 ~/rudymap-data/brouter/profiles2
 curl -L -o ~/rudymap-data/brouter/segments4/E120_N20.rd5 https://brouter.de/brouter/segments4/E120_N20.rd5
 curl -L -o ~/rudymap-data/brouter/segments4/E120_N25.rd5 https://brouter.de/brouter/segments4/E120_N25.rd5
-# profile 檔名 (去掉副檔名) 須等於 BRouterEngine.DEFAULT_PROFILE ("hiking-mountain"):
-curl -L -o ~/rudymap-data/brouter/profiles2/hiking-mountain.brf \
-  https://raw.githubusercontent.com/abrensch/brouter/master/misc/profiles2/trekking.brf
 # lookups.dat 為 BRouter 的 tag 查找表, 必備; 版本須與 brouter-core (1.7.9) 對齊:
 curl -L -o ~/rudymap-data/brouter/profiles2/lookups.dat \
   https://raw.githubusercontent.com/abrensch/brouter/v1.7.9/misc/profiles2/lookups.dat
@@ -68,8 +65,10 @@ $ADB -s $DEV shell chmod -R 777 $DATA/brouter   # 同上: app 才穿越得進去
 $ADB -s $DEV shell ls -lR $DATA/brouter   # 確認落點
 ```
 
-- `trekking.brf` 為官方泛用 profile, 先用來驗證管線; 登山取向建議改用 poutnik 的 hiking profile
-  (https://github.com/poutnikl/Brouter-profiles), 沿用相同檔名即可.
+- routing profile 已隨 APK 打包於 `app/src/main/assets/`, 啟動時由 `BRouterProfile.install` 複製到
+  `profiles2/`. 共兩支: `hiking-mountain.brf` (嚴格, 避開魯地圖艱難路線) 與
+  `hiking-mountain-tough.brf` (允許艱難, 僅在 wpt 落在艱難路上時用於該段, 見 ToughPathDetector).
+  規則皆為純最短距離. 欲手動覆寫測試, 放同名檔到 `profiles2/` 即可 (會於下次啟動被打包版蓋回).
 - 離島: `E120_N20` + `E120_N25` 涵蓋本島; 澎湖/金門另需 `E115_N20.rd5`, 同放 `segments4/`.
 
 ## 3. 建置 debug APK

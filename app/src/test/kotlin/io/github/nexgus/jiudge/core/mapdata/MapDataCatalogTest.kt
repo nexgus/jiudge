@@ -29,7 +29,7 @@ class MapDataCatalogTest {
                 "dem",
                 "brouter-E120_N20.rd5",
                 "brouter-E120_N25.rd5",
-                "brouter-profile",
+                // brouter-profile is no longer downloaded - it ships in the APK (see BRouterProfile).
                 "brouter-lookups",
             ),
             cat.assets.map { it.id }.toSet(),

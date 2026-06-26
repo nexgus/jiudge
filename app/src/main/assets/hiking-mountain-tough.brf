@@ -1,0 +1,58 @@
+# Jiudge hiking foot profile - PER-LEG "tough allowed" variant.
+#
+# Identical to hiking-mountain.brf (pure shortest distance on foot) EXCEPT it does NOT block
+# RudyMap "艱難路線" (hike-tough) paths: they cost the same as any other way (1.0).
+#
+# This profile is used for a single route leg ONLY when the user placed a waypoint directly on a
+# tough path (see RoutePlanner / ToughPathDetector). On such a leg the route must go straight to
+# that point, so the tough segment has to be ordinary cost - otherwise a huge finite penalty makes
+# BRouter detour around to minimise tough metres instead of going where the user pointed. Every
+# other leg uses the strict hiking-mountain.brf, which keeps tough paths blocked.
+#
+# Keep this file in sync with hiking-mountain.brf: the ONLY intended difference is the absence of
+# the is_tough block. The "艱難路線" definition itself lives there and in MOI_OSM.xml (hike-tough).
+
+---context:global
+
+assign validForFoot = true
+
+# No turn-instruction processing and no elevation shaping: cost must stay equal to plain distance.
+assign turnInstructionMode = 0
+assign processUnusedTags    = false
+assign downhillcost   = 0
+assign downhillcutoff = 1.5
+assign uphillcost     = 0
+assign uphillcutoff   = 1.5
+
+---context:way   # tags of the current way
+
+# Pure distance: no turn penalty, no per-classifier initial cost.
+assign turncost    = 0
+assign initialcost = 0
+
+# --- foot access --------------------------------------------------------------
+assign defaultaccess =
+       if access= then true
+       else if access=private|no then false
+       else true
+
+assign footaccess =
+       if foot= then defaultaccess
+       else not foot=private|no|use_sidepath
+
+# --- cost = distance for every walkable way; block only the non-walkable ------
+# NOTE: no is_tough branch here - tough paths cost 1.0 like any other walkable way.
+assign costfactor =
+       if      ( and highway= not route=ferry )                  then 10000   # not a routable way
+       else if ( highway=motorway|motorway_link )                then 10000   # no foot traffic
+       else if ( highway=trunk|trunk_link )                      then 10000
+       else if ( highway=proposed|abandoned|construction )       then 10000
+       else if ( not footaccess )                                then 10000
+       else 1.0
+
+---context:node  # tags of the current node
+
+# Block locked/forbidden nodes (gates etc.); everything else is free.
+assign initialcost =
+       if access=private|no then 1000000
+       else 0

@@ -92,16 +92,9 @@ class MapDataCatalog(
         return listOf(
             brouterSegment("E120_N20.rd5", 21_872_135L, segments),
             brouterSegment("E120_N25.rd5", 12_362_502L, segments),
-            MapDataAsset(
-                id = "brouter-profile",
-                displayName = "路徑規劃設定",
-                // Official generic trekking profile, installed under the name BRouterEngine expects.
-                // A hiking-tuned profile (poutnik) can replace it later without touching the path.
-                urls = listOf("https://raw.githubusercontent.com/abrensch/brouter/master/misc/profiles2/trekking.brf"),
-                approxSizeBytes = 17_852L,
-                optional = false,
-                install = InstallPlan.Raw(File(profiles, "${BRouterEngine.DEFAULT_PROFILE}.brf")),
-            ),
+            // The routing profile is not downloaded: it is our own hiking ruleset bundled in the
+            // APK and copied into profiles2/ at launch (see BRouterProfile). Only lookups.dat and
+            // the .rd5 segments are fetched here.
             MapDataAsset(
                 id = "brouter-lookups",
                 displayName = "路徑規劃標籤表",

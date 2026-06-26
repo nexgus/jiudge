@@ -70,6 +70,8 @@ import io.github.nexgus.jiudge.core.mapdata.MapDataCatalog
 import io.github.nexgus.jiudge.core.mapdata.MapDataDownload
 import io.github.nexgus.jiudge.core.mapdata.MapVersion
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
+import io.github.nexgus.jiudge.core.routing.BRouterProfile
+import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
@@ -113,6 +115,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val paths = AppPaths(this)
+        // Copy the bundled routing profile into place before any planning can use it.
+        BRouterProfile.install(this, paths.brouterDir)
         val catalog = MapDataCatalog(paths)
         setContent {
             MaterialTheme {
@@ -215,8 +219,13 @@ private fun MapScreen(
     // absent, in which case the route renders without slope colour (grey) rather than failing.
     val demElevation = remember(mapDir) { DemElevation.createOrNull(File(mapDir, RudyMapView.DEM_DIR)) }
 
+    // Reads the basemap to tell when a waypoint sits on a RudyMap "艱難路線", so that leg is routed
+    // through the tough path instead of detoured around it (see RoutePlanner).
+    val toughDetector = remember(mapDir) { ToughPathDetector(File(mapDir, RudyMapView.BASEMAP_NAME)) }
+    DisposableEffect(toughDetector) { onDispose { toughDetector.close() } }
+
     // One planner / viewer per live MapView; recreated if the view is.
-    val planner = remember(map.value) { map.value?.let { RoutePlanner(it, engine, density, demElevation) } }
+    val planner = remember(map.value) { map.value?.let { RoutePlanner(it, engine, density, demElevation, toughDetector) } }
     val viewer = remember(map.value) { map.value?.let { RouteViewer(it, density, demElevation) } }
 
     var mode by remember { mutableStateOf(PlanMode.MAP_VIEW) }
