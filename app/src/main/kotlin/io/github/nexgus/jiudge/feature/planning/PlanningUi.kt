@@ -11,9 +11,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -21,7 +21,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
@@ -71,9 +71,49 @@ fun CrosshairOverlay(modifier: Modifier = Modifier) {
 }
 
 /**
+ * Map-overlay action button: an opaque rounded pill that floats legibly over the coloured map
+ * without a shared backdrop. Primary actions get the filled accent fill; secondary actions get a
+ * white pill with accent text (grey text when disabled). The small shadow lifts each pill clear of
+ * busy terrain. Callers hide unavailable actions by not emitting them, rather than showing them
+ * disabled - except the editing panel, which keeps its buttons in place and disables them so the
+ * row does not jump as the waypoint count changes.
+ */
+@Composable
+private fun MapPill(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    enabled: Boolean = true,
+    fontSize: TextUnit = TextUnit.Unspecified,
+) {
+    val colors =
+        if (primary) {
+            ButtonDefaults.buttonColors()
+        } else {
+            ButtonDefaults.buttonColors(
+                containerColor = Color.White,
+                contentColor = MaterialTheme.colorScheme.primary,
+                disabledContainerColor = Color.White,
+                disabledContentColor = Color(0xFF9E9E9E),
+            )
+        }
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        colors = colors,
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp),
+    ) {
+        Text(text, fontSize = fontSize)
+    }
+}
+
+/**
  * Bottom action bar for planning mode: add a waypoint at the crosshair, drop the last one, save,
  * or cancel. Save is disabled until there is a routed path (>= 2 waypoints); while a route is
- * computing the add/remove/save actions are disabled and a spinner shows.
+ * computing the add/remove/save actions are disabled and a spinner shows. The buttons disable in
+ * place (rather than hide) so the row keeps a stable width as the waypoint count changes.
  */
 @Composable
 fun PlanningBottomBar(
@@ -85,26 +125,18 @@ fun PlanningBottomBar(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    Row(
         modifier = modifier,
-        color = Color.White,
-        contentColor = Color.Black,
-        shape = RoundedCornerShape(16.dp),
-        shadowElevation = 6.dp,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Button(onClick = onAdd, enabled = !busy) { Text("+", fontSize = 20.sp) }
-            Button(onClick = onRemove, enabled = !busy && waypointCount > 0) { Text("−", fontSize = 20.sp) }
-            if (busy) {
-                CircularProgressIndicator(modifier = Modifier.padding(horizontal = 8.dp))
-            }
-            OutlinedButton(onClick = onSave, enabled = !busy && waypointCount >= 2) { Text("儲存") }
-            OutlinedButton(onClick = onCancel, enabled = !busy) { Text("取消") }
+        MapPill("+", onAdd, primary = true, enabled = !busy, fontSize = 20.sp)
+        MapPill("−", onRemove, primary = true, enabled = !busy && waypointCount > 0, fontSize = 20.sp)
+        if (busy) {
+            CircularProgressIndicator(modifier = Modifier.padding(horizontal = 8.dp))
         }
+        MapPill("儲存", onSave, enabled = !busy && waypointCount >= 2)
+        MapPill("取消", onCancel, enabled = !busy)
     }
 }
 
@@ -117,8 +149,11 @@ fun MapViewControls(
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = onPlan) { Text("規劃路徑") }
-        OutlinedButton(onClick = onClear, enabled = canClear) { Text("清除軌跡") }
+        MapPill("規劃路徑", onPlan, primary = true)
+        // Nothing to clear yet -> omit the button entirely instead of disabling it.
+        if (canClear) {
+            MapPill("清除軌跡", onClear)
+        }
     }
 }
 
@@ -133,8 +168,8 @@ fun RouteViewControls(
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = onEdit) { Text("編輯") }
-        OutlinedButton(onClick = onLeave) { Text("離開") }
+        MapPill("編輯", onEdit, primary = true)
+        MapPill("離開", onLeave)
     }
 }
 
