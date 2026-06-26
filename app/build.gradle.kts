@@ -31,7 +31,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.2.0"
+        versionName = "0.3.0"
 
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         buildConfigField("boolean", "GIT_DIRTY", "$gitDirty")
