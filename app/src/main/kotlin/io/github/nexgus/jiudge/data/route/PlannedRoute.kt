@@ -23,17 +23,7 @@ data class PlannedRoute(
 ) {
     /** The full routed track: segment geometries joined, dropping the duplicated junction points. */
     val polyline: List<LatLong>
-        get() {
-            val out = mutableListOf<LatLong>()
-            for (seg in segments) {
-                if (out.isNotEmpty() && seg.isNotEmpty() && out.last() == seg.first()) {
-                    out.addAll(seg.drop(1))
-                } else {
-                    out.addAll(seg)
-                }
-            }
-            return out
-        }
+        get() = joinRouteSegments(segments)
 
     /** The header line for this plan's trace file (spec §4). */
     fun header(): TraceHeader = TraceHeader(type = Trace.TYPE_PLAN, name = name, createdAtEpochMs = createdAtEpochMs)
@@ -105,4 +95,21 @@ data class PlannedRoute(
                 LatLong(pair.getDouble(0), pair.getDouble(1))
             }
     }
+}
+
+/**
+ * Joins routed segment geometries into one continuous track, dropping the duplicated junction point
+ * where one segment ends and the next begins. Shared by [PlannedRoute.polyline] and the overlay
+ * renderer so both derive the same track from a list of segments.
+ */
+internal fun joinRouteSegments(segments: List<List<LatLong>>): List<LatLong> {
+    val out = mutableListOf<LatLong>()
+    for (seg in segments) {
+        if (out.isNotEmpty() && seg.isNotEmpty() && out.last() == seg.first()) {
+            out.addAll(seg.drop(1))
+        } else {
+            out.addAll(seg)
+        }
+    }
+    return out
 }

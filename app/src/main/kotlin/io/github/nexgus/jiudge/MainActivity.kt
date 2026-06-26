@@ -61,6 +61,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.github.nexgus.jiudge.core.elevation.DemElevation
 import io.github.nexgus.jiudge.core.location.HeadingProvider
 import io.github.nexgus.jiudge.core.location.LocationProvider
 import io.github.nexgus.jiudge.core.mapdata.DownloadService
@@ -206,9 +207,17 @@ private fun MapScreen(
     val map = remember { mutableStateOf<MapView?>(null) }
     val zoomLevel = remember { mutableStateOf<Byte?>(null) }
 
+    // Screen pixels per dp; fed to the zoom-aware route/location overlays so their markers stay a
+    // constant physical size across screens.
+    val density = LocalDensity.current.density
+
+    // DEM elevation source for route slope colouring (trace_spec.md §8). Null when the DEM folder is
+    // absent, in which case the route renders without slope colour (grey) rather than failing.
+    val demElevation = remember(mapDir) { DemElevation.createOrNull(File(mapDir, RudyMapView.DEM_DIR)) }
+
     // One planner / viewer per live MapView; recreated if the view is.
-    val planner = remember(map.value) { map.value?.let { RoutePlanner(it, engine) } }
-    val viewer = remember(map.value) { map.value?.let { RouteViewer(it) } }
+    val planner = remember(map.value) { map.value?.let { RoutePlanner(it, engine, density, demElevation) } }
+    val viewer = remember(map.value) { map.value?.let { RouteViewer(it, density, demElevation) } }
 
     var mode by remember { mutableStateOf(PlanMode.MAP_VIEW) }
     var busy by remember { mutableStateOf(false) }
@@ -336,7 +345,6 @@ private fun MapScreen(
     // Current-location ("my location"): a blue dot + facing cone, fed by GPS and the compass only
     // while the map is visible (foreground-only, see CLAUDE.md). The overlay layer lives for the
     // life of the MapView; the recenter FAB below drives it.
-    val density = LocalDensity.current.density
     val lifecycleOwner = LocalLifecycleOwner.current
     val locationProvider = remember { LocationProvider(context) }
     val headingProvider = remember { HeadingProvider(context) }

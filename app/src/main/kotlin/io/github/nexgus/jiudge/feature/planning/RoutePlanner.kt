@@ -1,6 +1,7 @@
 package io.github.nexgus.jiudge.feature.planning
 
 import androidx.compose.runtime.mutableStateListOf
+import io.github.nexgus.jiudge.core.elevation.DemElevation
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.routing.RoutingException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
@@ -8,28 +9,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mapsforge.core.model.LatLong
 import org.mapsforge.map.android.view.MapView
-import org.mapsforge.map.layer.Layer
 
 /**
  * Drives an in-progress route plan over a mapsforge [MapView]: holds the placed waypoints, asks
- * [BRouterEngine] for the shortest on-trail path between consecutive waypoints, and maintains the
- * marker / polyline overlay layers. New waypoints come from the map center (the on-screen
+ * [BRouterEngine] for the shortest on-trail path between consecutive waypoints, and renders them
+ * through a single [PlannedRouteLayer]. New waypoints come from the map center (the on-screen
  * crosshair). Active only while planning mode is on; call [clear] when leaving it.
  *
  * Waypoints are Compose snapshot state so the bottom-bar button states recompose as they change.
+ * [density] feeds the zoom-aware overlay; [dem] feeds its slope colouring (null -> grey route).
  */
 class RoutePlanner(
     private val mapView: MapView,
     private val engine: BRouterEngine,
+    private val density: Float,
+    private val dem: DemElevation?,
 ) {
     private val _waypoints = mutableStateListOf<LatLong>()
     val waypoints: List<LatLong> get() = _waypoints
 
-    // segments[i] is the routed geometry from waypoint[i] to waypoint[i+1]; parallel layer lists
-    // let "+"/"-" touch only the tail without rebuilding the whole overlay.
+    // segments[i] is the routed geometry from waypoint[i] to waypoint[i+1]. The whole overlay is
+    // re-pushed to the layer on every change; rebuilding the marker set is cheap.
     private val segments = mutableListOf<List<LatLong>>()
-    private val markerLayers = mutableListOf<Layer>()
-    private val segmentLayers = mutableListOf<Layer>()
+    private var layer: PlannedRouteLayer? = null
 
     /**
      * Adds the map-center point as the next waypoint. From the second on, routes from the previous
@@ -48,11 +50,9 @@ class RoutePlanner(
                     return e.message ?: "routing failed"
                 }
             segments.add(path)
-            segmentLayers.add(mapView.addRoutePolyline(path))
         }
         _waypoints.add(center)
-        markerLayers.add(mapView.addWaypointMarker(center))
-        mapView.layerManager.redrawLayers()
+        pushOverlay()
         return null
     }
 
@@ -60,12 +60,8 @@ class RoutePlanner(
     fun removeLastWaypoint() {
         if (_waypoints.isEmpty()) return
         _waypoints.removeAt(_waypoints.lastIndex)
-        mapView.layerManager.layers.remove(markerLayers.removeAt(markerLayers.lastIndex))
-        if (segments.isNotEmpty()) {
-            segments.removeAt(segments.lastIndex)
-            mapView.layerManager.layers.remove(segmentLayers.removeAt(segmentLayers.lastIndex))
-        }
-        mapView.layerManager.redrawLayers()
+        if (segments.isNotEmpty()) segments.removeAt(segments.lastIndex)
+        pushOverlay()
     }
 
     fun toPlannedRoute(
@@ -80,27 +76,29 @@ class RoutePlanner(
      */
     fun loadFrom(route: PlannedRoute) {
         clear()
-        route.waypoints.forEachIndexed { i, wp ->
-            // The segment leading into this waypoint (skip for the first, guard against short files).
-            if (i > 0 && i - 1 < route.segments.size) {
-                val seg = route.segments[i - 1]
-                segments.add(seg)
-                segmentLayers.add(mapView.addRoutePolyline(seg))
-            }
-            _waypoints.add(wp)
-            markerLayers.add(mapView.addWaypointMarker(wp))
-        }
+        _waypoints.addAll(route.waypoints)
+        segments.addAll(route.segments)
+        pushOverlay()
         route.waypoints.firstOrNull()?.let { mapView.model.mapViewPosition.center = it }
+    }
+
+    /** Removes the overlay layer and resets state. */
+    fun clear() {
+        segments.clear()
+        _waypoints.clear()
+        layer?.let { mapView.layerManager.layers.remove(it) }
+        layer = null
         mapView.layerManager.redrawLayers()
     }
 
-    /** Removes every overlay layer and resets state. */
-    fun clear() {
-        (markerLayers + segmentLayers).forEach { mapView.layerManager.layers.remove(it) }
-        markerLayers.clear()
-        segmentLayers.clear()
-        segments.clear()
-        _waypoints.clear()
+    /** Pushes the current waypoints + segments to the (lazily added) overlay layer. */
+    private fun pushOverlay() {
+        val overlay =
+            layer ?: PlannedRouteLayer(density, dem).also {
+                layer = it
+                mapView.layerManager.layers.add(it)
+            }
+        overlay.update(_waypoints.toList(), segments.map { it.toList() })
         mapView.layerManager.redrawLayers()
     }
 }
