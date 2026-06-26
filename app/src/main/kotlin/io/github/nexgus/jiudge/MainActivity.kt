@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -658,28 +659,6 @@ private fun MapScreen(
             }
         }
 
-        // Zoom controls persist across all modes (map controls, independent of the action bar).
-        ZoomButtons(
-            modifier =
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = controlsTopOffset)
-                    .padding(16.dp),
-            zoomLevel = zoomLevel.value,
-            onZoomIn = {
-                map.value
-                    ?.model
-                    ?.mapViewPosition
-                    ?.zoomIn()
-            },
-            onZoomOut = {
-                map.value
-                    ?.model
-                    ?.mapViewPosition
-                    ?.zoomOut()
-            },
-        )
-
         // GPS warning banner: a full-width bar flush below the status bar, shown while there is no
         // GPS-level precise fix. When the location service is off it reads as such and taps through to
         // the system location settings; otherwise it is a "waiting for / low-accuracy GPS" notice.
@@ -721,76 +700,79 @@ private fun MapScreen(
             )
         }
 
-        // Hide the bottom mode controls during identify (its own bar/card owns the bottom).
-        if (!identifyMode && identifyResult == null) {
-            when (mode) {
-                PlanMode.MAP_VIEW ->
-                    MapViewControls(
-                        modifier =
-                            Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(16.dp),
-                        canClear = displayedRoute != null,
-                        onClear = {
-                            viewer?.clear()
-                            displayedRoute = null
-                        },
-                        onPlan = { showChooser = true },
-                    )
+        // Crosshair only while editing a route (independent of the bottom controls row).
+        if (mode == PlanMode.ROUTE_EDIT && !identifyMode && identifyResult == null) {
+            CrosshairOverlay(modifier = Modifier.fillMaxSize())
+        }
 
-                PlanMode.ROUTE_EDIT -> {
-                    CrosshairOverlay(modifier = Modifier.fillMaxSize())
-                    PlanningBottomBar(
-                        modifier =
-                            Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth(),
-                        waypointCount = planner?.waypoints?.size ?: 0,
-                        busy = busy,
-                        onAdd = {
-                            val p = planner ?: return@PlanningBottomBar
-                            scope.launch {
-                                busy = true
-                                val error = p.addWaypointAtCenter()
-                                busy = false
-                                if (error != null) snackbarHostState.showSnackbar("無法連到此點: $error")
-                            }
-                        },
-                        onRemove = { planner?.removeLastWaypoint() },
-                        onSave = { showSave = true },
-                        onCancel = {
-                            planner?.clear()
-                            val baseline = editBaseline
-                            if (baseline != null) {
-                                viewer?.show(baseline)
-                                displayedRoute = baseline
-                                mode = PlanMode.ROUTE_VIEW
-                            } else {
-                                displayedRoute = null
-                                mode = PlanMode.MAP_VIEW
-                            }
-                        },
-                    )
-                }
-
-                PlanMode.ROUTE_VIEW ->
-                    RouteViewControls(
-                        modifier =
-                            Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(16.dp),
-                        onEdit = {
-                            val route = displayedRoute
-                            if (route != null && planner != null) {
+        // Bottom-start controls: the zoom-level readout sits leftmost and persists across all modes
+        // (including identify); the mode-specific action buttons follow to its right and are hidden
+        // during identify, whose own bar/card owns the bottom.
+        Row(
+            modifier =
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ZoomReadout(zoomLevel = zoomLevel.value)
+            if (!identifyMode && identifyResult == null) {
+                when (mode) {
+                    PlanMode.MAP_VIEW ->
+                        MapViewControls(
+                            canClear = displayedRoute != null,
+                            onClear = {
                                 viewer?.clear()
-                                planner.loadFrom(route)
-                                editBaseline = route
-                                isNewRoute = false
-                                mode = PlanMode.ROUTE_EDIT
-                            }
-                        },
-                        onLeave = { mode = PlanMode.MAP_VIEW },
-                    )
+                                displayedRoute = null
+                            },
+                            onPlan = { showChooser = true },
+                        )
+
+                    PlanMode.ROUTE_EDIT ->
+                        PlanningBottomBar(
+                            waypointCount = planner?.waypoints?.size ?: 0,
+                            busy = busy,
+                            onAdd = {
+                                val p = planner ?: return@PlanningBottomBar
+                                scope.launch {
+                                    busy = true
+                                    val error = p.addWaypointAtCenter()
+                                    busy = false
+                                    if (error != null) snackbarHostState.showSnackbar("無法連到此點: $error")
+                                }
+                            },
+                            onRemove = { planner?.removeLastWaypoint() },
+                            onSave = { showSave = true },
+                            onCancel = {
+                                planner?.clear()
+                                val baseline = editBaseline
+                                if (baseline != null) {
+                                    viewer?.show(baseline)
+                                    displayedRoute = baseline
+                                    mode = PlanMode.ROUTE_VIEW
+                                } else {
+                                    displayedRoute = null
+                                    mode = PlanMode.MAP_VIEW
+                                }
+                            },
+                        )
+
+                    PlanMode.ROUTE_VIEW ->
+                        RouteViewControls(
+                            onEdit = {
+                                val route = displayedRoute
+                                if (route != null && planner != null) {
+                                    viewer?.clear()
+                                    planner.loadFrom(route)
+                                    editBaseline = route
+                                    isNewRoute = false
+                                    mode = PlanMode.ROUTE_EDIT
+                                }
+                            },
+                            onLeave = { mode = PlanMode.MAP_VIEW },
+                        )
+                }
             }
         }
     }
@@ -989,37 +971,24 @@ private fun MapScreen(
     }
 }
 
+/** Permanent zoom-level readout (the scale bar is hidden - it is not precise). Zooming is by pinch. */
 @Composable
-private fun ZoomButtons(
-    onZoomIn: () -> Unit,
-    onZoomOut: () -> Unit,
+private fun ZoomReadout(
     zoomLevel: Byte?,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    Surface(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        color = Color.White,
+        contentColor = Color.Black,
+        shape = RoundedCornerShape(16.dp),
+        shadowElevation = 6.dp,
     ) {
-        // Permanent zoom-level readout (the scale bar is hidden - it is not precise).
-        Surface(
-            color = Color.White,
-            contentColor = Color.Black,
-            shape = RoundedCornerShape(16.dp),
-            shadowElevation = 6.dp,
-        ) {
-            Text(
-                text = "${zoomLevel ?: "-"}",
-                fontSize = 16.sp,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            )
-        }
-        FloatingActionButton(onClick = onZoomIn) {
-            Text(text = "+", fontSize = 24.sp)
-        }
-        FloatingActionButton(onClick = onZoomOut) {
-            Text(text = "−", fontSize = 24.sp) // minus sign
-        }
+        Text(
+            text = "${zoomLevel ?: "-"}",
+            fontSize = 16.sp,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
     }
 }
 

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -88,13 +89,11 @@ fun PlanningBottomBar(
         modifier = modifier,
         color = Color.White,
         contentColor = Color.Black,
+        shape = RoundedCornerShape(16.dp),
         shadowElevation = 6.dp,
     ) {
         Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -103,13 +102,8 @@ fun PlanningBottomBar(
             if (busy) {
                 CircularProgressIndicator(modifier = Modifier.padding(horizontal = 8.dp))
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-            ) {
-                OutlinedButton(onClick = onSave, enabled = !busy && waypointCount >= 2) { Text("儲存") }
-                OutlinedButton(onClick = onCancel, enabled = !busy) { Text("取消") }
-            }
+            OutlinedButton(onClick = onSave, enabled = !busy && waypointCount >= 2) { Text("儲存") }
+            OutlinedButton(onClick = onCancel, enabled = !busy) { Text("取消") }
         }
     }
 }
@@ -123,8 +117,8 @@ fun MapViewControls(
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = onClear, enabled = canClear) { Text("清除軌跡") }
         Button(onClick = onPlan) { Text("規劃路徑") }
+        OutlinedButton(onClick = onClear, enabled = canClear) { Text("清除軌跡") }
     }
 }
 
