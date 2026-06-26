@@ -87,10 +87,12 @@ import io.github.nexgus.jiudge.feature.map.CurrentLocationLayer
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
+import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
 import io.github.nexgus.jiudge.feature.planning.LoadRouteDialog
 import io.github.nexgus.jiudge.feature.planning.MapViewControls
 import io.github.nexgus.jiudge.feature.planning.PlanEntryChooser
 import io.github.nexgus.jiudge.feature.planning.PlanningBottomBar
+import io.github.nexgus.jiudge.feature.planning.RenameRouteDialog
 import io.github.nexgus.jiudge.feature.planning.RoutePlanner
 import io.github.nexgus.jiudge.feature.planning.RouteViewControls
 import io.github.nexgus.jiudge.feature.planning.RouteViewer
@@ -265,6 +267,9 @@ private fun MapScreen(
     var showChooser by remember { mutableStateOf(false) }
     var showSave by remember { mutableStateOf(false) }
     var loadList by remember { mutableStateOf<List<RouteStore.Summary>?>(null) }
+    // Set while a rename/delete dialog is open over the load picker; null when none is pending.
+    var renameTarget by remember { mutableStateOf<RouteStore.Summary?>(null) }
+    var deleteTarget by remember { mutableStateOf<RouteStore.Summary?>(null) }
     // Route currently drawn by the viewer: shown in ROUTE_VIEW, and kept in MAP_VIEW after 離開.
     var displayedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
     // What ROUTE_EDIT "取消" reverts to: set when entering edit, refreshed on save.
@@ -923,7 +928,59 @@ private fun MapScreen(
                     }
                 }
             },
+            onRename = { renameTarget = it },
+            onDelete = { deleteTarget = it },
             onDismiss = { loadList = null },
+        )
+    }
+
+    renameTarget?.let { target ->
+        RenameRouteDialog(
+            initialName = target.name,
+            onConfirm = { newName ->
+                renameTarget = null
+                withStorageAccess {
+                    scope.launch {
+                        try {
+                            val renamed = withContext(Dispatchers.IO) { routeStore.rename(target.file, newName) }
+                            loadList = withContext(Dispatchers.IO) { routeStore.list() }
+                            // Keep the on-screen route's name in sync if it was the one renamed.
+                            if (displayedRoute?.createdAtEpochMs == target.createdAtEpochMs) {
+                                displayedRoute = displayedRoute?.copy(name = renamed.name)
+                                editBaseline = editBaseline?.copy(name = renamed.name)
+                            }
+                            snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
+                        } catch (e: DuplicateRouteNameException) {
+                            renameTarget = target
+                            snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("改名失敗: ${e.message}")
+                        }
+                    }
+                }
+            },
+            onDismiss = { renameTarget = null },
+        )
+    }
+
+    deleteTarget?.let { target ->
+        DeleteRouteDialog(
+            routeName = target.name,
+            onConfirm = {
+                deleteTarget = null
+                withStorageAccess {
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { routeStore.delete(target.file) }
+                            loadList = withContext(Dispatchers.IO) { routeStore.list() }
+                            snackbarHostState.showSnackbar("已刪除 \"${target.name}\"")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("刪除失敗: ${e.message}")
+                        }
+                    }
+                }
+            },
+            onDismiss = { deleteTarget = null },
         )
     }
 

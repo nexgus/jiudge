@@ -3,6 +3,7 @@ package io.github.nexgus.jiudge.feature.planning
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +14,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -188,11 +191,24 @@ fun SaveRouteDialog(
     )
 }
 
-/** Lists saved routes for loading; tapping one displays it on the map. */
+/** Route length for the picker: metres below 1 km, otherwise kilometres to one decimal. */
+private fun formatDistance(meters: Double): String =
+    if (meters >= 1000.0) {
+        String.format(Locale.getDefault(), "%.1f 公里", meters / 1000.0)
+    } else {
+        String.format(Locale.getDefault(), "%.0f 公尺", meters)
+    }
+
+/**
+ * Lists saved routes for loading; tapping a row displays it on the map. Each row's "⋮" menu offers
+ * rename and delete, delegated upward via [onRename]/[onDelete] (the caller confirms and persists).
+ */
 @Composable
 fun LoadRouteDialog(
     summaries: List<io.github.nexgus.jiudge.data.route.RouteStore.Summary>,
     onPick: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
+    onRename: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
+    onDelete: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
@@ -205,20 +221,25 @@ fun LoadRouteDialog(
             } else {
                 LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
                     items(summaries) { s ->
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onPick(s) }
-                                    .padding(vertical = 10.dp),
-                        ) {
-                            Text(s.name, style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "${dateFormat.format(Date(s.createdAtEpochMs))} - ${s.waypointCount} 個經過點",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            HorizontalDivider(modifier = Modifier.padding(top = 10.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(
+                                    modifier =
+                                        Modifier
+                                            .weight(1f)
+                                            .clickable { onPick(s) }
+                                            .padding(vertical = 10.dp),
+                                ) {
+                                    Text(s.name, style = MaterialTheme.typography.bodyLarge)
+                                    Text(
+                                        "${dateFormat.format(Date(s.createdAtEpochMs))} - ${formatDistance(s.distanceMeters)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                RouteRowMenu(onRename = { onRename(s) }, onDelete = { onDelete(s) })
+                            }
+                            HorizontalDivider()
                         }
                     }
                 }
@@ -226,5 +247,75 @@ fun LoadRouteDialog(
         },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("關閉") } },
+    )
+}
+
+/** Per-row "⋮" overflow menu offering rename and delete for a saved route. */
+@Composable
+private fun RouteRowMenu(
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { expanded = true }) { Text("⋮", fontSize = 20.sp) }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("改名") },
+                onClick = {
+                    expanded = false
+                    onRename()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("刪除") },
+                onClick = {
+                    expanded = false
+                    onDelete()
+                },
+            )
+        }
+    }
+}
+
+/** Prompts for a new route name on rename (prefilled with [initialName]). Blank falls back to a default. */
+@Composable
+fun RenameRouteDialog(
+    initialName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("路線改名") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("路線名稱") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name.trim().ifEmpty { "未命名路線" }) }) { Text("確定") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+/** Confirms irreversible deletion of a saved route (the file lives in a public, uninstall-surviving folder). */
+@Composable
+fun DeleteRouteDialog(
+    routeName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("刪除規劃路徑") },
+        text = { Text("確定要刪除 \"$routeName\" 嗎? 此操作無法復原.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("刪除") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

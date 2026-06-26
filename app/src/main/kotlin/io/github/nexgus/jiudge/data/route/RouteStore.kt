@@ -23,7 +23,7 @@ class RouteStore {
         val file: File,
         val name: String,
         val createdAtEpochMs: Long,
-        val waypointCount: Int,
+        val distanceMeters: Double,
     )
 
     /**
@@ -54,16 +54,52 @@ class RouteStore {
             .mapNotNull { file ->
                 runCatching {
                     val parsed = Trace.read(file) ?: return@runCatching null
+                    val route = PlannedRoute.fromTrace(parsed)
                     Summary(
                         file = file,
-                        name = parsed.header.name,
-                        createdAtEpochMs = parsed.header.createdAtEpochMs,
-                        waypointCount = parsed.records.count { it.optString("k") == "wpt" },
+                        name = route.name,
+                        createdAtEpochMs = route.createdAtEpochMs,
+                        distanceMeters = route.distanceMeters,
                     )
                 }.getOrNull()
             }.sortedByDescending { it.createdAtEpochMs }
 
     fun load(file: File): PlannedRoute = PlannedRoute.fromTrace(Trace.read(file) ?: error("not a trace file: ${file.name}"))
+
+    /** Deletes a saved route file; returns false if it was already gone. */
+    fun delete(file: File): Boolean = file.delete()
+
+    /**
+     * Renames a saved route to [newName], returning the updated [Summary].
+     *
+     * The displayed name lives in the file's header, so renaming rewrites the whole file (JSONL has
+     * no in-place line edit). The file name's slug is cosmetic but kept in sync, so the new name may
+     * shift the path; the new file is written before the old one is deleted, so a crash mid-rename
+     * leaves a duplicate rather than losing the route. When the slug and timestamp are unchanged the
+     * path is identical and the file is simply overwritten.
+     *
+     * Rejects a name already used by another route (trimmed exact match, excluding [file] itself) by
+     * throwing [DuplicateRouteNameException], matching [save]'s duplicate guard.
+     */
+    fun rename(
+        file: File,
+        newName: String,
+    ): Summary {
+        val target = newName.trim().ifEmpty { "未命名路線" }
+        if (list().any { it.file != file && it.name.trim() == target }) {
+            throw DuplicateRouteNameException(target)
+        }
+        val route = load(file).copy(name = target)
+        val newFile = File(RoutePaths.plansDir(), "${slug(target)}-${route.createdAtEpochMs}${Trace.FILE_SUFFIX}")
+        Trace.write(newFile, route.header(), route.toRecords())
+        if (newFile != file) file.delete()
+        return Summary(
+            file = newFile,
+            name = route.name,
+            createdAtEpochMs = route.createdAtEpochMs,
+            distanceMeters = route.distanceMeters,
+        )
+    }
 
     // Keep CJK and word characters; collapse everything else so the file name stays valid.
     private fun slug(name: String): String =

@@ -3,6 +3,7 @@ package io.github.nexgus.jiudge.data.route
 import org.json.JSONArray
 import org.json.JSONObject
 import org.mapsforge.core.model.LatLong
+import org.mapsforge.core.util.LatLongUtils
 
 /**
  * A saved route plan: the user-placed waypoints plus the routed geometry BRouter produced for each
@@ -24,6 +25,10 @@ data class PlannedRoute(
     /** The full routed track: segment geometries joined, dropping the duplicated junction points. */
     val polyline: List<LatLong>
         get() = joinRouteSegments(segments)
+
+    /** Total routed length in metres: great-circle distances summed along [polyline]. */
+    val distanceMeters: Double
+        get() = polyline.zipWithNext { a, b -> LatLongUtils.vincentyDistance(a, b) }.sum()
 
     /** The header line for this plan's trace file (spec §4). */
     fun header(): TraceHeader = TraceHeader(type = Trace.TYPE_PLAN, name = name, createdAtEpochMs = createdAtEpochMs)
