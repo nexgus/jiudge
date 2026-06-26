@@ -32,6 +32,15 @@ class HeadingProvider(
     private val _heading = MutableStateFlow<Float?>(null)
     val heading: StateFlow<Float?> = _heading.asStateFlow()
 
+    // Estimated heading-error half-angle in degrees (the facing cone's half-spread), or null when the
+    // device reports no usable estimate. Prefers the per-reading rotation-vector accuracy and falls
+    // back to the coarse onAccuracyChanged status level; low-pass smoothed so the cone width is steady.
+    private val _headingAccuracyDeg = MutableStateFlow<Float?>(null)
+    val headingAccuracyDeg: StateFlow<Float?> = _headingAccuracyDeg.asStateFlow()
+
+    // Coarse fallback half-angle from onAccuracyChanged; used only when values[4] is unavailable.
+    private var statusAccuracyDeg: Float? = null
+
     /** Whether this device can report a compass heading at all. */
     val hasCompass: Boolean get() = rotationSensor != null
 
@@ -44,6 +53,8 @@ class HeadingProvider(
     fun stop() {
         sensorManager.unregisterListener(this)
         _heading.value = null
+        _headingAccuracyDeg.value = null
+        statusAccuracyDeg = null
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -52,12 +63,35 @@ class HeadingProvider(
         SensorManager.getOrientation(rotationMatrix, orientation)
         val azimuthDeg = (Math.toDegrees(orientation[0].toDouble()).toFloat() + 360f) % 360f
         _heading.value = smooth(_heading.value, azimuthDeg)
+
+        // values[4] is the estimated heading accuracy in radians (API 18+); it is absent on some
+        // devices and -1 when momentarily unavailable. Fall back to the discrete sensor-status level
+        // in that case, and report null only when neither source has anything to say.
+        val perReadingDeg =
+            if (event.values.size >= 5 && event.values[4] >= 0f) {
+                Math.toDegrees(event.values[4].toDouble()).toFloat()
+            } else {
+                null
+            }
+        val raw = perReadingDeg ?: statusAccuracyDeg
+        _headingAccuracyDeg.value =
+            if (raw == null) null else smoothAccuracy(_headingAccuracyDeg.value, raw)
     }
 
     override fun onAccuracyChanged(
         sensor: Sensor?,
         accuracy: Int,
-    ) = Unit
+    ) {
+        // Map the four sensor-status levels onto representative cone half-angles, used only as the
+        // fallback when the per-reading values[4] accuracy is unavailable.
+        statusAccuracyDeg =
+            when (accuracy) {
+                SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> 15f
+                SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> 30f
+                SensorManager.SENSOR_STATUS_ACCURACY_LOW -> 45f
+                else -> 55f // unreliable / no contact: widest spread
+            }
+    }
 
     /**
      * Low-pass filter to calm raw-sensor jitter, taking the shortest angular path so the cone does
@@ -72,6 +106,15 @@ class HeadingProvider(
         if (delta > 180f) delta -= 360f
         if (delta < -180f) delta += 360f
         return (previous + SMOOTHING * delta + 360f) % 360f
+    }
+
+    /** Low-pass filter for the noisy accuracy estimate so the cone width does not jitter frame to frame. */
+    private fun smoothAccuracy(
+        previous: Float?,
+        next: Float,
+    ): Float {
+        if (previous == null) return next
+        return previous + SMOOTHING * (next - previous)
     }
 
     private companion object {

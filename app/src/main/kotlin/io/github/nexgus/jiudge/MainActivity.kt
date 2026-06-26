@@ -418,33 +418,36 @@ private fun MapScreen(
         combine(
             locationProvider.fix,
             headingProvider.heading,
+            headingProvider.headingAccuracyDeg,
             locationProvider.serviceEnabled,
-        ) { fix, heading, enabled -> Triple(fix, heading, enabled) }
-            .collect { (fix, heading, enabled) ->
-                // The compass reads magnetic north; shift it by the local declination so the facing
-                // cone lines up with the true-north map. GPS movement bearing is already true north.
-                val trueHeading =
-                    if (heading != null && fix != null) {
-                        (heading + fix.declinationDeg + 360f) % 360f
-                    } else {
-                        heading
-                    }
-                layer.update(
-                    fix = fix,
-                    headingDeg = trueHeading,
-                    hasCompass = headingProvider.hasCompass,
-                    showAccuracy = SHOW_ACCURACY_CIRCLE,
-                    // Location service off but we still hold a last fix: grey it to mark it stale.
-                    frozen = !enabled && fix != null,
-                )
-                if (recenterOnFix && fix != null) {
-                    recenterOnFix = false
-                    map.value
-                        ?.model
-                        ?.mapViewPosition
-                        ?.center = LatLong(fix.latitude, fix.longitude)
+        ) { fix, heading, headingAccuracy, enabled ->
+            // The compass reads magnetic north; shift it by the local declination so the facing
+            // cone lines up with the true-north map. GPS movement bearing is already true north.
+            val trueHeading =
+                if (heading != null && fix != null) {
+                    (heading + fix.declinationDeg + 360f) % 360f
+                } else {
+                    heading
                 }
+            layer.update(
+                fix = fix,
+                headingDeg = trueHeading,
+                headingAccuracyDeg = headingAccuracy,
+                hasCompass = headingProvider.hasCompass,
+                showAccuracy = SHOW_ACCURACY_CIRCLE,
+                // Location service off but we still hold a last fix: grey it to mark it stale.
+                frozen = !enabled && fix != null,
+            )
+            fix
+        }.collect { fix ->
+            if (recenterOnFix && fix != null) {
+                recenterOnFix = false
+                map.value
+                    ?.model
+                    ?.mapViewPosition
+                    ?.center = LatLong(fix.latitude, fix.longitude)
             }
+        }
     }
 
     // Collected in composition (1 Hz, unlike the high-rate heading) to drive the GPS warning banner,
