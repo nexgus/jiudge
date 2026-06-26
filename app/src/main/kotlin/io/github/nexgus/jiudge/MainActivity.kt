@@ -31,6 +31,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -562,7 +563,7 @@ private fun MapScreen(
                 },
             )
             // Identify toggle: highlighted when on, with a centre crosshair for aiming.
-            FloatingActionButton(
+            SmallFloatingActionButton(
                 onClick = {
                     identifyMode = !identifyMode
                     if (!identifyMode) {
