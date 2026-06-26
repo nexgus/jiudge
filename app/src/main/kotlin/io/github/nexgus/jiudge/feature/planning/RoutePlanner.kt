@@ -38,20 +38,31 @@ class RoutePlanner(
      * waypoint and draws the returned path. Returns null on success, or an error message (e.g.
      * BRouter could not reach the point) - in which case nothing is added.
      *
+     * BRouter snaps both endpoints of the returned track to the nearest routable node, so the
+     * placed point is re-set to the matched endpoint (`path.first()`/`path.last()`) rather than the
+     * raw map-center tap. This keeps the waypoint dot on the route even when the user tapped while
+     * zoomed out, where the tap can land well off the trail. The previous waypoint is re-snapped on
+     * `path.first()` too, which also fixes the very first waypoint (placed before any routing).
+     *
      * The A* search runs on [Dispatchers.Default]; call this from a coroutine off the main thread.
      */
     suspend fun addWaypointAtCenter(): String? {
         val center = mapView.model.mapViewPosition.center
-        if (_waypoints.isNotEmpty()) {
-            val path =
-                try {
-                    withContext(Dispatchers.Default) { engine.route(_waypoints.last(), center) }
-                } catch (e: RoutingException) {
-                    return e.message ?: "routing failed"
-                }
-            segments.add(path)
+        if (_waypoints.isEmpty()) {
+            _waypoints.add(center)
+            pushOverlay()
+            return null
         }
-        _waypoints.add(center)
+        val path =
+            try {
+                withContext(Dispatchers.Default) { engine.route(_waypoints.last(), center) }
+            } catch (e: RoutingException) {
+                return e.message ?: "routing failed"
+            }
+        segments.add(path)
+        // Move both endpoints onto BRouter's snapped positions (the track is never empty on success).
+        _waypoints[_waypoints.lastIndex] = path.first()
+        _waypoints.add(path.last())
         pushOverlay()
         return null
     }
