@@ -15,6 +15,7 @@ import org.mapsforge.core.model.Rotation
 import org.mapsforge.core.util.MercatorProjection
 import org.mapsforge.map.android.graphics.AndroidGraphicFactory
 import org.mapsforge.map.layer.Layer
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -59,7 +60,14 @@ class PlannedRouteLayer(
     private data class KmMarker(
         val point: LatLong,
         val km: Int,
+        // Two points straddling [point] along the track, used to derive the local screen tangent so the
+        // balloon can offset perpendicular to the track (and thus never sit on top of it).
+        val tangentBack: LatLong,
+        val tangentFwd: LatLong,
     )
+
+    /** Which straight edge of the balloon the tail sprouts from (the edge facing the track anchor). */
+    private enum class Edge { TOP, BOTTOM, LEFT, RIGHT }
 
     private data class Snapshot(
         val polyline: List<LatLong>,
@@ -88,6 +96,7 @@ class PlannedRouteLayer(
     private val balloonStroke = stroke(BALLOON_STROKE_COLOR, BALLOON_STROKE_DP)
     private val labelFill = text(LABEL_COLOR, Style.FILL, 0f)
     private val waypointHalo = stroke(HALO_COLOR, WAYPOINT_HALO_DP)
+    private val viaHalo = stroke(HALO_COLOR, MID_HALO_DP)
     private val startFill = fill(START_COLOR)
     private val endFill = fill(END_COLOR)
     private val midFill = fill(MID_COLOR)
@@ -137,8 +146,11 @@ class PlannedRouteLayer(
         val lineWidth = (LINE_WIDTH_DP * density * lineScaleForZoom(zoomLevel)).coerceAtLeast(2f)
         drawTrackLine(canvas, state, lineWidth, ::screenX, ::screenY)
         drawDirectionChevrons(canvas, state, lineWidth, ::screenX, ::screenY)
+        // Via points sit *under* the km balloons (a reference label must not be hidden by a minor via
+        // dot), but the start/end markers stay on top - they are navigationally important.
+        drawViaWaypoints(canvas, state, scale, zoomLevel, ::screenX, ::screenY)
         drawKmMarkers(canvas, state.kmMarkers, zoomLevel, mapSize, boundingBox, scale, ::screenX, ::screenY)
-        drawWaypoints(canvas, state, scale, zoomLevel, ::screenX, ::screenY)
+        drawEndpointWaypoints(canvas, state, scale, ::screenX, ::screenY)
     }
 
     /**
@@ -273,64 +285,131 @@ class PlannedRouteLayer(
         labelFill.setTextSize(LABEL_TEXT_DP * density * scale)
         for (marker in markers) {
             if (marker.km % interval != 0) continue
-            drawBalloon(canvas, screenX(marker.point.longitude), screenY(marker.point.latitude), "${marker.km}K", scale)
+            val anchorX = screenX(marker.point.longitude)
+            val anchorY = screenY(marker.point.latitude)
+            // Local track direction in screen space (covers map rotation, since both ends are projected).
+            val tangentX = screenX(marker.tangentFwd.longitude) - screenX(marker.tangentBack.longitude)
+            val tangentY = screenY(marker.tangentFwd.latitude) - screenY(marker.tangentBack.latitude)
+            drawBalloon(canvas, anchorX, anchorY, tangentX, tangentY, "${marker.km}K", scale)
         }
     }
 
-    /** A rounded label balloon with a downward tail anchored at ([anchorX], [anchorY]), holding [text]. */
+    /**
+     * A rounded label balloon holding [text], with a tail tip pinned to the track point
+     * ([anchorX], [anchorY]). The bubble body is pushed off the track *perpendicular* to the local
+     * track direction ([tangentX], [tangentY] in screen space), so it never blankets the line - a
+     * fixed "straight up" offset would lie right along a vertical track. Of the two perpendiculars the
+     * one pointing more towards screen-up wins, so labels still tend to float above their anchor; the
+     * tail then sprouts from whichever edge faces back towards the track.
+     */
     private fun drawBalloon(
         canvas: Canvas,
         anchorX: Double,
         anchorY: Double,
+        tangentX: Double,
+        tangentY: Double,
         text: String,
         scale: Float,
     ) {
         val pad = BALLOON_PADDING_DP * density * scale
-        val radius = BALLOON_RADIUS_DP * density * scale
-        val tail = BALLOON_TAIL_DP * density * scale
-        val tailHalf = BALLOON_TAIL_HALF_DP * density * scale
+        val radius = (BALLOON_RADIUS_DP * density * scale).toDouble()
+        val tail = (BALLOON_TAIL_DP * density * scale).toDouble()
+        val tailHalf = (BALLOON_TAIL_HALF_DP * density * scale).toDouble()
         val bubbleHeight = labelFill.getTextHeight(text) + 2 * pad
         val halfWidth = max(labelFill.getTextWidth(text) / 2.0 + pad, radius + tailHalf + 1.0)
-        val bottom = anchorY - tail
-        val top = bottom - bubbleHeight
-        val path =
-            buildBalloonPath(
-                anchorX,
-                anchorY,
-                top,
-                bottom,
-                anchorX - halfWidth,
-                anchorX + halfWidth,
-                radius.toDouble(),
-                tailHalf.toDouble(),
-            )
+
+        // Unit perpendicular to the track, preferring the one that points upward on screen (y < 0).
+        val len = hypot(tangentX, tangentY)
+        val tnx = if (len > 0.0) tangentX / len else 1.0
+        val tny = if (len > 0.0) tangentY / len else 0.0
+        var offsetX = -tny
+        var offsetY = tnx
+        if (offsetY > 0.0) {
+            offsetX = -offsetX
+            offsetY = -offsetY
+        }
+
+        // Push the bubble centre out far enough that its near edge clears the track by [tail]; the
+        // half-extent towards the anchor is the vertical half-height or the horizontal half-width,
+        // whichever axis the offset runs along.
+        val halfExtent = if (abs(offsetY) >= abs(offsetX)) bubbleHeight / 2.0 else halfWidth
+        val centerDist = tail + halfExtent
+        val cx = anchorX + offsetX * centerDist
+        val cy = anchorY + offsetY * centerDist
+        val left = cx - halfWidth
+        val right = cx + halfWidth
+        val top = cy - bubbleHeight / 2.0
+        val bottom = cy + bubbleHeight / 2.0
+
+        // The tail leaves the edge facing the anchor, i.e. along the reverse of the offset direction.
+        val edge = tailEdge(-offsetX, -offsetY)
+        val path = buildBalloonPath(anchorX, anchorY, top, bottom, left, right, radius, tailHalf, edge)
         canvas.drawPath(path, balloonFill)
         canvas.drawPath(path, balloonStroke)
         // Baseline that visually centres the digits within the bubble.
-        val baseline = ((top + bottom) / 2 + labelFill.getTextHeight(text) * 0.34).toInt()
-        canvas.drawText(text, anchorX.toInt(), baseline, labelFill)
+        val baseline = (cy + labelFill.getTextHeight(text) * 0.34).toInt()
+        canvas.drawText(text, cx.toInt(), baseline, labelFill)
     }
 
+    /** The balloon edge whose outward normal best matches direction ([dx], [dy]) from bubble to anchor. */
+    private fun tailEdge(
+        dx: Double,
+        dy: Double,
+    ): Edge =
+        if (abs(dx) >= abs(dy)) {
+            if (dx >= 0) Edge.RIGHT else Edge.LEFT
+        } else {
+            if (dy >= 0) Edge.BOTTOM else Edge.TOP
+        }
+
+    /**
+     * Rounded-rectangle outline walked clockwise from the top-left corner, with the triangular tail
+     * spliced into whichever [edge] faces the track. The tail tip lands on ([tipX], [tipY]) and its
+     * base ([tailHalf] either side) is clamped to the straight part of that edge, between the corner
+     * arcs, so it never overruns a rounded corner.
+     */
     private fun buildBalloonPath(
-        anchorX: Double,
-        anchorY: Double,
+        tipX: Double,
+        tipY: Double,
         top: Double,
         bottom: Double,
         left: Double,
         right: Double,
         r: Double,
         tailHalf: Double,
+        edge: Edge,
     ) = factory.createPath().apply {
         moveTo((left + r).toFloat(), top.toFloat())
+        if (edge == Edge.TOP) {
+            val bx = tipX.coerceIn(left + r + tailHalf, right - r - tailHalf)
+            lineTo((bx - tailHalf).toFloat(), top.toFloat())
+            lineTo(tipX.toFloat(), tipY.toFloat())
+            lineTo((bx + tailHalf).toFloat(), top.toFloat())
+        }
         lineTo((right - r).toFloat(), top.toFloat())
         appendArc(right - r, top + r, r, -Math.PI / 2, 0.0)
+        if (edge == Edge.RIGHT) {
+            val by = tipY.coerceIn(top + r + tailHalf, bottom - r - tailHalf)
+            lineTo(right.toFloat(), (by - tailHalf).toFloat())
+            lineTo(tipX.toFloat(), tipY.toFloat())
+            lineTo(right.toFloat(), (by + tailHalf).toFloat())
+        }
         lineTo(right.toFloat(), (bottom - r).toFloat())
         appendArc(right - r, bottom - r, r, 0.0, Math.PI / 2)
-        lineTo((anchorX + tailHalf).toFloat(), bottom.toFloat())
-        lineTo(anchorX.toFloat(), anchorY.toFloat()) // tail tip on the route point
-        lineTo((anchorX - tailHalf).toFloat(), bottom.toFloat())
+        if (edge == Edge.BOTTOM) {
+            val bx = tipX.coerceIn(left + r + tailHalf, right - r - tailHalf)
+            lineTo((bx + tailHalf).toFloat(), bottom.toFloat())
+            lineTo(tipX.toFloat(), tipY.toFloat()) // tail tip on the route point
+            lineTo((bx - tailHalf).toFloat(), bottom.toFloat())
+        }
         lineTo((left + r).toFloat(), bottom.toFloat())
         appendArc(left + r, bottom - r, r, Math.PI / 2, Math.PI)
+        if (edge == Edge.LEFT) {
+            val by = tipY.coerceIn(top + r + tailHalf, bottom - r - tailHalf)
+            lineTo(left.toFloat(), (by + tailHalf).toFloat())
+            lineTo(tipX.toFloat(), tipY.toFloat())
+            lineTo(left.toFloat(), (by - tailHalf).toFloat())
+        }
         lineTo(left.toFloat(), (top + r).toFloat())
         appendArc(left + r, top + r, r, Math.PI, Math.PI * 1.5)
         close()
@@ -351,7 +430,12 @@ class PlannedRouteLayer(
         }
     }
 
-    private fun drawWaypoints(
+    /**
+     * Intermediate via-points (everything between the first and last placed waypoint). Drawn small and
+     * with a thin halo so dense runs do not blob, and *under* the km balloons (see [draw]) so a via dot
+     * never hides a reference label. Hidden when zoomed out, where even thin halos would merge.
+     */
+    private fun drawViaWaypoints(
         canvas: Canvas,
         state: Snapshot,
         scale: Float,
@@ -360,20 +444,27 @@ class PlannedRouteLayer(
         screenY: (Double) -> Double,
     ) {
         val waypoints = state.waypoints
+        if (waypoints.size <= 2 || zoomLevel < MID_WAYPOINT_MIN_ZOOM) return
+        val midRadius = (MID_RADIUS_DP * density * scale).toInt().coerceAtLeast(2)
+        for (i in 1 until waypoints.lastIndex) {
+            val cx = screenX(waypoints[i].longitude).toInt()
+            val cy = screenY(waypoints[i].latitude).toInt()
+            canvas.drawCircle(cx, cy, midRadius, midFill)
+            canvas.drawCircle(cx, cy, midRadius, viaHalo)
+        }
+    }
+
+    /** Start (green) / end (red) markers - drawn on top of everything, as they anchor the route. */
+    private fun drawEndpointWaypoints(
+        canvas: Canvas,
+        state: Snapshot,
+        scale: Float,
+        screenX: (Double) -> Double,
+        screenY: (Double) -> Double,
+    ) {
+        val waypoints = state.waypoints
         if (waypoints.isEmpty()) return
         val endRadius = (WAYPOINT_RADIUS_DP * density * scale).toInt().coerceAtLeast(3)
-        val midRadius = (MID_RADIUS_DP * density * scale).toInt().coerceAtLeast(2)
-
-        // Intermediate via-points (everything between the first and last placed waypoint). Hidden when
-        // zoomed out, where their white halos would otherwise merge into one blob.
-        if (zoomLevel >= MID_WAYPOINT_MIN_ZOOM) {
-            for (i in 1 until waypoints.lastIndex) {
-                val cx = screenX(waypoints[i].longitude).toInt()
-                val cy = screenY(waypoints[i].latitude).toInt()
-                canvas.drawCircle(cx, cy, midRadius, midFill)
-                canvas.drawCircle(cx, cy, midRadius, waypointHalo)
-            }
-        }
 
         val start = waypoints.first()
         val sx = screenX(start.longitude).toInt()
@@ -496,7 +587,15 @@ class PlannedRouteLayer(
         val markers = mutableListOf<KmMarker>()
         var km = 1
         while (km * 1000.0 <= total) {
-            markers.add(KmMarker(interpolateAlong(polyline, cumulative, km * 1000.0), km))
+            val d = km * 1000.0
+            markers.add(
+                KmMarker(
+                    point = interpolateAlong(polyline, cumulative, d),
+                    km = km,
+                    tangentBack = interpolateAlong(polyline, cumulative, max(0.0, d - TANGENT_EPS_M)),
+                    tangentFwd = interpolateAlong(polyline, cumulative, min(total, d + TANGENT_EPS_M)),
+                ),
+            )
             km++
         }
         return markers
@@ -625,9 +724,14 @@ class PlannedRouteLayer(
         const val BALLOON_TAIL_HALF_DP = 5f // half-width of the tail base
         const val BALLOON_STROKE_DP = 2.2f
 
+        // Half-span (m) each side of a km point used to read the local track direction for the balloon
+        // offset; long enough to ignore per-vertex jitter, short enough to track real bends.
+        const val TANGENT_EPS_M = 20.0
+
         const val WAYPOINT_RADIUS_DP = 7f
-        const val MID_RADIUS_DP = 4.5f
+        const val MID_RADIUS_DP = 3.2f // via points: small, so dense runs do not blob
         const val WAYPOINT_HALO_DP = 3f
+        const val MID_HALO_DP = 1.8f // thinner halo for via points than for start/end
 
         // Marker size ramps with zoom: full size at/above SCALE_MAX_ZOOM, SCALE_MIN fraction at/below
         // SCALE_MIN_ZOOM. Keeps markers from dwarfing the route when zoomed out, without vanishing.
