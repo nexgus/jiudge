@@ -3,6 +3,7 @@ package io.github.nexgus.jiudge.feature.map
 import android.content.Context
 import org.mapsforge.core.model.LatLong
 import org.mapsforge.core.model.MapPosition
+import org.mapsforge.core.util.Parameters
 import org.mapsforge.map.android.graphics.AndroidGraphicFactory
 import org.mapsforge.map.android.util.AndroidUtil
 import org.mapsforge.map.android.view.MapView
@@ -62,12 +63,16 @@ object RudyMapView {
         context: Context,
         mapDir: File,
     ): MapView {
+        // Continuous (fractional) zoom: by default mapsforge snaps the pinch gesture back to an
+        // integer zoom level when the fingers lift. This global flag keeps the intermediate scale,
+        // so the map zooms smoothly to any magnification instead of jumping to fixed steps.
+        Parameters.FRACTIONAL_ZOOM = true
+
         val mapView =
             MapView(context).apply {
                 isClickable = true
                 // Scale bar hidden: it snaps to coarse 1/2/5 buckets so it is not a precise
-                // indicator (e.g. zoom 15 and 16 both read 200 m). The zoom-level readout in the
-                // UI overlay is shown instead.
+                // indicator (e.g. zoom 15 and 16 both read 200 m).
                 mapScaleBar.isVisible = false
                 setBuiltInZoomControls(false)
                 setZoomLevelMin(0)

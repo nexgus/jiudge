@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -106,7 +105,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.mapsforge.core.model.LatLong
 import org.mapsforge.map.android.view.MapView
-import org.mapsforge.map.model.common.Observer
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -208,7 +206,6 @@ private fun MapScreen(
 ) {
     val scope = rememberCoroutineScope()
     val map = remember { mutableStateOf<MapView?>(null) }
-    val zoomLevel = remember { mutableStateOf<Byte?>(null) }
 
     // Screen pixels per dp; fed to the zoom-aware route/location overlays so their markers stay a
     // constant physical size across screens.
@@ -527,19 +524,6 @@ private fun MapScreen(
             },
         )
 
-        // Keep the on-screen zoom-level readout in sync with the map.
-        DisposableEffect(map.value) {
-            val position = map.value?.model?.mapViewPosition
-            if (position == null) {
-                onDispose {}
-            } else {
-                zoomLevel.value = position.zoomLevel
-                val observer = Observer { zoomLevel.value = position.zoomLevel }
-                position.addObserver(observer)
-                onDispose { position.removeObserver(observer) }
-            }
-        }
-
         // The full-width warning banner sits flush below the status bar and persists across all modes
         // (including identify) so a low-accuracy warning is never hidden. When shown, the top controls
         // and the identify hint are pushed down by its measured height so it never covers them.
@@ -705,9 +689,8 @@ private fun MapScreen(
             CrosshairOverlay(modifier = Modifier.fillMaxSize())
         }
 
-        // Bottom-start controls: the zoom-level readout sits leftmost and persists across all modes
-        // (including identify); the mode-specific action buttons follow to its right and are hidden
-        // during identify, whose own bar/card owns the bottom.
+        // Bottom-start controls: the mode-specific action buttons sit in the lower-left corner and
+        // are hidden during identify, whose own bar/card owns the bottom.
         Row(
             modifier =
                 Modifier
@@ -716,7 +699,6 @@ private fun MapScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ZoomReadout(zoomLevel = zoomLevel.value)
             if (!identifyMode && identifyResult == null) {
                 when (mode) {
                     PlanMode.MAP_VIEW ->
@@ -968,27 +950,6 @@ private fun MapScreen(
 
     if (aboutOpen) {
         AboutDialog(mapVersion = mapVersion, onDismiss = { aboutOpen = false })
-    }
-}
-
-/** Permanent zoom-level readout (the scale bar is hidden - it is not precise). Zooming is by pinch. */
-@Composable
-private fun ZoomReadout(
-    zoomLevel: Byte?,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        color = Color.White,
-        contentColor = Color.Black,
-        shape = RoundedCornerShape(16.dp),
-        shadowElevation = 6.dp,
-    ) {
-        Text(
-            text = "${zoomLevel ?: "-"}",
-            fontSize = 16.sp,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        )
     }
 }
 
