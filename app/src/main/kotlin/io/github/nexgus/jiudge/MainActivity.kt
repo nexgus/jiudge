@@ -19,9 +19,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
@@ -63,6 +66,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.nexgus.jiudge.core.elevation.DemElevation
+import io.github.nexgus.jiudge.core.index.Peak
+import io.github.nexgus.jiudge.core.index.PeakIndex
+import io.github.nexgus.jiudge.core.index.PeakIndexState
 import io.github.nexgus.jiudge.core.location.HeadingProvider
 import io.github.nexgus.jiudge.core.location.LocationProvider
 import io.github.nexgus.jiudge.core.mapdata.DownloadService
@@ -101,12 +107,14 @@ import io.github.nexgus.jiudge.feature.planning.RouteViewControls
 import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
+import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.mapsforge.core.model.LatLong
+import org.mapsforge.core.model.MapPosition
 import org.mapsforge.map.android.view.MapView
 import java.io.File
 
@@ -200,6 +208,11 @@ private const val LOW_ACCURACY_HIDE_M = 35f
 // Once shown, the banner stays up at least this long so a brief coarse fix does not just flash by.
 private const val LOW_ACCURACY_MIN_VISIBLE_MS = 3_000L
 
+// Centring on a searched peak keeps the current zoom, unless it is below MIN (too far out to see the
+// summit), in which case it pulls in to PEAK_VIEW.
+private const val PEAK_VIEW_MIN_ZOOM: Byte = 14
+private const val PEAK_VIEW_ZOOM: Byte = 15
+
 @Composable
 private fun MapScreen(
     mapDir: File,
@@ -240,6 +253,14 @@ private fun MapScreen(
         mapVersion = withContext(Dispatchers.IO) { MapVersion.installed(mapDir) }
     }
 
+    // Peak-position index backing the (future) name search. Checked on every entry to the map and
+    // rebuilt off the main thread when missing or stale (basemap re-installed/updated); the progress
+    // drives a non-blocking banner so the few-second build never reads as a frozen UI.
+    val peakIndexState by PeakIndex.state.collectAsState()
+    LaunchedEffect(mapDir) {
+        withContext(Dispatchers.IO) { PeakIndex.ensureUpToDate(mapDir) }
+    }
+
     // Symbol-identify mode: "?" toggles a centre crosshair; "辨識" names the symbol under it. Aiming
     // by panning (not by tapping a tiny icon) keeps it precise regardless of finger size.
     var identifyMode by remember { mutableStateOf(false) }
@@ -270,6 +291,34 @@ private fun MapScreen(
                 else -> identifyCandidates = matches
             }
         }
+    }
+
+    // Peak-name search: the loaded index is held here while the dialog is open (non-null = open). It
+    // is loaded lazily on tap so a not-yet-built index is reported rather than opening an empty dialog.
+    var searchPeaks by remember { mutableStateOf<List<Peak>?>(null) }
+
+    fun openSearch() {
+        if (peakIndexState is PeakIndexState.Building) {
+            scope.launch { snackbarHostState.showSnackbar("山頭索引建立中, 請稍候") }
+            return
+        }
+        scope.launch {
+            val peaks = withContext(Dispatchers.IO) { PeakIndex.load(mapDir) }
+            if (peaks.isNullOrEmpty()) {
+                snackbarHostState.showSnackbar("山頭索引尚未就緒, 請稍候")
+            } else {
+                searchPeaks = peaks
+            }
+        }
+    }
+
+    fun centerOnPeak(peak: Peak) {
+        val mapView = map.value ?: return
+        val position = mapView.model.mapViewPosition
+        // Keep the user's current zoom unless they are zoomed too far out to see the summit, in which
+        // case pull in to a peak-viewing level. Set centre + zoom together so the move is one jump.
+        val targetZoom = if (position.zoomLevel < PEAK_VIEW_MIN_ZOOM) PEAK_VIEW_ZOOM else position.zoomLevel
+        position.setMapPosition(MapPosition(peak.position, targetZoom))
     }
 
     var showChooser by remember { mutableStateOf(false) }
@@ -472,8 +521,9 @@ private fun MapScreen(
     var gpsWarnVisible by remember { mutableStateOf(false) }
     var gpsWarnShownAt by remember { mutableStateOf(0L) }
     var gpsWarnAccuracy by remember { mutableStateOf<Float?>(null) }
-    // Measured height of the full-width warning banner, used to push the top controls below it.
-    var gpsWarnHeightPx by remember { mutableStateOf(0) }
+    // Measured height of the whole top banner stack (GPS warning + peak-index build), used to push
+    // the top controls below whatever is currently shown.
+    var topBannersHeightPx by remember { mutableStateOf(0) }
     val accuracy = currentFix?.accuracyMeters
     val haveGpsFix = serviceEnabled && currentFix?.fromGps == true && accuracy != null
     LaunchedEffect(locationGranted, haveGpsFix, accuracy) {
@@ -541,11 +591,12 @@ private fun MapScreen(
         // (including identify) so a low-accuracy warning is never hidden. When shown, the top controls
         // and the identify hint are pushed down by its measured height so it never covers them.
         val warnVisible = gpsWarnVisible
-        val controlsTopOffset =
-            if (warnVisible) with(LocalDensity.current) { gpsWarnHeightPx.toDp() } else 0.dp
+        // Driven by the measured banner-stack height: 0 when nothing is shown (empty column), so the
+        // controls sit flush at the top and drop only while a banner is up.
+        val controlsTopOffset = with(LocalDensity.current) { topBannersHeightPx.toDp() }
 
         // Top-start controls, opposite the zoom column: the overflow ("⋮") menu on top, then the
-        // identify ("?") toggle. Both persist across all modes.
+        // identify ("?") toggle, then the peak search ("🔍"). All persist across all modes.
         Column(
             modifier =
                 Modifier
@@ -579,6 +630,10 @@ private fun MapScreen(
                     },
             ) {
                 Text(text = "?", fontSize = 24.sp)
+            }
+            // Peak-name search: opens a dialog to look up a summit and centre the map on it.
+            SmallFloatingActionButton(onClick = { openSearch() }) {
+                Text(text = "🔍", fontSize = 20.sp)
             }
         }
 
@@ -656,26 +711,36 @@ private fun MapScreen(
             }
         }
 
-        // GPS warning banner: a full-width bar flush below the status bar, shown while there is no
-        // GPS-level precise fix. When the location service is off it reads as such and taps through to
-        // the system location settings; otherwise it is a "waiting for / low-accuracy GPS" notice.
-        // Hidden during identify, whose hint owns top-center.
-        if (warnVisible) {
-            GpsWarningBanner(
-                serviceEnabled = serviceEnabled,
-                accuracyMeters = if (currentFix != null) gpsWarnAccuracy else null,
-                onClick =
-                    if (serviceEnabled) {
-                        null
-                    } else {
-                        { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
-                    },
-                modifier =
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .onSizeChanged { gpsWarnHeightPx = it.height },
-            )
+        // Top banner stack, flush below the status bar and measured as one column so the top controls
+        // and identify hint drop below whatever is showing. Holds the GPS-fix warning (no precise fix /
+        // service off, taps through to settings) above the transient peak-index build/failure banner.
+        Column(
+            modifier =
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .onSizeChanged { topBannersHeightPx = it.height },
+        ) {
+            if (warnVisible) {
+                GpsWarningBanner(
+                    serviceEnabled = serviceEnabled,
+                    accuracyMeters = if (currentFix != null) gpsWarnAccuracy else null,
+                    onClick =
+                        if (serviceEnabled) {
+                            null
+                        } else {
+                            { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+                        },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            when (val state = peakIndexState) {
+                is PeakIndexState.Building ->
+                    PeakIndexBanner(fraction = state.fraction, failed = false, modifier = Modifier.fillMaxWidth())
+                PeakIndexState.Failed ->
+                    PeakIndexBanner(fraction = null, failed = true, modifier = Modifier.fillMaxWidth())
+                else -> Unit
+            }
         }
 
         // Recenter-on-me button, bottom-end, on the same baseline as the bottom-start controls (same
@@ -964,6 +1029,17 @@ private fun MapScreen(
     if (aboutOpen) {
         AboutDialog(mapVersion = mapVersion, onDismiss = { aboutOpen = false })
     }
+
+    searchPeaks?.let { peaks ->
+        PeakSearchDialog(
+            peaks = peaks,
+            onPick = { peak ->
+                searchPeaks = null
+                centerOnPeak(peak)
+            },
+            onDismiss = { searchPeaks = null },
+        )
+    }
 }
 
 /**
@@ -1022,6 +1098,48 @@ private fun GpsWarningBanner(
             fontSize = 14.sp,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
         )
+    }
+}
+
+/**
+ * Banner for the peak-index build. While building it shows a determinate progress bar with the
+ * percentage so the user sees forward motion (never a frozen-looking pause); on [failed] it states
+ * the failure and that the next launch retries. Non-blocking - the map stays usable throughout.
+ */
+@Composable
+private fun PeakIndexBanner(
+    fraction: Float?,
+    failed: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val text =
+        if (failed) {
+            "山頭索引建立失敗, 下次啟動時會自動重試"
+        } else {
+            "正在建立山頭索引... ${((fraction ?: 0f) * 100).toInt()}%"
+        }
+    Surface(
+        modifier = modifier,
+        color = if (failed) Color(0xFFFFCDD2) else Color(0xFFBBDEFB), // light red / light blue
+        contentColor = if (failed) Color(0xFF7A1B1B) else Color(0xFF0D3C61),
+        shape = RectangleShape, // full-width bar flush under the status bar
+        shadowElevation = 6.dp,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Text(text = text, fontSize = 14.sp)
+            if (!failed) {
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { fraction ?: 0f },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 

@@ -115,11 +115,18 @@ belongs to a later phase". The old "never jump phases" rule is retired.
 - Offline map rendering with hillshade (`feature/map`)
 - In-app download of map / DEM / BRouter data (`feature/mapdata`, `core/mapdata`)
 - Route planning via BRouter - waypoints, save/load (`feature/planning`, `core/routing`, `data/route`)
+- On-device elevation lookup over the `.hgt` DEM, driving slope-coloured route lines + km markers
+  during planning (`core/elevation/DemElevation`, `feature/planning/PlannedRouteLayer`)
 - Map-symbol identify ("?") (`feature/identify`)
 - Main menu / about (`feature/about`)
 - Current-location marker + recenter button - foreground GPS + compass facing cone, OruxMaps-style
   (`feature/map/CurrentLocationLayer`, `core/location`). Foreground-only (subscribed while the map is
   visible, released on pause); this is *not* the background track recording below
+- Peak-position index (`core/index`): scans the basemap's `man_made=summit_board` POIs once into a
+  small TSV beside the `.map`, rebuilt when missing/stale (stamped by basemap size + mtime). Checked
+  on every entry to the map; a non-blocking build banner shows progress
+- Peak-name search (`feature/search`): "🔍" in the left controls opens a dialog that live-filters the
+  index by substring; tapping a hit centres the map on that summit (pulling zoom in if too far out)
 
 **Not yet built (known remaining work):**
 - Background track recording (foreground-service GPS) + GPX import/export - this was the original
@@ -139,8 +146,8 @@ the v1 out-of-scope list below off-limits without an explicit go-ahead.
 ### Directory layout (native Android)
 ```
 app/src/main/kotlin/io/github/nexgus/jiudge/
-  feature/        # feature modules: map (+ current-location overlay), planning, identify, mapdata, about (planned: recording, gpx, settings)
-  core/           # shared infra: mapdata, routing, storage, location (foreground GPS + compass; planned: background recording service, networking)
+  feature/        # feature modules: map (+ current-location overlay), planning, identify, mapdata, about, search (peak-name lookup) (planned: recording, gpx, settings)
+  core/           # shared infra: mapdata, routing, storage, location (foreground GPS + compass), elevation (.hgt DEM lookup), index (summit-position index for search) (planned: background recording service, networking)
   data/           # repositories, models, data sources (currently: route)
   ui/             # Compose components, theming, design tokens (planned)
 docs/             # spec, design notes, architecture decisions
