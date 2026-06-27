@@ -132,6 +132,15 @@ class LocationProvider(
             }
         }
 
+    /**
+     * Resynchronises [fineLocationGranted] with the OS. Useful on `ON_RESUME` so a permission grant
+     * or revocation made from the system settings page (where no `ActivityResultLauncher` fires) is
+     * picked up immediately.
+     */
+    fun refreshPermissionState() {
+        _fineLocationGranted.value = hasFinePermission()
+    }
+
     /** True once the OS has granted fine or coarse location to this app. */
     fun hasPermission(): Boolean =
         hasFinePermission() ||
@@ -166,10 +175,13 @@ class LocationProvider(
         // Release any prior subscription first so a re-entry on ON_RESUME does not double-register
         // the GNSS callback or leave a stale listener bound to old permission state.
         if (started) stop()
+        // Always reflect the current grant in the StateFlow, even when there is nothing to subscribe
+        // to: a permission revoked from the system settings page lands here through the early
+        // return below, and the banner must still update.
+        refreshPermissionState()
         if (!hasPermission()) return
         _serviceEnabled.value = isLocationServiceEnabled()
-        val fine = hasFinePermission()
-        _fineLocationGranted.value = fine
+        val fine = _fineLocationGranted.value
         val providers = locationManager.getProviders(true)
         seedLastKnown(providers, fine)
         for (provider in providers) {

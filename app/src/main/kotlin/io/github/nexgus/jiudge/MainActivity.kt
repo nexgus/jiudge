@@ -467,25 +467,31 @@ private fun MapScreen(
         }
 
     // Subscribe to GPS + compass only while permission is held and the screen is resumed; release on
-    // pause so nothing runs in the background. start() is idempotent and rechecks the fine-location
-    // grant on every call, so a coarse-to-fine upgrade made in the system settings page takes effect
-    // on the resulting ON_RESUME without further plumbing.
-    DisposableEffect(lifecycleOwner, locationGranted, locationLayer) {
-        if (!locationGranted || locationLayer == null) {
+    // pause so nothing runs in the background. The observer stays mounted regardless of the current
+    // grant so that ON_RESUME also catches the user adding (or revoking) permission from the system
+    // settings page - that path does not fire any ActivityResultLauncher.
+    DisposableEffect(lifecycleOwner, locationLayer) {
+        if (locationLayer == null) {
             onDispose {}
         } else {
+            fun syncOnResume() {
+                // Pull the banner's StateFlow into sync first; it must be correct even when there is
+                // nothing left to subscribe to (e.g. all location permissions were just revoked).
+                locationProvider.refreshPermissionState()
+                val granted = locationProvider.hasPermission()
+                locationGranted = granted
+                if (granted) {
+                    locationProvider.start()
+                    headingProvider.start()
+                } else {
+                    locationProvider.stop()
+                    headingProvider.stop()
+                }
+            }
             val observer =
                 LifecycleEventObserver { _, event ->
                     when (event) {
-                        Lifecycle.Event.ON_RESUME -> {
-                            // The user may have revoked location entirely while we were paused; sync
-                            // the Compose state from the system before resubscribing.
-                            locationGranted = locationProvider.hasPermission()
-                            if (locationGranted) {
-                                locationProvider.start()
-                                headingProvider.start()
-                            }
-                        }
+                        Lifecycle.Event.ON_RESUME -> syncOnResume()
                         Lifecycle.Event.ON_PAUSE -> {
                             locationProvider.stop()
                             headingProvider.stop()
@@ -494,10 +500,9 @@ private fun MapScreen(
                     }
                 }
             // ON_RESUME will not re-fire if we are already resumed when this effect runs (e.g. the
-            // user just granted permission), so start now in that case.
+            // user just granted permission), so sync now in that case.
             if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                locationProvider.start()
-                headingProvider.start()
+                syncOnResume()
             }
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose {
@@ -748,17 +753,25 @@ private fun MapScreen(
                     PeakIndexBanner(fraction = null, failed = true, modifier = Modifier.fillMaxWidth())
                 else -> Unit
             }
-            // Persistent warning while the user has granted only coarse location: tapping opens this
-            // app's system settings page so the grant can be upgraded to precise. No dismiss button -
-            // accuracy stays poor until the permission is upgraded, so the warning stays put.
-            if (locationGranted && !fineLocationGranted) {
-                CoarseLocationBanner(
+            // Persistent warning whenever precise location is not granted. Tapping reissues the same
+            // permission request the recenter button uses, so the system shows its standard dialog
+            // (with the precise/approximate toggle) - a single tap upgrades the grant. No dismiss
+            // button: accuracy stays poor until precise is granted, so the warning stays put.
+            if (!fineLocationGranted) {
+                FineLocationMissingBanner(
+                    text =
+                        if (locationGranted) {
+                            "目前僅授予概略位置, 定位點可能誤差數百公尺. 點此改為精確"
+                        } else {
+                            "尚未授予定位權限, 點此授予"
+                        },
                     onClick = {
-                        val intent =
-                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                data = Uri.fromParts("package", context.packageName, null)
-                            }
-                        context.startActivity(intent)
+                        locationPermissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                            ),
+                        )
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1156,13 +1169,14 @@ private fun PeakIndexBanner(
 }
 
 /**
- * Persistent banner shown while the user has granted only ACCESS_COARSE_LOCATION. Tapping opens this
- * app's system settings page so the grant can be upgraded to precise (ACCESS_FINE_LOCATION). The
- * warning carries no dismiss control - while the grant remains coarse the dot keeps drifting by
- * hundreds of metres, so the banner stays put until the upgrade lands.
+ * Persistent banner shown while precise location is not granted - covers both "no location grant
+ * at all" and "coarse only" with caller-supplied wording. The whole surface is the tap target, and
+ * there is no dismiss control: precision stays poor (or the dot stays missing) until precise is
+ * granted, so the warning stays put.
  */
 @Composable
-private fun CoarseLocationBanner(
+private fun FineLocationMissingBanner(
+    text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1174,7 +1188,7 @@ private fun CoarseLocationBanner(
         shadowElevation = 6.dp,
     ) {
         Text(
-            text = "目前僅授予概略位置, 定位點可能誤差數百公尺. 點此前往設定改為精確",
+            text = text,
             fontSize = 14.sp,
             modifier =
                 Modifier
