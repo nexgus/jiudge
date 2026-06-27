@@ -5,10 +5,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.GeomagneticField
+import android.location.GnssStatus
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +32,30 @@ data class LocationFix(
     val declinationDeg: Float,
     /** True when this fix came from the GPS satellite provider (vs a coarse WiFi/cell network fix). */
     val fromGps: Boolean,
+    /** GPS altitude above the WGS84 ellipsoid in metres, or null when the fix carries none. */
+    val altitudeMeters: Double?,
+    /** Vertical accuracy of [altitudeMeters] in metres (68% confidence), or null when unavailable. */
+    val verticalAccuracyMeters: Float?,
+    /** Ground speed in metres per second, or null when the fix carries none. */
+    val speedMps: Float?,
+    /** The platform provider that produced this fix (e.g. `gps`, `network`), or null when unknown. */
+    val provider: String?,
+    /** UTC time of the fix in epoch milliseconds. */
+    val timeMs: Long,
+)
+
+/**
+ * A snapshot of GNSS satellite reception, independent of any single fix. Populated only while a
+ * fine-location subscription is active (the satellite callback needs `ACCESS_FINE_LOCATION`); a
+ * coarse-only grant leaves this null.
+ */
+data class GnssSummary(
+    /** Number of satellites currently tracked (in view), across all constellations. */
+    val satellitesInView: Int,
+    /** Number of those satellites actually used in the position fix. */
+    val satellitesUsedInFix: Int,
+    /** Mean carrier-to-noise density (C/N0, dB-Hz) over the satellites used in the fix, or null when none. */
+    val averageCn0DbHz: Float?,
 )
 
 /**
@@ -56,6 +82,11 @@ class LocationProvider(
     private val _serviceEnabled = MutableStateFlow(isLocationServiceEnabled())
     val serviceEnabled: StateFlow<Boolean> = _serviceEnabled.asStateFlow()
 
+    // Live GNSS reception, fed by the satellite-status callback. Null until the first status arrives,
+    // and reset to null on stop; only populated when a fine-location subscription is active.
+    private val _gnss = MutableStateFlow<GnssSummary?>(null)
+    val gnss: StateFlow<GnssSummary?> = _gnss.asStateFlow()
+
     private var lastLocation: Location? = null
 
     private val listener =
@@ -72,11 +103,38 @@ class LocationProvider(
             }
         }
 
+    // Summarises each satellite-status update into counts + mean C/N0 of the satellites used in the
+    // fix. Registered only with fine location; harmless to keep around when no callback is firing.
+    private val gnssCallback =
+        object : GnssStatus.Callback() {
+            override fun onSatelliteStatusChanged(status: GnssStatus) {
+                val inView = status.satelliteCount
+                var used = 0
+                var cn0Sum = 0f
+                for (i in 0 until inView) {
+                    if (status.usedInFix(i)) {
+                        used++
+                        cn0Sum += status.getCn0DbHz(i)
+                    }
+                }
+                _gnss.value =
+                    GnssSummary(
+                        satellitesInView = inView,
+                        satellitesUsedInFix = used,
+                        averageCn0DbHz = if (used > 0) cn0Sum / used else null,
+                    )
+            }
+        }
+
     /** True once the OS has granted fine or coarse location to this app. */
     fun hasPermission(): Boolean =
-        ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED ||
+        hasFinePermission() ||
             ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /** True only when precise (fine) location is granted - the prerequisite for satellite status. */
+    fun hasFinePermission(): Boolean =
+        ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
     /** Whether the device's location service master switch is on (any provider usable). */
@@ -109,11 +167,17 @@ class LocationProvider(
                 Looper.getMainLooper(),
             )
         }
+        // Satellite status needs fine location; with a coarse-only grant we skip it and leave gnss null.
+        if (hasFinePermission()) {
+            locationManager.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
+        }
     }
 
     /** Stops all updates. Safe to call when not started. */
     fun stop() {
         locationManager.removeUpdates(listener)
+        locationManager.unregisterGnssStatusCallback(gnssCallback)
+        _gnss.value = null
     }
 
     @SuppressLint("MissingPermission")
@@ -137,6 +201,12 @@ class LocationProvider(
                 bearingDeg = movementBearing(location),
                 declinationDeg = declinationAt(location),
                 fromGps = isGps(location),
+                altitudeMeters = if (location.hasAltitude()) location.altitude else null,
+                verticalAccuracyMeters =
+                    if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else null,
+                speedMps = if (location.hasSpeed()) location.speed else null,
+                provider = location.provider,
+                timeMs = location.time,
             )
     }
 

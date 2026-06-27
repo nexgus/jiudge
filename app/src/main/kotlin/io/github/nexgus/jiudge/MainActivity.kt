@@ -93,6 +93,7 @@ import io.github.nexgus.jiudge.feature.identify.IdentifyResultCard
 import io.github.nexgus.jiudge.feature.identify.SymbolIdentifier
 import io.github.nexgus.jiudge.feature.identify.SymbolTable
 import io.github.nexgus.jiudge.feature.map.CurrentLocationLayer
+import io.github.nexgus.jiudge.feature.map.LocationInfoDialog
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
@@ -415,10 +416,16 @@ private fun MapScreen(
     // user opens straight onto their location), and re-armed when the recenter FAB is tapped.
     var recenterOnFix by remember { mutableStateOf(locationProvider.hasPermission()) }
 
+    // Connection-info popup: long-pressing the location marker opens it; the DEM altitude shown there
+    // is looked up off the main thread when it opens (independent of the GPS-reported altitude).
+    var locationInfoOpen by remember { mutableStateOf(false) }
+    var locationInfoDemAltitude by remember { mutableStateOf<Double?>(null) }
+
     val locationLayer =
         remember(map.value) {
             map.value?.let { mv ->
-                CurrentLocationLayer(density).also { mv.layerManager.layers.add(it) }
+                CurrentLocationLayer(density, onMarkerLongPress = { locationInfoOpen = true })
+                    .also { mv.layerManager.layers.add(it) }
             }
         }
 
@@ -513,6 +520,19 @@ private fun MapScreen(
     // the FAB highlight, and the recenter behaviour.
     val currentFix by locationProvider.fix.collectAsState()
     val serviceEnabled by locationProvider.serviceEnabled.collectAsState()
+    val gnss by locationProvider.gnss.collectAsState()
+
+    // Refresh the popup's DEM altitude whenever it opens or the fix moves, off the main thread (the
+    // first touch of a DEM tile memory-maps it). Cleared when the popup is closed.
+    LaunchedEffect(locationInfoOpen, currentFix?.latitude, currentFix?.longitude) {
+        locationInfoDemAltitude =
+            if (locationInfoOpen && currentFix != null && demElevation != null) {
+                val fix = currentFix!!
+                withContext(Dispatchers.IO) { demElevation.elevationAt(fix.latitude, fix.longitude)?.toDouble() }
+            } else {
+                null
+            }
+    }
 
     // The GPS warning banner shows whenever we lack a GPS-level precise fix - no fix, a coarse
     // WiFi/cell fix, or the location service being off. Once a precise GPS fix lands it clears, but
@@ -1038,6 +1058,16 @@ private fun MapScreen(
                 centerOnPeak(peak)
             },
             onDismiss = { searchPeaks = null },
+        )
+    }
+
+    if (locationInfoOpen) {
+        LocationInfoDialog(
+            fix = currentFix,
+            gnss = gnss,
+            serviceEnabled = serviceEnabled,
+            demAltitude = locationInfoDemAltitude,
+            onDismiss = { locationInfoOpen = false },
         )
     }
 }

@@ -5,6 +5,7 @@ import org.mapsforge.core.graphics.Canvas
 import org.mapsforge.core.graphics.Paint
 import org.mapsforge.core.graphics.Style
 import org.mapsforge.core.model.BoundingBox
+import org.mapsforge.core.model.LatLong
 import org.mapsforge.core.model.Point
 import org.mapsforge.core.model.Rotation
 import org.mapsforge.core.util.MercatorProjection
@@ -30,6 +31,8 @@ import kotlin.math.sin
  */
 class CurrentLocationLayer(
     private val density: Float,
+    /** Invoked when the marker itself is long-pressed; null disables the gesture. */
+    private val onMarkerLongPress: (() -> Unit)? = null,
 ) : Layer() {
     private enum class DirectionMode { CONE, ARROW, NONE }
 
@@ -44,6 +47,24 @@ class CurrentLocationLayer(
 
     @Volatile
     private var snapshot: Snapshot? = null
+
+    // The marker's screen position from the most recent draw, used to hit-test long presses against
+    // what is actually on screen, plus the projection inputs that produced it so a long-press point
+    // (given as a LatLong) can be re-projected into the same pixel frame. Null until first drawn.
+    @Volatile
+    private var lastScreenX: Double? = null
+
+    @Volatile
+    private var lastScreenY: Double? = null
+
+    @Volatile
+    private var lastMapSize: Long = 0
+
+    @Volatile
+    private var lastTopLeftX: Double = 0.0
+
+    @Volatile
+    private var lastTopLeftY: Double = 0.0
 
     private val factory = AndroidGraphicFactory.INSTANCE
 
@@ -93,6 +114,33 @@ class CurrentLocationLayer(
         requestRedraw()
     }
 
+    /**
+     * Fires [onMarkerLongPress] when the press lands on the drawn marker. mapsforge passes the screen
+     * point arguments as null (see the identify layer's note), so hit-testing goes through the
+     * non-null [tapLatLong]: it is re-projected with the same map size / top-left recorded by [draw]
+     * into the dot's pixel frame, then compared against the dot's last on-screen position. Params are
+     * declared platform-nullable; a null tap point or an undrawn marker means "not handled".
+     */
+    override fun onLongPress(
+        tapLatLong: LatLong?,
+        layerXYPosition: Point?,
+        tapXYPosition: Point?,
+    ): Boolean {
+        if (onMarkerLongPress == null || snapshot == null) return false
+        val tap = tapLatLong ?: return false
+        val x = lastScreenX ?: return false
+        val y = lastScreenY ?: return false
+        if (lastMapSize <= 0) return false
+        val tapX = MercatorProjection.longitudeToPixelX(tap.longitude, lastMapSize) - lastTopLeftX
+        val tapY = MercatorProjection.latitudeToPixelY(tap.latitude, lastMapSize) - lastTopLeftY
+        val dx = tapX - x
+        val dy = tapY - y
+        val touchRadius = TOUCH_RADIUS_DP * density
+        if (dx * dx + dy * dy > touchRadius * touchRadius) return false
+        onMarkerLongPress.invoke()
+        return true
+    }
+
     override fun draw(
         boundingBox: BoundingBox,
         zoomLevel: Byte,
@@ -106,6 +154,11 @@ class CurrentLocationLayer(
         val mapSize = MercatorProjection.getMapSize(zoomLevel, displayModel.tileSize)
         val cx = MercatorProjection.longitudeToPixelX(fix.longitude, mapSize) - topLeftPoint.x
         val cy = MercatorProjection.latitudeToPixelY(fix.latitude, mapSize) - topLeftPoint.y
+        lastScreenX = cx
+        lastScreenY = cy
+        lastMapSize = mapSize
+        lastTopLeftX = topLeftPoint.x
+        lastTopLeftY = topLeftPoint.y
 
         if (state.showAccuracy && fix.accuracyMeters != null) {
             val metresPerPixel = MercatorProjection.calculateGroundResolution(fix.latitude, mapSize)
@@ -231,6 +284,9 @@ class CurrentLocationLayer(
 
     private companion object {
         const val DOT_RADIUS_DP = 7f
+
+        // Long-press hit radius around the dot centre; generous enough to forgive a fingertip's miss.
+        const val TOUCH_RADIUS_DP = 24f
 
         const val CONE_RADIUS_DP = 64f
         const val CONE_SEGMENTS = 10
