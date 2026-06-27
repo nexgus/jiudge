@@ -8,8 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -24,14 +26,19 @@ import kotlinx.coroutines.launch
 
 /**
  * Foreground service that downloads and installs every missing map-data asset via
- * [MapDataInstaller]. It is foreground (type `dataSync`) so a ~400 MB download survives the app
- * being backgrounded or the screen turning off. Progress is published to [MapDataDownload] for the
- * UI and mirrored to an ongoing notification with a Cancel action; the service stops itself once
- * the run finishes, fails, or is cancelled.
+ * [MapDataInstaller]. The `dataSync` foreground type keeps the OS from killing the process while
+ * the ~400 MB download is in flight; for the transfer to actually keep moving with the screen off
+ * the service also holds a [PowerManager.PARTIAL_WAKE_LOCK] (so Doze does not suspend the CPU
+ * mid-`read()`) and a high-perf [WifiManager.WifiLock] (so WiFi does not drop into PSM and starve
+ * throughput). Progress is published to [MapDataDownload] for the UI and mirrored to an ongoing
+ * notification with a Cancel action; the service stops itself once the run finishes, fails, or is
+ * cancelled, and both locks are released along every exit path.
  */
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob())
     private var job: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -51,12 +58,17 @@ class DownloadService : Service() {
             return START_NOT_STICKY
         }
         if (job?.isActive == true) return START_STICKY
+        acquireLocks()
         startAsForeground(buildNotification("準備下載...", progress = 0, indeterminate = true))
         job = scope.launch { run() }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        // Defensive: finish() already drops the locks on every normal exit, but onDestroy can fire
+        // without finish() (e.g. system-initiated teardown), and leaking a wake lock silently
+        // drains the battery.
+        releaseLocks()
         scope.cancel()
         super.onDestroy()
     }
@@ -139,8 +151,37 @@ class DownloadService : Service() {
     }
 
     private fun finish() {
+        releaseLocks()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun acquireLocks() {
+        val wl =
+            wakeLock ?: (applicationContext.getSystemService(POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG)
+                .also {
+                    it.setReferenceCounted(false)
+                    wakeLock = it
+                }
+        if (!wl.isHeld) wl.acquire()
+        // WIFI_MODE_FULL_HIGH_PERF was deprecated in API 29 because the platform stopped applying
+        // power-saving packet filters to high-perf clients automatically. We still target API 26+,
+        // where the constant is the only way to opt out of WiFi PSM during a long download.
+        @Suppress("DEPRECATION")
+        val wifi =
+            wifiLock ?: (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager)
+                .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WAKELOCK_TAG)
+                .also {
+                    it.setReferenceCounted(false)
+                    wifiLock = it
+                }
+        if (!wifi.isHeld) wifi.acquire()
+    }
+
+    private fun releaseLocks() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wifiLock?.takeIf { it.isHeld }?.release()
     }
 
     private fun createChannel() {
@@ -189,6 +230,7 @@ class DownloadService : Service() {
         private const val CHANNEL_ID = "map_data_download"
         private const val NOTIF_ID = 1001
         private const val ACTION_CANCEL = "io.github.nexgus.jiudge.action.CANCEL_DOWNLOAD"
+        private const val WAKELOCK_TAG = "Jiudge:DownloadService"
 
         /** Starts (or no-ops if already running) the foreground download. Call from the foreground. */
         fun start(context: Context) {

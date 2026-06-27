@@ -45,7 +45,7 @@
 ## Hard Constraints
 
 - **完全離線.** 除了 "檢查更新" 與 "在 Google Maps 開啟" 之外, 每項功能都必須在無網路下運作. 若某個實作在使用時需要連線, 請在動手寫程式前先提出.
-- **背景 GPS 必須能撐過螢幕關閉與 Doze.** 一律使用 Foreground Service. 定位絕不可只用 `startService`.
+- **長時間背景任務必須能撐過螢幕關閉與 Doze.** Foreground Service 只保證行程不被 OS 殺掉, 不保證 CPU 不被 suspend, 亦不保證 WiFi 不掉入 power-save mode. 凡需要在螢幕關閉時持續運作的背景任務 (背景軌跡錄製需 GPS 持續更新並寫檔, 地圖資料下載等) 一律 Foreground Service + `PARTIAL_WAKE_LOCK`; 任務涉及網路時額外持有 `WifiManager.WifiLock(WIFI_MODE_FULL_HIGH_PERF)`. 兩種鎖皆於 `finally` / `onDestroy` 釋放, 漏放會無聲耗電. 定位絕不可只用 `startService`.
 - **僅限 Android.** 不做 iOS. 整個 App 皆為 native Kotlin/JVM; 沒有 platform channel, 也沒有跨平台抽象層. 不要加入唯一理由是 "方便日後接上 iOS" 的抽象.
 - **原樣取用 RudyMap 資料.** 不要自建 tile/contour/hillshade pipeline (不用 Planetiler, 不用 GDAL 預烘焙, 不用 PMTiles). 不要自製地圖 cartography; 使用 RudyMap 內附的 theme. 若某功能需要 RudyMap `.map` 不含的地圖內容, 請在動手寫程式前先提出. (Routing 是已知例外: `.map` 不含路網拓樸, 因此路徑規劃使用自 brouter.de 下載的預建 BRouter `.rd5` segment - OSM 衍生, 而非自製 cartography pipeline.)
 - **無後端.** 不要提議需要伺服器狀態, 帳號或同步的功能. 唯一的網路用途是 App 內向 RudyMap 公開 mirror 下載資料; App 不託管也不再散佈任何東西.

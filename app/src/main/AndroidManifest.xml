@@ -6,6 +6,10 @@
     <!-- Foreground service keeps the ~400 MB first-run download alive across screen-off/background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Long-running background work (map-data download now; background track recording later)
+         must hold PARTIAL_WAKE_LOCK so Doze does not suspend the CPU mid-transfer. WifiLock does
+         not require its own permission. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Runtime-requested on Android 13+ so the download progress notification is visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
