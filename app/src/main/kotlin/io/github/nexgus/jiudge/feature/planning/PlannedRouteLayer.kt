@@ -78,6 +78,10 @@ class PlannedRouteLayer(
         val waypoints: List<LatLong>,
         val isLoop: Boolean,
         val kmMarkers: List<KmMarker>,
+        // Total ground distance (m) over the whole track, shown as the end-of-route total balloon.
+        val totalMeters: Double,
+        // Local track tangent just before the end point, to offset the total balloon clear of the line.
+        val totalTangentBack: LatLong,
     )
 
     @Volatile
@@ -93,6 +97,7 @@ class PlannedRouteLayer(
     private val chevronHalo = strokeRound(CHEVRON_HALO_COLOR, 1f)
     private val chevronPaint = strokeRound(CHEVRON_COLOR, 1f)
     private val balloonFill = fill(BALLOON_FILL_COLOR)
+    private val totalBalloonFill = fill(TOTAL_BALLOON_FILL_COLOR)
     private val balloonStroke = stroke(BALLOON_STROKE_COLOR, BALLOON_STROKE_DP)
     private val labelFill = text(LABEL_COLOR, Style.FILL, 0f)
     private val waypointHalo = stroke(HALO_COLOR, WAYPOINT_HALO_DP)
@@ -121,6 +126,13 @@ class PlannedRouteLayer(
                 waypoints = waypoints,
                 isLoop = waypoints.size >= 2 && distanceMeters(waypoints.first(), waypoints.last()) <= LOOP_JOIN_METERS,
                 kmMarkers = computeKmMarkers(polyline, cumulative, total),
+                totalMeters = total,
+                totalTangentBack =
+                    if (polyline.size >= 2) {
+                        interpolateAlong(polyline, cumulative, max(0.0, total - TANGENT_EPS_M))
+                    } else {
+                        polyline.firstOrNull() ?: LatLong(0.0, 0.0)
+                    },
             )
         requestRedraw()
     }
@@ -151,6 +163,30 @@ class PlannedRouteLayer(
         drawViaWaypoints(canvas, state, scale, zoomLevel, ::screenX, ::screenY)
         drawKmMarkers(canvas, state.kmMarkers, zoomLevel, mapSize, boundingBox, scale, ::screenX, ::screenY)
         drawEndpointWaypoints(canvas, state, scale, ::screenX, ::screenY)
+        drawTotalMarker(canvas, state, zoomLevel, scale, ::screenX, ::screenY)
+    }
+
+    /**
+     * The end-of-route total-distance balloon, anchored at the final track point and tinted differently
+     * from the intermediate kilometre balloons so the total reads as distinct. Always shown (never
+     * thinned like the km markers), but still hidden below [LABEL_MIN_ZOOM] where balloons crowd.
+     */
+    private fun drawTotalMarker(
+        canvas: Canvas,
+        state: Snapshot,
+        zoomLevel: Byte,
+        scale: Float,
+        screenX: (Double) -> Double,
+        screenY: (Double) -> Double,
+    ) {
+        if (state.polyline.size < 2 || zoomLevel < LABEL_MIN_ZOOM || state.totalMeters < 1.0) return
+        val end = state.polyline.last()
+        val anchorX = screenX(end.longitude)
+        val anchorY = screenY(end.latitude)
+        val tangentX = anchorX - screenX(state.totalTangentBack.longitude)
+        val tangentY = anchorY - screenY(state.totalTangentBack.latitude)
+        labelFill.setTextSize(LABEL_TEXT_DP * density * scale)
+        drawBalloon(canvas, anchorX, anchorY, tangentX, tangentY, formatKm(state.totalMeters / 1000.0), scale, totalBalloonFill)
     }
 
     /**
@@ -290,7 +326,7 @@ class PlannedRouteLayer(
             // Local track direction in screen space (covers map rotation, since both ends are projected).
             val tangentX = screenX(marker.tangentFwd.longitude) - screenX(marker.tangentBack.longitude)
             val tangentY = screenY(marker.tangentFwd.latitude) - screenY(marker.tangentBack.latitude)
-            drawBalloon(canvas, anchorX, anchorY, tangentX, tangentY, "${marker.km}K", scale)
+            drawBalloon(canvas, anchorX, anchorY, tangentX, tangentY, "${marker.km}", scale)
         }
     }
 
@@ -310,6 +346,7 @@ class PlannedRouteLayer(
         tangentY: Double,
         text: String,
         scale: Float,
+        fillPaint: Paint = balloonFill,
     ) {
         val pad = BALLOON_PADDING_DP * density * scale
         val radius = (BALLOON_RADIUS_DP * density * scale).toDouble()
@@ -344,7 +381,7 @@ class PlannedRouteLayer(
         // The tail leaves the edge facing the anchor, i.e. along the reverse of the offset direction.
         val edge = tailEdge(-offsetX, -offsetY)
         val path = buildBalloonPath(anchorX, anchorY, top, bottom, left, right, radius, tailHalf, edge)
-        canvas.drawPath(path, balloonFill)
+        canvas.drawPath(path, fillPaint)
         canvas.drawPath(path, balloonStroke)
         // Baseline that visually centres the digits within the bubble.
         val baseline = (cy + labelFill.getTextHeight(text) * 0.34).toInt()
@@ -690,6 +727,7 @@ class PlannedRouteLayer(
         val CHEVRON_HALO_COLOR = 0x99FFFFFF.toInt() // faint white halo so the chevron reads on dark track colours
         val TRACK_EDGE_COLOR = 0xFF2B2B2B.toInt() // near-black casing edge under the coloured track line
         val BALLOON_FILL_COLOR = 0xFFFFD54F.toInt() // amber kilometre balloon (high contrast over green terrain)
+        val TOTAL_BALLOON_FILL_COLOR = 0xFF4DD0E1.toInt() // cyan end-of-route total balloon (distinct from the amber km ones)
         val BALLOON_STROKE_COLOR = 0xFF202124.toInt() // dark balloon outline
         val LABEL_COLOR = 0xFF202124.toInt()
         val START_COLOR = 0xFF2E7D32.toInt() // green
@@ -745,6 +783,12 @@ class PlannedRouteLayer(
         const val MARKER_MIN_SPACING_DP = 48f // minimum on-screen gap between drawn kilometre markers
         const val LOOP_JOIN_METERS = 30.0 // start/end closer than this -> treat as an O-shaped loop
     }
+}
+
+/** Formats a kilometre distance with one decimal place (e.g. 12.34 -> "12.3"), no unit suffix. */
+private fun formatKm(km: Double): String {
+    val tenths = (km * 10).roundToInt()
+    return "${tenths / 10}.${tenths % 10}"
 }
 
 /** Smallest "nice" kilometre interval (1/2/5/10...) that is at least [rawKm]. */
