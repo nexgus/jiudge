@@ -12,9 +12,13 @@ import kotlin.math.tan
  * a GPS reports is fed in directly without a datum shift.
  *
  * TM2 is a transverse Mercator with a 0.9999 scale factor, a 250 km false easting and no false
- * northing. Taiwan splits into two zones by central meridian: 121°E for the main island and 119°E
- * for the outlying islands (Penghu/Kinmen/Matsu); [convert] picks the zone from the longitude so a
- * fix anywhere in the country lands in the right grid.
+ * northing. Taiwan officially uses two zones by central meridian: 119°E for the four outlying-island
+ * regions (Kinmen, Wuqiu, Penghu, Matsu) and 121°E for everywhere else, including the offshore
+ * islands administered with main-island counties (Green Island, Orchid Island, Liuqiu, Guishan).
+ * The 119°E and 121°E zones overlap in longitude - Matsu's Dongyin reaches 120.5°E, east of
+ * Taiwan's west coast around 120.0°E - so a single longitude threshold cannot pick the right zone.
+ * [convert] tests the point against per-region bounding boxes for the 119°E zones and falls back to
+ * 121°E elsewhere.
  */
 object Twd97 {
     /** A TWD97 TM2 grid coordinate in metres, tagged with the central meridian of the zone used. */
@@ -31,15 +35,37 @@ object Twd97 {
     private const val K0 = 0.9999
     private const val FALSE_EASTING = 250_000.0
 
-    // Longitudes below this fall in the 119°E outlying-island zone; the rest use the 121°E main zone.
-    private const val ZONE_SPLIT_LON = 120.5
+    private data class LatLonBox(
+        val latRange: ClosedFloatingPointRange<Double>,
+        val lonRange: ClosedFloatingPointRange<Double>,
+    ) {
+        fun contains(
+            lat: Double,
+            lon: Double,
+        ): Boolean = lat in latRange && lon in lonRange
+    }
+
+    // Bounding boxes of regions that use the 119°E zone. Each box wraps the actual island geometry
+    // plus ~0.05° (~5 km) of slack to cover irregular coastlines, jetties and GPS jitter at the edge.
+    // Anything outside all of these falls back to the 121°E main-island zone.
+    private val OUTLYING_ISLAND_BOXES =
+        listOf(
+            // 金門 (大金門, 烈嶼, 大膽, 二膽, 復興嶼)
+            LatLonBox(latRange = 24.30..24.60, lonRange = 118.15..118.55),
+            // 烏坵 (烏坵嶼, 小坵嶼; 行政屬金門縣, 地理上孤立於金門與馬祖之間)
+            LatLonBox(latRange = 24.94..25.05, lonRange = 119.40..119.51),
+            // 澎湖 (七美, 望安, 馬公, 白沙, 西嶼, 吉貝, 目斗嶼, 花嶼, 查母嶼)
+            LatLonBox(latRange = 23.13..23.84, lonRange = 119.25..119.76),
+            // 馬祖 (莒光, 南竿, 北竿, 亮島, 東引)
+            LatLonBox(latRange = 25.91..26.43, lonRange = 119.88..120.55),
+        )
 
     /** Projects WGS84 [lat]/[lon] (decimal degrees) onto the appropriate TWD97 TM2 zone. */
     fun convert(
         lat: Double,
         lon: Double,
     ): Coordinate {
-        val centralMeridianDeg = if (lon < ZONE_SPLIT_LON) 119 else 121
+        val centralMeridianDeg = if (OUTLYING_ISLAND_BOXES.any { it.contains(lat, lon) }) 119 else 121
         val phi = Math.toRadians(lat)
         val lambda = Math.toRadians(lon)
         val lambda0 = Math.toRadians(centralMeridianDeg.toDouble())
