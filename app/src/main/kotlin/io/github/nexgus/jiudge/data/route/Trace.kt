@@ -55,15 +55,32 @@ object Trace {
         return header?.let { Parsed(it, records) }
     }
 
-    /** Writes [header] then every line in [records] as one JSONL file, replacing [file]. */
+    /**
+     * Writes [header] then every line in [records] as one JSONL file, atomically replacing [file].
+     *
+     * A sibling `.tmp` is filled then renamed into place, so an interrupted write (process kill,
+     * power loss) never truncates the existing file to a half-written state - the old contents stay
+     * intact until the rename swaps in the complete new file. This matters most when [file] already
+     * exists and is the route's only copy (e.g. [RouteStore.rename] hitting the same slug + createdAt
+     * as the original).
+     */
     fun write(
         file: File,
         header: TraceHeader,
         records: List<JSONObject>,
     ) {
-        file.bufferedWriter().use { writer ->
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        tmp.bufferedWriter().use { writer ->
             writer.append(header.toLine()).append('\n')
             for (record in records) writer.append(record.toString()).append('\n')
+        }
+        if (file.exists() && !file.delete()) {
+            tmp.delete()
+            throw java.io.IOException("cannot replace trace file: ${file.name}")
+        }
+        if (!tmp.renameTo(file)) {
+            tmp.delete()
+            throw java.io.IOException("cannot publish trace file: ${file.name}")
         }
     }
 

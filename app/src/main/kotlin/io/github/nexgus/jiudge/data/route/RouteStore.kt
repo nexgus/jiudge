@@ -76,7 +76,8 @@ class RouteStore {
      * no in-place line edit). The file name's slug is cosmetic but kept in sync, so the new name may
      * shift the path; the new file is written before the old one is deleted, so a crash mid-rename
      * leaves a duplicate rather than losing the route. When the slug and timestamp are unchanged the
-     * path is identical and the file is simply overwritten.
+     * path is identical and [Trace.write] atomically replaces it via tmp+rename, so an interrupted
+     * write still preserves the prior contents.
      *
      * Rejects a name already used by another route (trimmed exact match, excluding [file] itself) by
      * throwing [DuplicateRouteNameException], matching [save]'s duplicate guard.
