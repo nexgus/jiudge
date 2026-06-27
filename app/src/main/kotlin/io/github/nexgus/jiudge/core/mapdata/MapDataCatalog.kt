@@ -102,7 +102,11 @@ class MapDataCatalog(
                 urls = listOf("https://raw.githubusercontent.com/abrensch/brouter/v1.7.9/misc/profiles2/lookups.dat"),
                 approxSizeBytes = 30_000L,
                 optional = false,
-                install = InstallPlan.Raw(File(profiles, "lookups.dat")),
+                install =
+                    InstallPlan.Raw(
+                        destFile = File(profiles, "lookups.dat"),
+                        verify = MIN_SIZE_LOOKUPS_DAT,
+                    ),
             ),
         )
     }
@@ -117,7 +121,11 @@ class MapDataCatalog(
         urls = listOf("https://brouter.de/brouter/segments4/$name"),
         approxSizeBytes = approxSize,
         optional = false,
-        install = InstallPlan.Raw(File(segmentsDir, name)),
+        install =
+            InstallPlan.Raw(
+                destFile = File(segmentsDir, name),
+                verify = MIN_SIZE_RD5,
+            ),
     )
 
     private companion object {
@@ -131,5 +139,28 @@ class MapDataCatalog(
             )
 
         fun rudyUrls(fileName: String): List<String> = RUDY_MIRRORS.map { it + fileName }
+
+        // Belt-and-suspenders for raw assets: even after If-Range guards the resume, reject a
+        // finished download whose size is impossibly small for the file it claims to be. Real
+        // Taiwan `.rd5` segments are >10 MB and lookups.dat is >100 KB; the bounds here are
+        // deliberately well below those so a legitimate file is never rejected.
+        val MIN_SIZE_RD5 =
+            Downloader.Verifier { f ->
+                val min = 256L * 1024L
+                if (f.length() < min) {
+                    throw Downloader.VerifyException(
+                        "${f.name}: ${f.length()} bytes < $min (likely truncated or corrupt)",
+                    )
+                }
+            }
+        val MIN_SIZE_LOOKUPS_DAT =
+            Downloader.Verifier { f ->
+                val min = 4L * 1024L
+                if (f.length() < min) {
+                    throw Downloader.VerifyException(
+                        "${f.name}: ${f.length()} bytes < $min (likely truncated or corrupt)",
+                    )
+                }
+            }
     }
 }

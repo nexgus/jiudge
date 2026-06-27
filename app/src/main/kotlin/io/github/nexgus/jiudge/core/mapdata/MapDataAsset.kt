@@ -39,9 +39,16 @@ sealed interface InstallPlan {
         override val marker: File,
     ) : InstallPlan
 
-    /** The download is placed verbatim at [destFile] (e.g. a BRouter `.rd5`/`.brf`/`lookups.dat`). */
+    /**
+     * The download is placed verbatim at [destFile] (e.g. a BRouter `.rd5`/`.brf`/`lookups.dat`).
+     * [verify], if supplied, runs on the completed `.part` before it is renamed into place; throw
+     * [Downloader.VerifyException] to reject the bytes (the downloader then discards the `.part`
+     * and tries the next mirror). Unlike a zip asset, a raw download has no built-in CRC check,
+     * so this hook is the only chance to catch corruption before the marker file is published.
+     */
     data class Raw(
         val destFile: File,
+        val verify: Downloader.Verifier? = null,
     ) : InstallPlan {
         override val marker: File get() = destFile
     }

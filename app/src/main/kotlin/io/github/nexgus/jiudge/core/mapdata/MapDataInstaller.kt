@@ -45,9 +45,16 @@ class MapDataInstaller(
         onProgress: (InstallProgress) -> Unit,
     ) {
         // Downloader writes a sibling .part and renames into place, so the file is atomic by itself.
-        downloader.download(asset.urls, plan.destFile) { done, total ->
-            onProgress(InstallProgress(InstallPhase.DOWNLOADING, done, total))
-        }
+        // A plan-supplied verifier (e.g. a `.rd5` sanity check) runs against the .part before the
+        // rename, so a corrupt download never becomes the marker file the catalog treats as installed.
+        downloader.download(
+            urls = asset.urls,
+            target = plan.destFile,
+            progress = { done, total ->
+                onProgress(InstallProgress(InstallPhase.DOWNLOADING, done, total))
+            },
+            verifier = plan.verify ?: Downloader.Verifier {},
+        )
     }
 
     private suspend fun installZip(
@@ -58,9 +65,13 @@ class MapDataInstaller(
         val zip = File(paths.stagingDir, "${asset.id}.zip")
         val stage = File(paths.stagingDir, "${asset.id}.tmp")
         try {
-            downloader.download(asset.urls, zip) { done, total ->
-                onProgress(InstallProgress(InstallPhase.DOWNLOADING, done, total))
-            }
+            downloader.download(
+                urls = asset.urls,
+                target = zip,
+                progress = { done, total ->
+                    onProgress(InstallProgress(InstallPhase.DOWNLOADING, done, total))
+                },
+            )
             if (stage.exists()) stage.deleteRecursively()
             ZipExtractor.extract(zip, stage, plan.keepEntry) { written ->
                 onProgress(InstallProgress(InstallPhase.EXTRACTING, written, -1L))
