@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -466,7 +467,9 @@ private fun MapScreen(
         }
 
     // Subscribe to GPS + compass only while permission is held and the screen is resumed; release on
-    // pause so nothing runs in the background.
+    // pause so nothing runs in the background. start() is idempotent and rechecks the fine-location
+    // grant on every call, so a coarse-to-fine upgrade made in the system settings page takes effect
+    // on the resulting ON_RESUME without further plumbing.
     DisposableEffect(lifecycleOwner, locationGranted, locationLayer) {
         if (!locationGranted || locationLayer == null) {
             onDispose {}
@@ -475,8 +478,13 @@ private fun MapScreen(
                 LifecycleEventObserver { _, event ->
                     when (event) {
                         Lifecycle.Event.ON_RESUME -> {
-                            locationProvider.start()
-                            headingProvider.start()
+                            // The user may have revoked location entirely while we were paused; sync
+                            // the Compose state from the system before resubscribing.
+                            locationGranted = locationProvider.hasPermission()
+                            if (locationGranted) {
+                                locationProvider.start()
+                                headingProvider.start()
+                            }
                         }
                         Lifecycle.Event.ON_PAUSE -> {
                             locationProvider.stop()
@@ -544,6 +552,10 @@ private fun MapScreen(
     val currentFix by locationProvider.fix.collectAsState()
     val serviceEnabled by locationProvider.serviceEnabled.collectAsState()
     val gnss by locationProvider.gnss.collectAsState()
+    // Drives the persistent "only coarse location granted" warning banner. Refreshed inside
+    // LocationProvider.start() on every ON_RESUME so an upgrade to precise location made from the
+    // system settings page clears the banner automatically.
+    val fineLocationGranted by locationProvider.fineLocationGranted.collectAsState()
 
     // Refresh the popup's DEM altitude whenever it opens or the fix moves, off the main thread (the
     // first touch of a DEM tile memory-maps it). Cleared when the popup is closed.
@@ -721,7 +733,7 @@ private fun MapScreen(
 
         // Top banner stack, flush below the status bar and measured as one column so the top controls
         // and identify hint drop below whatever is showing. Holds the transient peak-index
-        // build/failure banner.
+        // build/failure banner and the persistent coarse-location warning.
         Column(
             modifier =
                 Modifier
@@ -735,6 +747,21 @@ private fun MapScreen(
                 PeakIndexState.Failed ->
                     PeakIndexBanner(fraction = null, failed = true, modifier = Modifier.fillMaxWidth())
                 else -> Unit
+            }
+            // Persistent warning while the user has granted only coarse location: tapping opens this
+            // app's system settings page so the grant can be upgraded to precise. No dismiss button -
+            // accuracy stays poor until the permission is upgraded, so the warning stays put.
+            if (locationGranted && !fineLocationGranted) {
+                CoarseLocationBanner(
+                    onClick = {
+                        val intent =
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", context.packageName, null)
+                            }
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
 
@@ -1125,6 +1152,35 @@ private fun PeakIndexBanner(
                 )
             }
         }
+    }
+}
+
+/**
+ * Persistent banner shown while the user has granted only ACCESS_COARSE_LOCATION. Tapping opens this
+ * app's system settings page so the grant can be upgraded to precise (ACCESS_FINE_LOCATION). The
+ * warning carries no dismiss control - while the grant remains coarse the dot keeps drifting by
+ * hundreds of metres, so the banner stays put until the upgrade lands.
+ */
+@Composable
+private fun CoarseLocationBanner(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        color = Color(0xFFFFE0B2), // warning amber, distinct from the index banner's blue/red
+        contentColor = Color(0xFF8B5E00),
+        shape = RectangleShape,
+        shadowElevation = 6.dp,
+    ) {
+        Text(
+            text = "目前僅授予概略位置, 定位點可能誤差數百公尺. 點此前往設定改為精確",
+            fontSize = 14.sp,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+        )
     }
 }
 

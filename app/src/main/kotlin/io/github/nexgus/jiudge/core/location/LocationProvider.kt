@@ -87,7 +87,13 @@ class LocationProvider(
     private val _gnss = MutableStateFlow<GnssSummary?>(null)
     val gnss: StateFlow<GnssSummary?> = _gnss.asStateFlow()
 
+    // Whether ACCESS_FINE_LOCATION is currently granted. Refreshed on every start() so the UI can
+    // observe a permission upgrade made from the system settings page without further plumbing.
+    private val _fineLocationGranted = MutableStateFlow(hasFinePermission())
+    val fineLocationGranted: StateFlow<Boolean> = _fineLocationGranted.asStateFlow()
+
     private var lastLocation: Location? = null
+    private var started = false
 
     private val listener =
         object : LocationListener {
@@ -150,15 +156,28 @@ class LocationProvider(
      * Begins receiving updates from every enabled provider (GPS for precision, network as a quick
      * indoor seed). Seeds [fix] with the freshest last-known location so the marker and recenter
      * button have something to show before the first live update arrives. No-op without permission.
+     *
+     * Idempotent: calling [start] again rechecks permissions and resubscribes. The caller may invoke
+     * it on every `ON_RESUME` so that a permission change made in the system settings page (e.g. a
+     * coarse-to-fine upgrade) takes effect on return.
      */
     @SuppressLint("MissingPermission")
     fun start() {
+        // Release any prior subscription first so a re-entry on ON_RESUME does not double-register
+        // the GNSS callback or leave a stale listener bound to old permission state.
+        if (started) stop()
         if (!hasPermission()) return
         _serviceEnabled.value = isLocationServiceEnabled()
+        val fine = hasFinePermission()
+        _fineLocationGranted.value = fine
         val providers = locationManager.getProviders(true)
-        seedLastKnown(providers)
+        seedLastKnown(providers, fine)
         for (provider in providers) {
             if (provider == LocationManager.PASSIVE_PROVIDER) continue
+            // GPS_PROVIDER requires ACCESS_FINE_LOCATION; subscribing without it throws
+            // SecurityException at runtime (the @SuppressLint annotation only silences the lint
+            // check). Skip it under a coarse-only grant and keep the network provider.
+            if (provider == LocationManager.GPS_PROVIDER && !fine) continue
             locationManager.requestLocationUpdates(
                 provider,
                 MIN_TIME_MS,
@@ -168,9 +187,10 @@ class LocationProvider(
             )
         }
         // Satellite status needs fine location; with a coarse-only grant we skip it and leave gnss null.
-        if (hasFinePermission()) {
+        if (fine) {
             locationManager.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
         }
+        started = true
     }
 
     /** Stops all updates. Safe to call when not started. */
@@ -178,12 +198,19 @@ class LocationProvider(
         locationManager.removeUpdates(listener)
         locationManager.unregisterGnssStatusCallback(gnssCallback)
         _gnss.value = null
+        started = false
     }
 
     @SuppressLint("MissingPermission")
-    private fun seedLastKnown(providers: List<String>) {
+    private fun seedLastKnown(
+        providers: List<String>,
+        fine: Boolean,
+    ) {
         var best: Location? = null
         for (provider in providers) {
+            // Same fine-permission gate as the live subscription: getLastKnownLocation("gps")
+            // throws SecurityException under a coarse-only grant.
+            if (provider == LocationManager.GPS_PROVIDER && !fine) continue
             val candidate = locationManager.getLastKnownLocation(provider) ?: continue
             if (isBetter(candidate, best)) best = candidate
         }
