@@ -94,6 +94,7 @@ import io.github.nexgus.jiudge.feature.identify.SymbolTable
 import io.github.nexgus.jiudge.feature.map.CurrentLocationLayer
 import io.github.nexgus.jiudge.feature.map.LocationInfoDialog
 import io.github.nexgus.jiudge.feature.map.RudyMapView
+import io.github.nexgus.jiudge.feature.map.SearchPeakMarkerLayer
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
@@ -106,6 +107,7 @@ import io.github.nexgus.jiudge.feature.planning.RoutePlanner
 import io.github.nexgus.jiudge.feature.planning.RouteViewControls
 import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
+import io.github.nexgus.jiudge.feature.planning.SearchTargetControls
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
 import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
 import kotlinx.coroutines.Dispatchers
@@ -283,17 +285,29 @@ private fun MapScreen(
         }
     }
 
-    // Peak-name search: the loaded index is held here while the dialog is open (non-null = open). It
-    // is loaded lazily on tap so a not-yet-built index is reported rather than opening an empty dialog.
-    var searchPeaks by remember { mutableStateOf<List<Peak>?>(null) }
+    // Peak-name search index, loaded lazily on first search and then kept in memory for the rest of
+    // this run, so returning to the result list never re-reads it from disk.
+    var peakIndex by remember { mutableStateOf<List<Peak>?>(null) }
 
-    // Last search keyword, kept in memory so reopening the dialog within this run prefills it; gone
-    // when the app exits.
+    // Whether the search dialog is shown. Separate from the index so the cached list can outlive the
+    // dialog being closed.
+    var searchDialogOpen by remember { mutableStateOf(false) }
+
+    // Last search keyword, kept in memory so reopening the dialog within this run prefills it (and so
+    // restores the same result list); gone when the app exits.
     var lastSearchQuery by remember { mutableStateOf("") }
+
+    // Peak jumped to from the search dialog, awaiting 確認 / 回到搜尋結果. Non-null = the yellow marker
+    // is shown and the bottom controls are taken over by the confirm/back pair.
+    var pendingPeak by remember { mutableStateOf<Peak?>(null) }
 
     fun openSearch() {
         if (peakIndexState is PeakIndexState.Building) {
             scope.launch { snackbarHostState.showSnackbar("山頭索引建立中, 請稍候") }
+            return
+        }
+        if (peakIndex != null) {
+            searchDialogOpen = true
             return
         }
         scope.launch {
@@ -301,7 +315,8 @@ private fun MapScreen(
             if (peaks.isNullOrEmpty()) {
                 snackbarHostState.showSnackbar("山頭索引尚未就緒, 請稍候")
             } else {
-                searchPeaks = peaks
+                peakIndex = peaks
+                searchDialogOpen = true
             }
         }
     }
@@ -421,6 +436,21 @@ private fun MapScreen(
                     .also { mv.layerManager.layers.add(it) }
             }
         }
+
+    // Highlight for a peak jumped to from the search dialog: a translucent yellow disc that stays
+    // until the user confirms the target or returns to the result list.
+    val searchPeakLayer =
+        remember(map.value) {
+            map.value?.let { mv ->
+                SearchPeakMarkerLayer(density)
+                    .also { mv.layerManager.layers.add(it) }
+            }
+        }
+
+    LaunchedEffect(searchPeakLayer, pendingPeak) {
+        val peak = pendingPeak
+        if (peak != null) searchPeakLayer?.show(peak.position) else searchPeakLayer?.clear()
+    }
 
     val locationPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -742,7 +772,15 @@ private fun MapScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (!identifyMode && identifyResult == null) {
+            if (!identifyMode && identifyResult == null && pendingPeak != null) {
+                SearchTargetControls(
+                    onConfirm = { pendingPeak = null },
+                    onBackToResults = {
+                        pendingPeak = null
+                        openSearch()
+                    },
+                )
+            } else if (!identifyMode && identifyResult == null) {
                 when (mode) {
                     PlanMode.MAP_VIEW ->
                         MapViewControls(
@@ -995,17 +1033,20 @@ private fun MapScreen(
         AboutDialog(mapVersion = mapVersion, onDismiss = { aboutOpen = false })
     }
 
-    searchPeaks?.let { peaks ->
-        PeakSearchDialog(
-            peaks = peaks,
-            initialQuery = lastSearchQuery,
-            onQueryChange = { lastSearchQuery = it },
-            onPick = { peak ->
-                searchPeaks = null
-                centerOnPeak(peak)
-            },
-            onDismiss = { searchPeaks = null },
-        )
+    if (searchDialogOpen) {
+        peakIndex?.let { peaks ->
+            PeakSearchDialog(
+                peaks = peaks,
+                initialQuery = lastSearchQuery,
+                onQueryChange = { lastSearchQuery = it },
+                onPick = { peak ->
+                    searchDialogOpen = false
+                    pendingPeak = peak
+                    centerOnPeak(peak)
+                },
+                onDismiss = { searchDialogOpen = false },
+            )
+        }
     }
 
     if (locationInfoOpen) {

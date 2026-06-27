@@ -158,6 +158,23 @@ fun MapViewControls(
 }
 
 /**
+ * Controls shown after jumping to a searched peak: confirm the target (ending the search) or go back
+ * to the result list to pick another. These take over the bottom-start row while a search target is
+ * pending, in place of the mode-specific controls.
+ */
+@Composable
+fun SearchTargetControls(
+    onConfirm: () -> Unit,
+    onBackToResults: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MapPill("確認", onConfirm, primary = true)
+        MapPill("回到搜尋結果", onBackToResults)
+    }
+}
+
+/**
  * Route-view mode controls: re-enter editing, or leave to map-view (the route stays on the map).
  * Editing is where "+"/"-"/儲存 live.
  */
