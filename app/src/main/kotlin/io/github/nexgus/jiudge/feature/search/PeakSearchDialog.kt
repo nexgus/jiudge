@@ -14,11 +14,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import io.github.nexgus.jiudge.core.index.Peak
 
@@ -28,15 +33,27 @@ import io.github.nexgus.jiudge.core.index.Peak
  * Same-named neighbours (前峰/主峰...) are common, so the user picks from the hit list rather than
  * the search guessing one.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun PeakSearchDialog(
     peaks: List<Peak>,
+    initialQuery: String,
+    onQueryChange: (String) -> Unit,
     onPick: (Peak) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf(initialQuery) }
     val results = remember(query) { PeakSearch.search(peaks, query) }
     val shown = results.take(PeakSearch.MAX_RESULTS)
+
+    // Focus the field and raise the keyboard as soon as the dialog appears, so the user can type
+    // straight away without an extra tap.
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -45,10 +62,13 @@ fun PeakSearchDialog(
             Column {
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = {
+                        query = it
+                        onQueryChange(it)
+                    },
                     label = { Text("山名關鍵字") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                 )
                 when {
                     query.isBlank() ->

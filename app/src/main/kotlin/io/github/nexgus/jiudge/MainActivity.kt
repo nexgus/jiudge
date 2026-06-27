@@ -287,6 +287,10 @@ private fun MapScreen(
     // is loaded lazily on tap so a not-yet-built index is reported rather than opening an empty dialog.
     var searchPeaks by remember { mutableStateOf<List<Peak>?>(null) }
 
+    // Last search keyword, kept in memory so reopening the dialog within this run prefills it; gone
+    // when the app exits.
+    var lastSearchQuery by remember { mutableStateOf("") }
+
     fun openSearch() {
         if (peakIndexState is PeakIndexState.Building) {
             scope.launch { snackbarHostState.showSnackbar("山頭索引建立中, 請稍候") }
@@ -994,6 +998,8 @@ private fun MapScreen(
     searchPeaks?.let { peaks ->
         PeakSearchDialog(
             peaks = peaks,
+            initialQuery = lastSearchQuery,
+            onQueryChange = { lastSearchQuery = it },
             onPick = { peak ->
                 searchPeaks = null
                 centerOnPeak(peak)
