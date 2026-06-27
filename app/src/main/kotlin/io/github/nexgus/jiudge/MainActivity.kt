@@ -14,7 +14,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -110,7 +109,6 @@ import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
 import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -199,15 +197,6 @@ private enum class PlanMode { MAP_VIEW, ROUTE_EDIT, ROUTE_VIEW }
 // Whether the GPS accuracy circle is drawn. Hard-coded on for now; a future Settings screen
 // (feature/settings, not yet built) will expose this as a user toggle.
 private const val SHOW_ACCURACY_CIRCLE = true
-
-// Low-accuracy warning thresholds, with hysteresis to stop the banner flickering when the radius
-// hovers near the limit: it appears once the fix is coarser than SHOW, and only hides once it
-// improves past the tighter HIDE. Good open-sky GPS stays well under both.
-private const val LOW_ACCURACY_SHOW_M = 50f
-private const val LOW_ACCURACY_HIDE_M = 35f
-
-// Once shown, the banner stays up at least this long so a brief coarse fix does not just flash by.
-private const val LOW_ACCURACY_MIN_VISIBLE_MS = 3_000L
 
 // Centring on a searched peak keeps the current zoom, unless it is below MIN (too far out to see the
 // summit), in which case it pulls in to PEAK_VIEW.
@@ -516,8 +505,8 @@ private fun MapScreen(
         }
     }
 
-    // Collected in composition (1 Hz, unlike the high-rate heading) to drive the GPS warning banner,
-    // the FAB highlight, and the recenter behaviour.
+    // Collected in composition (1 Hz, unlike the high-rate heading) to drive the FAB highlight and the
+    // recenter behaviour.
     val currentFix by locationProvider.fix.collectAsState()
     val serviceEnabled by locationProvider.serviceEnabled.collectAsState()
     val gnss by locationProvider.gnss.collectAsState()
@@ -534,40 +523,9 @@ private fun MapScreen(
             }
     }
 
-    // The GPS warning banner shows whenever we lack a GPS-level precise fix - no fix, a coarse
-    // WiFi/cell fix, or the location service being off. Once a precise GPS fix lands it clears, but
-    // only after a minimum on-screen time so it never just flashes by; a small accuracy hysteresis
-    // band stops it flickering at the threshold.
-    var gpsWarnVisible by remember { mutableStateOf(false) }
-    var gpsWarnShownAt by remember { mutableStateOf(0L) }
-    var gpsWarnAccuracy by remember { mutableStateOf<Float?>(null) }
-    // Measured height of the whole top banner stack (GPS warning + peak-index build), used to push
-    // the top controls below whatever is currently shown.
+    // Measured height of the top banner stack (peak-index build), used to push the top controls below
+    // whatever is currently shown.
     var topBannersHeightPx by remember { mutableStateOf(0) }
-    val accuracy = currentFix?.accuracyMeters
-    val haveGpsFix = serviceEnabled && currentFix?.fromGps == true && accuracy != null
-    LaunchedEffect(locationGranted, haveGpsFix, accuracy) {
-        gpsWarnAccuracy = accuracy
-        when {
-            !locationGranted -> gpsWarnVisible = false
-            // No precise GPS yet (no fix, coarse network fix, or service off): warn.
-            !haveGpsFix || accuracy > LOW_ACCURACY_SHOW_M -> {
-                if (!gpsWarnVisible) {
-                    gpsWarnVisible = true
-                    gpsWarnShownAt = System.currentTimeMillis()
-                }
-            }
-            // Precise GPS acquired: clear, but keep the banner up for its minimum time first.
-            accuracy <= LOW_ACCURACY_HIDE_M -> {
-                if (gpsWarnVisible) {
-                    val remaining = LOW_ACCURACY_MIN_VISIBLE_MS - (System.currentTimeMillis() - gpsWarnShownAt)
-                    if (remaining > 0) delay(remaining)
-                    gpsWarnVisible = false
-                }
-            }
-            // GPS fix in the hysteresis band (HIDE..SHOW): leave visibility unchanged.
-        }
-    }
 
     fun recenterOnCurrentLocation() {
         if (!locationGranted) {
@@ -607,10 +565,6 @@ private fun MapScreen(
             },
         )
 
-        // The full-width warning banner sits flush below the status bar and persists across all modes
-        // (including identify) so a low-accuracy warning is never hidden. When shown, the top controls
-        // and the identify hint are pushed down by its measured height so it never covers them.
-        val warnVisible = gpsWarnVisible
         // Driven by the measured banner-stack height: 0 when nothing is shown (empty column), so the
         // controls sit flush at the top and drop only while a banner is up.
         val controlsTopOffset = with(LocalDensity.current) { topBannersHeightPx.toDp() }
@@ -732,8 +686,8 @@ private fun MapScreen(
         }
 
         // Top banner stack, flush below the status bar and measured as one column so the top controls
-        // and identify hint drop below whatever is showing. Holds the GPS-fix warning (no precise fix /
-        // service off, taps through to settings) above the transient peak-index build/failure banner.
+        // and identify hint drop below whatever is showing. Holds the transient peak-index
+        // build/failure banner.
         Column(
             modifier =
                 Modifier
@@ -741,19 +695,6 @@ private fun MapScreen(
                     .fillMaxWidth()
                     .onSizeChanged { topBannersHeightPx = it.height },
         ) {
-            if (warnVisible) {
-                GpsWarningBanner(
-                    serviceEnabled = serviceEnabled,
-                    accuracyMeters = if (currentFix != null) gpsWarnAccuracy else null,
-                    onClick =
-                        if (serviceEnabled) {
-                            null
-                        } else {
-                            { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
-                        },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
             when (val state = peakIndexState) {
                 is PeakIndexState.Building ->
                     PeakIndexBanner(fraction = state.fraction, failed = false, modifier = Modifier.fillMaxWidth())
@@ -1095,39 +1036,6 @@ private fun MyLocationButton(
     ) {
         // U+25CE bullseye - a "locate me" glyph, consistent with the app's text-based FAB icons.
         Text(text = "◎", fontSize = 24.sp)
-    }
-}
-
-/**
- * Banner shown while there is no GPS-level precise fix. When [serviceEnabled] is false it warns that
- * the location service is off and (via [onClick]) taps through to settings; otherwise it is a
- * waiting/low-accuracy notice, reporting [accuracyMeters] when a coarse fix is available.
- */
-@Composable
-private fun GpsWarningBanner(
-    serviceEnabled: Boolean,
-    accuracyMeters: Float?,
-    onClick: (() -> Unit)?,
-    modifier: Modifier = Modifier,
-) {
-    val text =
-        when {
-            !serviceEnabled -> "定位服務已關閉, 點此開啟"
-            accuracyMeters != null -> "定位精度較低 (約 ±${accuracyMeters.toInt()} m), 等待 GPS 訊號..."
-            else -> "尚未取得定位, 等待 GPS 訊號..."
-        }
-    Surface(
-        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
-        color = Color(0xFFFFE0B2), // light amber
-        contentColor = Color(0xFF7A4F01), // dark amber, readable on the fill
-        shape = RectangleShape, // full-width bar flush under the status bar
-        shadowElevation = 6.dp,
-    ) {
-        Text(
-            text = text,
-            fontSize = 14.sp,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-        )
     }
 }
 
