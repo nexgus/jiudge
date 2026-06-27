@@ -5,7 +5,8 @@ import java.io.File
 
 /**
  * The fixed public folders trace files live in, under `Documents/Jiudge/` (see CLAUDE.md storage
- * rationale). Shared by [RouteStore] and [TraceMigration] so the layout is defined in one place.
+ * rationale). The layout is defined here in one place so callers like [RouteStore] never spell out
+ * the paths themselves.
  *
  * Reaching these paths needs `MANAGE_EXTERNAL_STORAGE` (Android 11+) or legacy
  * `WRITE_EXTERNAL_STORAGE`; callers must hold it before touching the filesystem.
@@ -13,7 +14,6 @@ import java.io.File
 internal object RoutePaths {
     const val APP_DIR = "Jiudge"
     const val PLANS_DIR = "plans"
-    const val META_FILE = ".trace_meta.json"
 
     /** `Documents/Jiudge/`, created on demand. */
     @Suppress("DEPRECATION") // getExternalStoragePublicDirectory still works under All files access.
@@ -25,7 +25,4 @@ internal object RoutePaths {
 
     /** `Documents/Jiudge/plans/`, created on demand. */
     fun plansDir(): File = File(appDir(), PLANS_DIR).apply { mkdirs() }
-
-    /** `Documents/Jiudge/.trace_meta.json`; tracks the migration schema version (spec §13). */
-    fun metaFile(): File = File(appDir(), META_FILE)
 }

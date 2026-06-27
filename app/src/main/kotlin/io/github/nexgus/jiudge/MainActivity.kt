@@ -83,7 +83,6 @@ import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RouteStore
-import io.github.nexgus.jiudge.data.route.TraceMigration
 import io.github.nexgus.jiudge.feature.about.AboutDialog
 import io.github.nexgus.jiudge.feature.about.MainMenuButton
 import io.github.nexgus.jiudge.feature.identify.IdentifyBar
@@ -401,16 +400,6 @@ private fun MapScreen(
         } else {
             pendingStorageAction = action
             showStorageRationale = true
-        }
-    }
-
-    // Upgrade any legacy `.json` plans to the JSONL trace format once, in the background (spec §13).
-    // Only meaningful when storage access is already held - legacy files could only have been written
-    // under the same permission, so if it is not held there is nothing to migrate. The meta file makes
-    // repeated launches a no-op.
-    LaunchedEffect(Unit) {
-        if (hasStorageAccess()) {
-            withContext(Dispatchers.IO) { TraceMigration().migrateIfNeeded() }
         }
     }
 

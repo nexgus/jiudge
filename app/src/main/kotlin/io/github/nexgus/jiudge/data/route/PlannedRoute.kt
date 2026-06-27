@@ -74,21 +74,6 @@ data class PlannedRoute(
                         .map { it.getJSONArray("pts").toLatLongs() },
             )
 
-        /**
-         * Parses a legacy single-object plan (`{name, createdAtEpochMs, waypoints, segments}`) -
-         * the pre-trace `.json` format. Used only by [TraceMigration] to upgrade old files (spec §13).
-         */
-        fun fromLegacyJson(json: JSONObject): PlannedRoute =
-            PlannedRoute(
-                name = json.getString("name"),
-                createdAtEpochMs = json.getLong("createdAtEpochMs"),
-                waypoints = json.getJSONArray("waypoints").toLatLongs(),
-                segments =
-                    json.optJSONArray("segments")?.let { segs ->
-                        (0 until segs.length()).map { segs.getJSONArray(it).toLatLongs() }
-                    } ?: emptyList(),
-            )
-
         private fun List<LatLong>.toPointArray(): JSONArray =
             JSONArray().also { arr ->
                 forEach { p -> arr.put(JSONArray().put(Trace.coord(p.latitude)).put(Trace.coord(p.longitude))) }

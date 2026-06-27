@@ -20,7 +20,7 @@ object Trace {
     /** Application identifier written into every header's `app` field. */
     const val APP_ID = "jiudge"
 
-    /** File extension for trace files - distinguishes the new format from legacy `.json` (spec §12). */
+    /** File extension for trace files (spec §12). */
     const val FILE_SUFFIX = ".jsonl"
 
     const val TYPE_PLAN = "plan"

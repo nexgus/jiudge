@@ -234,42 +234,17 @@ KML, GeoJSON 透過同一中介結構轉出. 本文件不展開細節, 僅確認
 
 - 規劃路線: `Documents/Jiudge/plans/`
 - 實際軌跡: `Documents/Jiudge/tracks/`
-- 副檔名: `.jsonl` (名實相符, 並讓啟動時遷移得以副檔名區分新舊格式, 見 §13).
+- 副檔名: `.jsonl`.
 - 命名沿用既有規則 `{slug(name)}-{createdAt}.jsonl`.
-- 遷移狀態 metadata 檔: `Documents/Jiudge/.trace_meta.json` (見 §13).
 
-## 13. 啟動時遷移
+## 13. 舊格式相容性
 
-把舊版存檔一次性升級到最新 schema, 透過一個 metadata 檔記錄完工狀態, 避免每次啟動重複掃描.
+本 App 不再支援讀取本 trace 格式之前的單一物件 `.json` 路線檔: 該過渡期已結束, 啟動時的
+一次性遷移流程已自程式碼移除. `plans/` 下若仍殘留 `.json`, 將被 `RouteStore` 忽略, picker
+不會列出. 早期使用過的 `Documents/Jiudge/.trace_meta.json` 完成標記檔不再讀寫, 留著無害.
 
-### metadata 檔
-
-- 路徑: `Documents/Jiudge/.trace_meta.json`, 一檔涵蓋 `plans/` 與 `tracks/` 兩個子目錄.
-- 內容: `{"schema": <已完成升級到的版本>}`, 例如 `{"schema":1}`.
-- 語意: `schema` 代表"目錄下所有 trace 都已升級到此版本".
-
-### 流程
-
-App 啟動且取得儲存權限後, 於背景執行:
-
-1. 讀取 `.trace_meta.json`. 若存在且其 `schema` 不小於目前最新版本 (1), 視為已是最新,
-   不做任何處理, 結束.
-2. 否則掃描 `plans/` 與 `tracks/` 下所有舊格式檔 (副檔名 `.json` 的單一 JSON 物件).
-3. 逐一將每個舊檔轉為新格式檔 (`.jsonl`), 檔名沿用 `{slug(name)}-{createdAt}.jsonl`.
-4. 新檔成功寫出後, 刪除對應的舊 `.json`.
-5. 全部處理完畢, 寫入 `.trace_meta.json` 標記 `{"schema":1}`.
-
-### 可重入性
-
-- 轉換以"先寫成功新檔, 再刪舊檔"為序; metadata 檔只在全部完成後才寫入.
-- 若步驟 2-4 中途中斷 (例如閃退), metadata 檔尚未寫入, 下次啟動會重新掃描. 此時最多殘留
-  尚未刪除的舊 `.json`, 不會遺失資料; 已轉換者 (舊 `.json` 已不存在) 自然不再被掃到.
-- 因新格式用 `.jsonl`, 舊格式用 `.json`, 掃描可單憑副檔名區分新舊, 不需讀檔內容判斷.
-
-### 未來版本升級
-
-日後若 schema 提升到 2 以上, 沿用同一機制: 啟動時 `.trace_meta.json` 的 `schema` 小於最新版本
-即觸發掃描, 依需要逐版轉換 (`.jsonl` 內容升級), 完成後更新 metadata 的 `schema`.
+日後若 schema 由 1 提升至 2 以上, 應採"讀時即時轉換"或建立新的版本遷移機制, 不沿用早期
+依賴副檔名區分新舊格式的設計.
 
 ## 14. 與既有程式碼的對應 (概要)
 
