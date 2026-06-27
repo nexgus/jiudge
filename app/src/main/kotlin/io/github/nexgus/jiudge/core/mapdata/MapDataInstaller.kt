@@ -76,8 +76,15 @@ class MapDataInstaller(
             ZipExtractor.extract(zip, stage, plan.keepEntry) { written ->
                 onProgress(InstallProgress(InstallPhase.EXTRACTING, written, -1L))
             }
+            // keepEntry 全濾掉時 stage 為空; 若放行, DEM 會把空目錄改名成 marker 反被誤判為已安裝.
+            if (stage.listFiles().isNullOrEmpty()) {
+                throw IOException(
+                    "zip for ${asset.id} kept no entries; keepEntry filter is likely stale",
+                )
+            }
             onProgress(InstallProgress(InstallPhase.PUBLISHING, 0L, -1L))
             publish(stage, plan)
+            verifyPublished(asset, plan)
         } finally {
             zip.delete()
             stage.deleteRecursively()
@@ -107,6 +114,26 @@ class MapDataInstaller(
             val dst = File(destDir, src.name)
             if (dst.exists()) dst.deleteRecursively()
             if (!src.renameTo(dst)) throw IOException("cannot move ${src.name} into ${destDir.name}")
+        }
+    }
+
+    /**
+     * marker 是 catalog 判斷 isInstalled 的唯一依據; 空 publish 必須丟例外, 否則下次啟動會無聲
+     * 重抓 (檔案 marker) 或永遠不再重抓 (目錄 marker, 空目錄會被當成已安裝).
+     */
+    private fun verifyPublished(
+        asset: MapDataAsset,
+        plan: InstallPlan.Unzip,
+    ) {
+        val marker = plan.marker
+        if (marker == plan.destDir) {
+            val ok = marker.isDirectory && (marker.listFiles()?.isNotEmpty() == true)
+            if (!ok) {
+                marker.deleteRecursively()
+                throw IOException("install produced empty ${marker.name} for ${asset.id}")
+            }
+        } else if (!marker.isFile) {
+            throw IOException("install did not produce marker ${marker.name} for ${asset.id}")
         }
     }
 }
