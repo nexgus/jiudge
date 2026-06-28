@@ -63,10 +63,14 @@ object RudyMapView {
         context: Context,
         mapDir: File,
     ): MapView {
-        // Continuous (fractional) zoom: by default mapsforge snaps the pinch gesture back to an
-        // integer zoom level when the fingers lift. This global flag keeps the intermediate scale,
-        // so the map zooms smoothly to any magnification instead of jumping to fixed steps.
-        Parameters.FRACTIONAL_ZOOM = true
+        // Snap zoom to integer levels on pinch release. mapsforge composites every layer into a
+        // single frame buffer bitmap that is then stretched by the current fractional scale; with
+        // FRACTIONAL_ZOOM enabled the bitmap (and the text baked or drawn into it) would keep that
+        // stretch indefinitely, so labels appear to grow with the map until the next integer zoom
+        // is crossed. Disabling it preserves the smooth fractional animation during the gesture
+        // and lets mapsforge re-render the basemap at the new integer level on release, restoring
+        // theme-rule text sizes - the behaviour RudyMap and OruxMaps use.
+        Parameters.FRACTIONAL_ZOOM = false
 
         val mapView =
             MapView(context).apply {
