@@ -19,6 +19,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -147,39 +148,44 @@ class PlannedRouteLayer(
         val state = snapshot ?: return
         if (state.polyline.isEmpty() && state.waypoints.isEmpty()) return
         val mapSize = MercatorProjection.getMapSize(zoomLevel, displayModel.tileSize)
+        // mapsforge bakes the device density and any FRACTIONAL_ZOOM scale into `displayModel.tileSize`,
+        // so `zoomLevel` is the byte stored on the model (the floor) and lags behind what the user
+        // actually sees - e.g. on a 420 dpi device a freshly loaded route renders at byte zoom 12
+        // even though the visual scale corresponds to ~13.5. Use the visual zoom for every threshold
+        // and scale ramp.
+        val visualZoom = visualZoom(mapSize)
 
         fun screenX(lon: Double) = MercatorProjection.longitudeToPixelX(lon, mapSize) - topLeftPoint.x
 
         fun screenY(lat: Double) = MercatorProjection.latitudeToPixelY(lat, mapSize) - topLeftPoint.y
 
-        val scale = scaleForZoom(zoomLevel)
+        val scale = scaleForZoom(visualZoom)
         // The line and its chevrons share one width that is constant above LINE_FULL_ZOOM and tapers
         // when zoomed out (so the line does not blanket the map); the chevrons size off this width.
-        val lineWidth = (LINE_WIDTH_DP * density * lineScaleForZoom(zoomLevel)).coerceAtLeast(2f)
+        val lineWidth = (LINE_WIDTH_DP * density * lineScaleForZoom(visualZoom)).coerceAtLeast(2f)
         drawTrackLine(canvas, state, lineWidth, ::screenX, ::screenY)
         drawDirectionChevrons(canvas, state, lineWidth, ::screenX, ::screenY)
         // Via points sit *under* the km balloons (a reference label must not be hidden by a minor via
         // dot), but the start/end markers stay on top - they are navigationally important.
-        drawViaWaypoints(canvas, state, scale, zoomLevel, ::screenX, ::screenY)
-        drawKmMarkers(canvas, state.kmMarkers, zoomLevel, mapSize, boundingBox, scale, ::screenX, ::screenY)
+        drawViaWaypoints(canvas, state, scale, visualZoom, ::screenX, ::screenY)
+        drawKmMarkers(canvas, state.kmMarkers, mapSize, boundingBox, scale, ::screenX, ::screenY)
         drawEndpointWaypoints(canvas, state, scale, ::screenX, ::screenY)
-        drawTotalMarker(canvas, state, zoomLevel, scale, ::screenX, ::screenY)
+        drawTotalMarker(canvas, state, scale, ::screenX, ::screenY)
     }
 
     /**
      * The end-of-route total-distance balloon, anchored at the final track point and tinted differently
-     * from the intermediate kilometre balloons so the total reads as distinct. Always shown (never
-     * thinned like the km markers), but still hidden below [LABEL_MIN_ZOOM] where balloons crowd.
+     * from the intermediate kilometre balloons so the total reads as distinct. Always shown - it is a
+     * single balloon, so it never crowds, and at low zoom it is often the only readable distance cue.
      */
     private fun drawTotalMarker(
         canvas: Canvas,
         state: Snapshot,
-        zoomLevel: Byte,
         scale: Float,
         screenX: (Double) -> Double,
         screenY: (Double) -> Double,
     ) {
-        if (state.polyline.size < 2 || zoomLevel < LABEL_MIN_ZOOM || state.totalMeters < 1.0) return
+        if (state.polyline.size < 2 || state.totalMeters < 1.0) return
         val end = state.polyline.last()
         val anchorX = screenX(end.longitude)
         val anchorY = screenY(end.latitude)
@@ -305,16 +311,16 @@ class PlannedRouteLayer(
     private fun drawKmMarkers(
         canvas: Canvas,
         markers: List<KmMarker>,
-        zoomLevel: Byte,
         mapSize: Long,
         boundingBox: BoundingBox,
         scale: Float,
         screenX: (Double) -> Double,
         screenY: (Double) -> Double,
     ) {
-        // Below LABEL_MIN_ZOOM the balloons would crowd, so drop the kilometre markers entirely there.
-        if (markers.isEmpty() || zoomLevel < LABEL_MIN_ZOOM) return
-        // Keep only every Nth marker so on-screen spacing stays >= MARKER_MIN_SPACING_DP.
+        if (markers.isEmpty()) return
+        // Crowding is handled entirely by [niceKmInterval] - at low zoom it returns a large interval,
+        // so most (or all) km balloons are dropped automatically. The end-of-route total balloon still
+        // shows there, so the route is never completely unlabelled.
         val centerLat = (boundingBox.minLatitude + boundingBox.maxLatitude) / 2.0
         val metresPerPixel = MercatorProjection.calculateGroundResolution(centerLat, mapSize)
         val interval = niceKmInterval(MARKER_MIN_SPACING_DP * density * metresPerPixel / 1000.0)
@@ -476,12 +482,12 @@ class PlannedRouteLayer(
         canvas: Canvas,
         state: Snapshot,
         scale: Float,
-        zoomLevel: Byte,
+        visualZoom: Double,
         screenX: (Double) -> Double,
         screenY: (Double) -> Double,
     ) {
         val waypoints = state.waypoints
-        if (waypoints.size <= 2 || zoomLevel < MID_WAYPOINT_MIN_ZOOM) return
+        if (waypoints.size <= 2 || visualZoom < MID_WAYPOINT_MIN_ZOOM) return
         val midRadius = (MID_RADIUS_DP * density * scale).toInt().coerceAtLeast(2)
         for (i in 1 until waypoints.lastIndex) {
             val cx = screenX(waypoints[i].longitude).toInt()
@@ -658,10 +664,10 @@ class PlannedRouteLayer(
     }
 
     /** Linear ramp from [SCALE_MIN] to [SCALE_MAX] across [SCALE_MIN_ZOOM]..[SCALE_MAX_ZOOM]. */
-    private fun scaleForZoom(zoomLevel: Byte): Float {
-        val span = (SCALE_MAX_ZOOM - SCALE_MIN_ZOOM).toFloat()
-        val t = ((zoomLevel - SCALE_MIN_ZOOM) / span).coerceIn(0f, 1f)
-        return SCALE_MIN + t * (SCALE_MAX - SCALE_MIN)
+    private fun scaleForZoom(visualZoom: Double): Float {
+        val span = (SCALE_MAX_ZOOM - SCALE_MIN_ZOOM).toDouble()
+        val t = ((visualZoom - SCALE_MIN_ZOOM) / span).coerceIn(0.0, 1.0)
+        return (SCALE_MIN + t * (SCALE_MAX - SCALE_MIN)).toFloat()
     }
 
     /**
@@ -669,11 +675,18 @@ class PlannedRouteLayer(
      * zoomed out, so the line keeps a constant on-screen width once zoomed in but thins out far away
      * instead of blanketing the map.
      */
-    private fun lineScaleForZoom(zoomLevel: Byte): Float {
-        val span = (LINE_FULL_ZOOM - LINE_TAPER_MIN_ZOOM).toFloat()
-        val t = ((zoomLevel - LINE_TAPER_MIN_ZOOM) / span).coerceIn(0f, 1f)
-        return LINE_MIN_SCALE + t * (1f - LINE_MIN_SCALE)
+    private fun lineScaleForZoom(visualZoom: Double): Float {
+        val span = (LINE_FULL_ZOOM - LINE_TAPER_MIN_ZOOM).toDouble()
+        val t = ((visualZoom - LINE_TAPER_MIN_ZOOM) / span).coerceIn(0.0, 1.0)
+        return (LINE_MIN_SCALE + t * (1f - LINE_MIN_SCALE)).toFloat()
     }
+
+    /**
+     * Visual zoom inferred from `mapSize`: `log2(mapSize / 256)`. mapsforge folds device density and
+     * the FRACTIONAL_ZOOM scale into `displayModel.tileSize`, so the byte `zoomLevel` no longer maps
+     * cleanly to what the user sees - the visual zoom does.
+     */
+    private fun visualZoom(mapSize: Long): Double = ln(mapSize.toDouble() / BASE_TILE_SIZE) / LOG_2
 
     private fun fill(color: Int): Paint =
         factory.createPaint().apply {
@@ -778,10 +791,14 @@ class PlannedRouteLayer(
         const val SCALE_MIN = 0.5f
         const val SCALE_MAX = 1.0f
 
-        const val LABEL_MIN_ZOOM = 13 // below this, draw kilometre dots without numbers
         const val MID_WAYPOINT_MIN_ZOOM = 14 // below this, hide via-points (their halos would merge)
         const val MARKER_MIN_SPACING_DP = 48f // minimum on-screen gap between drawn kilometre markers
         const val LOOP_JOIN_METERS = 30.0 // start/end closer than this -> treat as an O-shaped loop
+
+        // mapsforge's untouched base tile size before density and FRACTIONAL_ZOOM scaling, used to
+        // recover a visual zoom from `mapSize` independent of the device DPI.
+        const val BASE_TILE_SIZE = 256
+        val LOG_2 = ln(2.0)
     }
 }
 
