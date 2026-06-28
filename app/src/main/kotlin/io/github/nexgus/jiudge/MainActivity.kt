@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -28,9 +29,15 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.North
+import androidx.compose.material.icons.filled.QuestionMark
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -70,6 +77,7 @@ import io.github.nexgus.jiudge.core.index.Peak
 import io.github.nexgus.jiudge.core.index.PeakIndex
 import io.github.nexgus.jiudge.core.index.PeakIndexState
 import io.github.nexgus.jiudge.core.location.HeadingProvider
+import io.github.nexgus.jiudge.core.location.LocationFix
 import io.github.nexgus.jiudge.core.location.LocationProvider
 import io.github.nexgus.jiudge.core.mapdata.DownloadService
 import io.github.nexgus.jiudge.core.mapdata.DownloadState
@@ -93,8 +101,12 @@ import io.github.nexgus.jiudge.feature.identify.SymbolIdentifier
 import io.github.nexgus.jiudge.feature.identify.SymbolTable
 import io.github.nexgus.jiudge.feature.map.CurrentLocationLayer
 import io.github.nexgus.jiudge.feature.map.LocationInfoDialog
+import io.github.nexgus.jiudge.feature.map.MapBearingMode
+import io.github.nexgus.jiudge.feature.map.MapBearingPrefs
+import io.github.nexgus.jiudge.feature.map.MapFollow
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.map.SearchPeakMarkerLayer
+import io.github.nexgus.jiudge.feature.map.applyMapBearing
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
@@ -117,6 +129,7 @@ import kotlinx.coroutines.withContext
 import org.mapsforge.core.model.LatLong
 import org.mapsforge.core.model.MapPosition
 import org.mapsforge.map.android.view.MapView
+import org.mapsforge.map.model.common.Observer
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -414,6 +427,17 @@ private fun MapScreen(
     // user opens straight onto their location), and re-armed when the recenter FAB is tapped.
     var recenterOnFix by remember { mutableStateOf(locationProvider.hasPermission()) }
 
+    // Map bearing (NORTH_UP vs TRACK_UP). Persisted so the choice survives an app relaunch. Applied to
+    // the MapView on every heading update so TRACK_UP rotation tracks the compass with no extra wiring.
+    var bearingMode by remember { mutableStateOf(MapBearingPrefs.load(context)) }
+    // True while at least one finger is on the map. Pauses the safe-zone follow so an incoming GPS
+    // update does not fight the user's pan/pinch mid-gesture.
+    var userTouching by remember { mutableStateOf(false) }
+    // True when the current-location marker projects inside the MapView's pixel rectangle. Drives the
+    // recentre FAB's lit state (lit only when the map is no longer tracking the marker), and is
+    // recomputed on every map move (mapsforge Observer) and every new fix.
+    var markerInViewport by remember { mutableStateOf(false) }
+
     // Connection-info popup: long-pressing the location marker opens it; the DEM altitude shown there
     // is looked up off the main thread when it opens (independent of the GPS-reported altitude).
     var locationInfoOpen by remember { mutableStateOf(false) }
@@ -503,8 +527,10 @@ private fun MapScreen(
     }
 
     // Feed fixes + heading into the overlay by collecting in an effect (not collectAsState) so the
-    // frequent compass ticks redraw only the map layer, not the whole MapScreen composable.
-    LaunchedEffect(locationLayer) {
+    // frequent compass ticks redraw only the map layer, not the whole MapScreen composable. Also
+    // applies the map bearing on every heading tick: NORTH_UP would only need a one-shot apply, but
+    // TRACK_UP needs it per tick to follow the compass, and re-applying a NULL_ROTATION is cheap.
+    LaunchedEffect(locationLayer, bearingMode) {
         val layer = locationLayer ?: return@LaunchedEffect
         combine(
             locationProvider.fix,
@@ -529,15 +555,58 @@ private fun MapScreen(
                 // Location service off but we still hold a last fix: grey it to mark it stale.
                 frozen = !enabled && fix != null,
             )
-            fix
-        }.collect { fix ->
-            if (recenterOnFix && fix != null) {
-                recenterOnFix = false
-                map.value
-                    ?.model
-                    ?.mapViewPosition
-                    ?.center = LatLong(fix.latitude, fix.longitude)
+            map.value?.let { applyMapBearing(it, bearingMode, trueHeading) }
+        }.collect { }
+    }
+
+    // 1 Hz: per-fix safe-zone follow and first-fix center. Restarted when the MapView is recreated or
+    // when the plan mode changes; entering ROUTE_EDIT (tapping the crosshair to add waypoints)
+    // disables the safe-zone push so the map does not slide under the user's tap.
+    LaunchedEffect(map.value, mode) {
+        val mv = map.value ?: return@LaunchedEffect
+        var lastFix: LocationFix? = null
+        locationProvider.fix.collect { fix ->
+            if (fix == null) {
+                lastFix = null
+                markerInViewport = false
+                return@collect
             }
+            if (recenterOnFix) {
+                // One-shot land-on-marker; takes priority over safe-zone logic since the user
+                // explicitly asked for centring (either at launch or via the recenter FAB).
+                recenterOnFix = false
+                mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
+            } else if (mode != PlanMode.ROUTE_EDIT && !userTouching) {
+                when (val action = MapFollow.evaluate(mv, fix, lastFix)) {
+                    MapFollow.Action.None -> Unit
+                    is MapFollow.Action.Push -> {
+                        if (action.animate) {
+                            mv.model.mapViewPosition.animateTo(action.target)
+                        } else {
+                            mv.model.mapViewPosition.center = action.target
+                        }
+                    }
+                }
+            }
+            // Refresh the recentre-button highlight after any pan we just performed.
+            markerInViewport = MapFollow.isMarkerInViewport(mv, fix)
+            lastFix = fix
+        }
+    }
+
+    // Map-move observer: pan / zoom / rotate by the user changes whether the marker projects inside
+    // the viewport, so the recentre button's lit state needs to refresh independently of fix updates.
+    DisposableEffect(map.value) {
+        val mv = map.value
+        if (mv == null) {
+            onDispose {}
+        } else {
+            val observer =
+                Observer {
+                    markerInViewport = MapFollow.isMarkerInViewport(mv, locationProvider.fix.value)
+                }
+            mv.model.mapViewPosition.addObserver(observer)
+            onDispose { mv.model.mapViewPosition.removeObserver(observer) }
         }
     }
 
@@ -598,9 +667,21 @@ private fun MapScreen(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                RudyMapView.create(ctx, mapDir).also {
-                    onMapCreated(it)
-                    map.value = it
+                RudyMapView.create(ctx, mapDir).also { mv ->
+                    // Observe touches so the safe-zone follow pauses while a finger (or two) is down,
+                    // and resumes only when every pointer has lifted - keeping multi-touch pinches
+                    // covered. Returning false lets mapsforge's own gesture handling run unchanged.
+                    mv.setOnTouchListener { _, event ->
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> userTouching = true
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                                userTouching = false
+                            else -> Unit
+                        }
+                        false
+                    }
+                    onMapCreated(mv)
+                    map.value = mv
                 }
             },
         )
@@ -643,11 +724,11 @@ private fun MapScreen(
                         FloatingActionButtonDefaults.containerColor
                     },
             ) {
-                Text(text = "?", fontSize = 24.sp)
+                Icon(imageVector = Icons.Filled.QuestionMark, contentDescription = "辨識地圖符號")
             }
             // Peak-name search: opens a dialog to look up a summit and centre the map on it.
             SmallFloatingActionButton(onClick = { openSearch() }) {
-                Text(text = "🔍", fontSize = 20.sp)
+                Icon(imageVector = Icons.Filled.Search, contentDescription = "搜尋山名")
             }
         }
 
@@ -767,23 +848,43 @@ private fun MapScreen(
             }
         }
 
-        // Recenter-on-me button, bottom-end, on the same baseline as the bottom-start controls (same
-        // padding, no extra inset) so they share one horizontal line. Hidden during identify and route
-        // editing so it does not collide with their bottom bars; highlighted only when location is
-        // both granted and the service is on.
+        // Bottom-end controls, stacked: bearing-mode toggle on top, recenter FAB below. Sit on the
+        // same baseline as the bottom-start controls (same padding) so the recenter button shares one
+        // horizontal line with them; the bearing toggle stacks above. Hidden during identify and route
+        // editing so it does not collide with their bottom bars. The recenter button is highlighted
+        // only when the map is no longer tracking the marker (the marker has drifted off-viewport or
+        // there is no fix yet); otherwise it is dimmed to signal "already following".
         if (!identifyMode &&
             identifyResult == null &&
             identifyCandidates == null &&
             mode != PlanMode.ROUTE_EDIT
         ) {
-            MyLocationButton(
-                onClick = { recenterOnCurrentLocation() },
-                active = locationGranted && serviceEnabled,
+            Column(
                 modifier =
                     Modifier
                         .align(Alignment.BottomEnd)
                         .padding(16.dp),
-            )
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                BearingModeButton(
+                    mode = bearingMode,
+                    onToggle = {
+                        val next =
+                            if (bearingMode == MapBearingMode.NORTH_UP) {
+                                MapBearingMode.TRACK_UP
+                            } else {
+                                MapBearingMode.NORTH_UP
+                            }
+                        bearingMode = next
+                        MapBearingPrefs.save(context, next)
+                    },
+                )
+                MyLocationButton(
+                    onClick = { recenterOnCurrentLocation() },
+                    active = locationGranted && serviceEnabled && !markerInViewport,
+                )
+            }
         }
 
         // Crosshair only while editing a route (independent of the bottom controls row).
@@ -1091,8 +1192,9 @@ private fun MapScreen(
 
 /**
  * "Recenter on my location" FAB. Tapping requests location permission the first time, then centers
- * the map on the current fix. [active] highlights it once location is on, matching the identify
- * toggle's lit state.
+ * the map on the current fix. [active] highlights it only when the map is no longer tracking the
+ * marker, so it acts as both a button and a "needs your attention" indicator. Uses the small FAB
+ * variant so it sits at the same size as every other map-screen control button.
  */
 @Composable
 private fun MyLocationButton(
@@ -1100,7 +1202,7 @@ private fun MyLocationButton(
     active: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    FloatingActionButton(
+    SmallFloatingActionButton(
         onClick = onClick,
         modifier = modifier,
         containerColor =
@@ -1110,8 +1212,37 @@ private fun MyLocationButton(
                 FloatingActionButtonDefaults.containerColor
             },
     ) {
-        // U+25CE bullseye - a "locate me" glyph, consistent with the app's text-based FAB icons.
-        Text(text = "◎", fontSize = 24.sp)
+        Icon(imageVector = Icons.Filled.MyLocation, contentDescription = "回到目前位置")
+    }
+}
+
+/**
+ * Map-bearing toggle (NORTH_UP vs TRACK_UP). Shows the *currently active* mode's icon: a fixed north
+ * arrow for NORTH_UP, the rotating compass needle for TRACK_UP. TRACK_UP gets the accent fill since
+ * it is the "engaged" rotating mode that the user normally wants to be aware of; NORTH_UP is the
+ * resting default and uses the standard FAB fill.
+ */
+@Composable
+private fun BearingModeButton(
+    mode: MapBearingMode,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val accent = mode == MapBearingMode.TRACK_UP
+    SmallFloatingActionButton(
+        onClick = onToggle,
+        modifier = modifier,
+        containerColor =
+            if (accent) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                FloatingActionButtonDefaults.containerColor
+            },
+    ) {
+        Icon(
+            imageVector = if (accent) Icons.Filled.Explore else Icons.Filled.North,
+            contentDescription = if (accent) "地圖隨方向旋轉 (按下切回北方朝上)" else "北方朝上 (按下切為隨方向旋轉)",
+        )
     }
 }
 

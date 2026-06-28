@@ -5,9 +5,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
@@ -20,12 +23,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.nexgus.jiudge.BuildConfig
 
 // The map screen's overflow ("⋮") menu and its "關於" dialog. The button mirrors the other floating
-// map controls (a FloatingActionButton with a glyph, no icon dependency). The "檢查地圖更新" entry is
-// a placeholder until the Phase 3 update mechanism lands.
+// map controls (a SmallFloatingActionButton with a Material icon). The "檢查地圖更新" entry is a
+// placeholder until the Phase 3 update mechanism lands.
 
 /** App version as `<versionName>+<gitHash>` (semver build metadata), suffixed `-dirty` if built from an unclean tree. */
 private fun appVersionLabel(): String {
@@ -44,7 +46,7 @@ fun MainMenuButton(
         onClick = { expanded = true },
         modifier = modifier,
     ) {
-        Text(text = "⋮", fontSize = 24.sp)
+        Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "主選單")
     }
     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
         DropdownMenuItem(
