@@ -1068,8 +1068,30 @@ private fun MapScreen(
                 // otherwise cause.
                 RecordingBottomBar(
                     onStop = {
+                        // Capture the in-memory polyline before stop() clears it, so we can
+                        // immediately re-render it in the blue history-view style underneath the
+                        // save dialog. The temporary RecordedTrack here carries timeMs=0 placeholders
+                        // - it is purely for the layer; the dialog flow below overwrites it with the
+                        // real loaded track (on save) or the original source (on discard of a
+                        // continuation), so the placeholder timestamps never reach the user.
+                        val livePoints = recorder.points.value
                         val session = recorder.stop()
                         if (session != null) {
+                            historyTrack =
+                                RecordedTrack(
+                                    name = session.defaultName,
+                                    createdAtEpochMs = session.startEpochMs,
+                                    points =
+                                        livePoints.map { p ->
+                                            RecordedTrack.Point(
+                                                latitude = p.latitude,
+                                                longitude = p.longitude,
+                                                timeMs = 0L,
+                                            )
+                                        },
+                                )
+                            historyTrackFile = null
+                            viewingHistory = true
                             pendingRecordingSession = session
                             saveTrackNameDraft = session.defaultName
                             showSaveTrack = true
@@ -1459,7 +1481,17 @@ private fun MapScreen(
                     withStorageAccess {
                         scope.launch {
                             try {
-                                withContext(Dispatchers.IO) { recorder.finalize(session, name) }
+                                val savedFile = withContext(Dispatchers.IO) { recorder.finalize(session, name) }
+                                // Stop now leaves the just-saved track on screen in the blue
+                                // history-view style with the 繼續錄製 / 離開 controls (gui-redesign:
+                                // stopping should not erase what was just recorded). Reload from the
+                                // finalised file so historyTrack carries the real timestamps and
+                                // historyTrackFile points at a public file 繼續錄製 can hand to
+                                // recorder.startContinuation.
+                                val loaded = withContext(Dispatchers.IO) { trackStore.load(savedFile) }
+                                historyTrack = loaded
+                                historyTrackFile = savedFile
+                                viewingHistory = true
                                 pendingRecordingSession = null
                                 saveTrackNameDraft = null
                                 snackbarHostState.showSnackbar("已儲存軌跡: $name")
@@ -1490,6 +1522,29 @@ private fun MapScreen(
                 if (session != null) {
                     scope.launch {
                         withContext(Dispatchers.IO) { recorder.discard(session) }
+                        // A discarded continuation still has its original source file intact, so
+                        // fall back to viewing that original (blue overlay + 繼續錄製 / 離開) - the
+                        // user discarded only the newly added extension, not the underlying track.
+                        // A discarded fresh recording has no source to fall back to; clear the
+                        // viewer entirely and let the default map-view controls return.
+                        val source = session.source
+                        if (session.isContinuation && source != null) {
+                            try {
+                                val loaded = withContext(Dispatchers.IO) { trackStore.load(source) }
+                                historyTrack = loaded
+                                historyTrackFile = source
+                                viewingHistory = true
+                            } catch (e: Exception) {
+                                historyTrack = null
+                                historyTrackFile = null
+                                viewingHistory = false
+                                snackbarHostState.showSnackbar("回復原始軌跡失敗: ${e.message}")
+                            }
+                        } else {
+                            historyTrack = null
+                            historyTrackFile = null
+                            viewingHistory = false
+                        }
                         pendingRecordingSession = null
                         saveTrackNameDraft = null
                     }
