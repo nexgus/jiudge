@@ -20,7 +20,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import io.github.nexgus.jiudge.MainActivity
 import io.github.nexgus.jiudge.feature.recording.defaultRecordingName
@@ -57,8 +56,6 @@ class RecordingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var subscribed = false
     private var startedForeground = false
-    private var activeSessionDisplayName: String = ""
-    private var lastNotifiedPointCount: Int = -1
 
     private val locationManager: LocationManager
         get() = applicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -121,7 +118,6 @@ class RecordingService : Service() {
     private fun startNewSession() {
         if (RecordingController.active) {
             // Activity may resend START on rotation / re-entry; do not stack sessions.
-            refreshNotification()
             return
         }
         if (!ensureBackgroundLocation()) return
@@ -142,7 +138,6 @@ class RecordingService : Service() {
 
     private fun startContinuationSession(intent: Intent) {
         if (RecordingController.active) {
-            refreshNotification()
             return
         }
         val path = intent.getStringExtra(EXTRA_SOURCE_PATH)
@@ -167,10 +162,8 @@ class RecordingService : Service() {
     }
 
     private fun beginForeground(displayName: String) {
-        activeSessionDisplayName = displayName
-        startAsForeground(buildNotification(displayName, pointCount = 0))
+        startAsForeground(buildNotification(displayName))
         startedForeground = true
-        lastNotifiedPointCount = 0
         acquireWakeLock()
     }
 
@@ -225,20 +218,7 @@ class RecordingService : Service() {
             // Disk failure mid-session: stop cleanly rather than spinning forever appending to a
             // file we cannot write. The session is left as pending so the activity surfaces it.
             handleStop()
-            return
         }
-        val count = RecordingController.points.value.size
-        // Throttle: every 10 points (~10 s at 1 Hz) is fine for a glance-at-the-status notification
-        // and saves the NotificationManager churn on rapid fix arrival.
-        if (count - lastNotifiedPointCount >= NOTIFY_EVERY_N_POINTS) {
-            lastNotifiedPointCount = count
-            refreshNotification()
-        }
-    }
-
-    private fun refreshNotification() {
-        val count = RecordingController.points.value.size
-        notify(buildNotification(activeSessionDisplayName, count))
     }
 
     private fun ensureBackgroundLocation(): Boolean {
@@ -258,12 +238,6 @@ class RecordingService : Service() {
         }
     }
 
-    private fun notify(notification: Notification) {
-        if (NotificationManagerCompat.from(this).areNotificationsEnabled()) {
-            NotificationManagerCompat.from(this).notify(NOTIF_ID, notification)
-        }
-    }
-
     private fun acquireWakeLock() {
         val wl =
             wakeLock ?: (applicationContext.getSystemService(POWER_SERVICE) as PowerManager)
@@ -280,19 +254,28 @@ class RecordingService : Service() {
     }
 
     private fun createChannel() {
+        val nm = getSystemService(NotificationManager::class.java)
+        // Channel attributes are frozen at first creation; deleting the old LOW channel forces the
+        // new DEFAULT-importance + silent + public-lockscreen channel to take effect on devices
+        // that already had the previous version installed. LOW notifications were grouped into the
+        // silent section and hidden on the Pixel lock screen.
+        nm.deleteNotificationChannel(LEGACY_CHANNEL_ID)
         val channel =
             NotificationChannel(
                 CHANNEL_ID,
                 "軌跡錄製",
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "錄製軌跡時顯示進度" }
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = "錄製軌跡時顯示進度"
+                setSound(null, null)
+                enableVibration(false)
+                vibrationPattern = null
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+        nm.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(
-        displayName: String,
-        pointCount: Int,
-    ): Notification {
+    private fun buildNotification(displayName: String): Notification {
         val openApp =
             PendingIntent.getActivity(
                 this,
@@ -310,17 +293,19 @@ class RecordingService : Service() {
         return NotificationCompat
             .Builder(this, CHANNEL_ID)
             .setContentTitle("錄製軌跡中")
-            .setContentText("$displayName - 已記錄 $pointCount 點")
+            .setContentText(displayName)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(openApp)
             .addAction(0, "停止", stop)
             .build()
     }
 
     companion object {
-        private const val CHANNEL_ID = "recording_session"
+        private const val CHANNEL_ID = "recording_session_v2"
+        private const val LEGACY_CHANNEL_ID = "recording_session"
         private const val NOTIF_ID = 2001
         private const val WAKELOCK_TAG = "Jiudge:RecordingService"
         private const val ACTION_START_NEW = "io.github.nexgus.jiudge.action.START_NEW_RECORDING"
@@ -331,7 +316,6 @@ class RecordingService : Service() {
         // 1 Hz GPS - matches the rate the foreground LocationProvider already uses for the marker.
         private const val MIN_TIME_MS = 1_000L
         private const val MIN_DISTANCE_M = 0f
-        private const val NOTIFY_EVERY_N_POINTS = 10
 
         /** Starts a brand-new recording. Call from the foreground (activity). */
         fun startNew(context: Context) {
