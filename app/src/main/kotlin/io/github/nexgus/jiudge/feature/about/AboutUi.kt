@@ -1,10 +1,13 @@
 package io.github.nexgus.jiudge.feature.about
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
@@ -20,9 +23,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import io.github.nexgus.jiudge.BuildConfig
 
 // The map screen's overflow ("⋮") menu and its "關於" dialog. The button mirrors the other floating
@@ -84,16 +94,27 @@ fun AboutDialog(
             TextButton(onClick = onDismiss) { Text("關閉") }
         },
         title = {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = "有關於 Jiudge",
-                    style = MaterialTheme.typography.headlineSmall,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AppIconImage(
+                    modifier =
+                        Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(12.dp)),
                 )
-                Text(
-                    text = "極簡風格路徑規劃與軌跡錄製應用程式",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "有關於 Jiudge",
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+                    Text(
+                        text = "極簡風格路徑規劃與軌跡錄製應用程式",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
         text = {
@@ -103,6 +124,23 @@ fun AboutDialog(
             }
         },
     )
+}
+
+// Renders the current launcher icon (the one manifest's android:icon resolves to). Goes through
+// PackageManager rather than referencing R.mipmap.ic_launcher_foreground / ic_launcher_background
+// directly, so swapping the launcher icon (vector, single PNG, different adaptive layers, ...)
+// updates this dialog automatically without code changes.
+@Composable
+private fun AppIconImage(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val sizePx = with(LocalDensity.current) { 56.dp.roundToPx() }
+    val painter =
+        remember(context, sizePx) {
+            val drawable = context.packageManager.getApplicationIcon(context.applicationInfo)
+            val bitmap = drawable.toBitmap(width = sizePx, height = sizePx)
+            BitmapPainter(bitmap.asImageBitmap())
+        }
+    Image(painter = painter, contentDescription = null, modifier = modifier)
 }
 
 @Composable
