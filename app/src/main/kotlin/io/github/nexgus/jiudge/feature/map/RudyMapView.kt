@@ -67,11 +67,12 @@ object RudyMapView {
         // integer zoom level when the fingers lift. This global flag keeps the intermediate scale,
         // so the map zooms smoothly to any magnification instead of jumping to fixed steps.
         //
-        // Known trade-off: mapsforge composites every layer into a single frame buffer bitmap that
-        // is then stretched by the current fractional scale, so labels and icons baked into that
-        // bitmap visibly grow with the map until the next integer zoom is crossed and the basemap
-        // is re-rendered. Smooth zoom is the priority here; the stretched-label artefact is an
-        // accepted cost until a finer-grained re-render trigger is found.
+        // Labels and icons are kept OUT of the tile bitmap (renderLabels = false on the tile layer
+        // below, cacheLabels = true so the label store is still populated). LabelOverlayView reads
+        // from that store and draws them in screen space on top of MapView, so they keep their
+        // theme-defined sizes during fractional zoom instead of being stretched with the tile
+        // bitmap. Basemap geometry (roads, polygons, contours) still rasterises into the tile
+        // bitmap and will stretch up to 2x before the next integer-zoom re-raster.
         Parameters.FRACTIONAL_ZOOM = true
 
         val mapView =
@@ -103,8 +104,8 @@ object RudyMapView {
                 MapFile(File(mapDir, BASEMAP_NAME)),
                 mapView.model.mapViewPosition,
                 false, // isTransparent
-                true, // renderLabels
-                true, // cacheLabels
+                false, // renderLabels - LabelOverlayView draws labels in screen space instead
+                true, // cacheLabels - keep populating the label store for LabelOverlayView to read
                 AndroidGraphicFactory.INSTANCE,
                 buildHillsConfig(mapDir),
             ).apply {

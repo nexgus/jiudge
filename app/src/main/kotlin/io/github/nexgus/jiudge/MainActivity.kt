@@ -105,6 +105,7 @@ import io.github.nexgus.jiudge.feature.identify.IdentifyResultCard
 import io.github.nexgus.jiudge.feature.identify.SymbolIdentifier
 import io.github.nexgus.jiudge.feature.identify.SymbolTable
 import io.github.nexgus.jiudge.feature.map.CurrentLocationLayer
+import io.github.nexgus.jiudge.feature.map.LabelOverlayView
 import io.github.nexgus.jiudge.feature.map.LocationInfoDialog
 import io.github.nexgus.jiudge.feature.map.MapBearingMode
 import io.github.nexgus.jiudge.feature.map.MapBearingPrefs
@@ -899,6 +900,16 @@ private fun MapScreen(
                 }
             },
         )
+
+        // Labels drawn in screen space on top of the MapView, decoupled from the frame buffer's
+        // matrix scale so they keep their theme-defined size during fractional zoom. The overlay
+        // is non-clickable, so touches fall through to MapView below.
+        map.value?.let { mv ->
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx -> LabelOverlayView(ctx, mv) },
+            )
+        }
 
         // Driven by the measured banner-stack height: 0 when nothing is shown (empty column), so the
         // controls sit flush at the top and drop only while a banner is up.
