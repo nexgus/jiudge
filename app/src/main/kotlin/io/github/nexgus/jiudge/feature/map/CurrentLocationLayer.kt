@@ -11,7 +11,9 @@ import org.mapsforge.core.model.Rotation
 import org.mapsforge.core.util.MercatorProjection
 import org.mapsforge.map.android.graphics.AndroidGraphicFactory
 import org.mapsforge.map.layer.Layer
+import org.mapsforge.map.model.MapViewPosition
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.sin
 
 /**
@@ -31,6 +33,13 @@ import kotlin.math.sin
  */
 class CurrentLocationLayer(
     private val density: Float,
+    /**
+     * Source of the current `scaleFactor`, read each frame to compensate for the frame buffer's
+     * matrix stretch during fractional zoom: every fixed-dp marker dimension is divided by
+     * `scaleFactor / 2^zoomLevel` so the on-screen size stays constant instead of being stretched
+     * up to 2x along with the tile bitmap.
+     */
+    private val mapViewPosition: MapViewPosition,
     /** Invoked when the marker itself is long-pressed; null disables the gesture. */
     private val onMarkerLongPress: (() -> Unit)? = null,
 ) : Layer() {
@@ -69,16 +78,17 @@ class CurrentLocationLayer(
     private val factory = AndroidGraphicFactory.INSTANCE
 
     // Colour is chosen per draw from the fix source, so the fills below are created blank and have
-    // their colour set each frame; only the stale-grey and the white borders are fixed.
+    // their colour set each frame; only the stale-grey and the white borders are fixed. Stroke
+    // widths are set per frame so they can be inverse-scaled against the frame buffer's stretch.
     private val dotFill = fill()
-    private val dotStroke = stroke(0xFFFFFFFF.toInt(), 1.5f)
+    private val dotStroke = stroke(0xFFFFFFFF.toInt())
     private val frozenFill = solid(0xFF9E9E9E.toInt()) // grey: the fix is stale (location service off)
-    private val frozenStroke = stroke(0xFFFFFFFF.toInt(), 1.5f)
+    private val frozenStroke = stroke(0xFFFFFFFF.toInt())
     private val accuracyFill = fill()
-    private val accuracyStroke = stroke(0xFFFFFFFF.toInt(), 1.5f)
+    private val accuracyStroke = stroke(0xFFFFFFFF.toInt())
     private val coneFill = fill()
     private val arrowFill = fill()
-    private val arrowStroke = stroke(0xFFFFFFFF.toInt(), 2f)
+    private val arrowStroke = stroke(0xFFFFFFFF.toInt())
 
     /**
      * Replaces the drawn marker. Resolves which direction indicator to show: the compass cone when
@@ -160,31 +170,47 @@ class CurrentLocationLayer(
         lastTopLeftX = topLeftPoint.x
         lastTopLeftY = topLeftPoint.y
 
+        // Inverse of the frame buffer's fractional stretch (scaleFactor / 2^zoomLevel, in [1, 2)).
+        // Every fixed-dp dimension is multiplied by `inv` before being submitted to the canvas, so
+        // when the frame buffer composites the layer it cancels back to the theme-defined dp.
+        val baseScale = 2.0.pow(zoomLevel.toInt())
+        val scaleRatio = if (baseScale > 0) mapViewPosition.scaleFactor / baseScale else 1.0
+        val inv = if (scaleRatio > 0) 1.0 / scaleRatio else 1.0
+
         if (state.showAccuracy && fix.accuracyMeters != null) {
+            // Accuracy radius is metres-based: `metresPerPixel @ zoomLevel * scaleRatio` already
+            // matches `metresPerPixel @ fractional zoom`, so the radius needs no compensation.
+            // The stroke does - it is a fixed-dp width, so apply `inv` to keep it constant.
             val metresPerPixel = MercatorProjection.calculateGroundResolution(fix.latitude, mapSize)
             val radius = (fix.accuracyMeters / metresPerPixel).toInt()
             if (radius > 0) {
                 accuracyFill.setColor((ACCURACY_FILL_ALPHA shl 24) or baseRgb)
                 accuracyStroke.setColor((ACCURACY_STROKE_ALPHA shl 24) or baseRgb)
+                accuracyStroke.setStrokeWidth((ACCURACY_STROKE_DP * density * inv).toFloat())
                 canvas.drawCircle(cx.toInt(), cy.toInt(), radius, accuracyFill)
                 canvas.drawCircle(cx.toInt(), cy.toInt(), radius, accuracyStroke)
             }
         }
 
         when (state.mode) {
-            DirectionMode.CONE -> drawCone(canvas, cx, cy, state.directionDeg, state.coneHalfAngleDeg, baseRgb)
-            DirectionMode.ARROW -> drawArrow(canvas, cx, cy, state.directionDeg, baseRgb)
+            DirectionMode.CONE -> drawCone(canvas, cx, cy, state.directionDeg, state.coneHalfAngleDeg, baseRgb, inv)
+            DirectionMode.ARROW -> drawArrow(canvas, cx, cy, state.directionDeg, baseRgb, inv)
             DirectionMode.NONE -> Unit
         }
 
-        val dotRadius = (DOT_RADIUS_DP * density).toInt()
+        val dotRadius = (DOT_RADIUS_DP * density * inv).toInt()
         val fill =
             if (state.frozen) {
                 frozenFill
             } else {
                 dotFill.also { it.setColor(0xFF000000.toInt() or baseRgb) }
             }
-        val border = if (state.frozen) frozenStroke else dotStroke
+        val border =
+            if (state.frozen) {
+                frozenStroke.also { it.setStrokeWidth((DOT_STROKE_DP * density * inv).toFloat()) }
+            } else {
+                dotStroke.also { it.setStrokeWidth((DOT_STROKE_DP * density * inv).toFloat()) }
+            }
         canvas.drawCircle(cx.toInt(), cy.toInt(), dotRadius, fill)
         canvas.drawCircle(cx.toInt(), cy.toInt(), dotRadius, border)
     }
@@ -203,9 +229,10 @@ class CurrentLocationLayer(
         headingDeg: Float,
         halfAngleDeg: Float,
         baseRgb: Int,
+        inv: Double,
     ) {
         coneFill.setColor((CONE_LAYER_ALPHA shl 24) or baseRgb)
-        val maxRadius = CONE_RADIUS_DP * density
+        val maxRadius = (CONE_RADIUS_DP * density * inv).toFloat()
         val step = (2 * halfAngleDeg) / CONE_SEGMENTS
         var layer = CONE_LAYERS
         while (layer >= 1) {
@@ -236,10 +263,12 @@ class CurrentLocationLayer(
         cy: Double,
         headingDeg: Float,
         baseRgb: Int,
+        inv: Double,
     ) {
         arrowFill.setColor(0xFF000000.toInt() or baseRgb)
-        val length = ARROW_LENGTH_DP * density
-        val halfWidth = ARROW_HALF_WIDTH_DP * density
+        arrowStroke.setStrokeWidth((ARROW_STROKE_DP * density * inv).toFloat())
+        val length = (ARROW_LENGTH_DP * density * inv).toFloat()
+        val halfWidth = (ARROW_HALF_WIDTH_DP * density * inv).toFloat()
         val rad = Math.toRadians(headingDeg.toDouble())
         val fx = sin(rad)
         val fy = -cos(rad)
@@ -272,18 +301,20 @@ class CurrentLocationLayer(
             setStyle(Style.FILL)
         }
 
-    private fun stroke(
-        color: Int,
-        widthDp: Float,
-    ): Paint =
+    private fun stroke(color: Int): Paint =
         factory.createPaint().apply {
             setColor(color)
-            setStrokeWidth(widthDp * density)
             setStyle(Style.STROKE)
         }
 
     private companion object {
         const val DOT_RADIUS_DP = 7f
+
+        // White outlines around the dot, accuracy circle, and arrow. Set per-frame so the inverse
+        // scale can compensate for the frame buffer's fractional stretch.
+        const val DOT_STROKE_DP = 1.5f
+        const val ACCURACY_STROKE_DP = 1.5f
+        const val ARROW_STROKE_DP = 2f
 
         // Long-press hit radius around the dot centre; generous enough to forgive a fingertip's miss.
         const val TOUCH_RADIUS_DP = 24f

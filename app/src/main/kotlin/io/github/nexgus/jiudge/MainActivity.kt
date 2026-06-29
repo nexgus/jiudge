@@ -588,8 +588,11 @@ private fun MapScreen(
     val locationLayer =
         remember(map.value) {
             map.value?.let { mv ->
-                CurrentLocationLayer(density, onMarkerLongPress = { locationInfoOpen = true })
-                    .also { mv.layerManager.layers.add(it) }
+                CurrentLocationLayer(
+                    density = density,
+                    mapViewPosition = mv.model.mapViewPosition,
+                    onMarkerLongPress = { locationInfoOpen = true },
+                ).also { mv.layerManager.layers.add(it) }
             }
         }
 
