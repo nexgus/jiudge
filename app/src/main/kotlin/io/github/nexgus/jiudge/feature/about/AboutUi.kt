@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
@@ -80,11 +79,23 @@ fun AboutDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("關閉") }
         },
-        title = { Text("關於 Jiudge") },
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "有關於 Jiudge",
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    text = "簡單好用的軌跡錄製與路徑規劃",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                AboutRow(label = "應用程式版本", value = appVersionLabel())
-                AboutRow(label = "地圖資料版本", value = mapVersion?.let { "v$it" } ?: "未知")
+                AboutRow(label = "版本", value = appVersionLabel())
+                AboutRow(label = "圖資", value = mapVersion?.let { "v$it" } ?: "未知")
             }
         },
     )
@@ -97,14 +108,17 @@ private fun AboutRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(start = 16.dp),
         )
     }
 }
