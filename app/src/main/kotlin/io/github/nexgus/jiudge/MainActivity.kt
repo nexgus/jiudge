@@ -84,6 +84,8 @@ import io.github.nexgus.jiudge.core.mapdata.DownloadState
 import io.github.nexgus.jiudge.core.mapdata.MapDataCatalog
 import io.github.nexgus.jiudge.core.mapdata.MapDataDownload
 import io.github.nexgus.jiudge.core.mapdata.MapVersion
+import io.github.nexgus.jiudge.core.recording.RecordingController
+import io.github.nexgus.jiudge.core.recording.RecordingService
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.routing.BRouterProfile
 import io.github.nexgus.jiudge.core.routing.ToughPathDetector
@@ -124,6 +126,7 @@ import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import io.github.nexgus.jiudge.feature.planning.SearchTargetControls
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
+import io.github.nexgus.jiudge.feature.recording.BackgroundLocationRationaleDialog
 import io.github.nexgus.jiudge.feature.recording.DeleteTrackDialog
 import io.github.nexgus.jiudge.feature.recording.DiscardRecordingDialog
 import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_COLOR
@@ -136,7 +139,6 @@ import io.github.nexgus.jiudge.feature.recording.Recorder
 import io.github.nexgus.jiudge.feature.recording.RecordingBottomBar
 import io.github.nexgus.jiudge.feature.recording.RenameTrackDialog
 import io.github.nexgus.jiudge.feature.recording.SaveTrackDialog
-import io.github.nexgus.jiudge.feature.recording.defaultRecordingName
 import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
@@ -147,6 +149,14 @@ import org.mapsforge.core.model.MapPosition
 import org.mapsforge.map.android.view.MapView
 import org.mapsforge.map.model.common.Observer
 import java.io.File
+
+/**
+ * A held-over recording start request waiting for the permission flow to finish. A null
+ * [continuationSource] means a brand-new recording; non-null means continue that saved track.
+ */
+private data class PendingRecordingStart(
+    val continuationSource: File?,
+)
 
 class MainActivity : ComponentActivity() {
     private var mapView: MapView? = null
@@ -377,13 +387,16 @@ private fun MapScreen(
     // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
     var saveNameDraft by remember { mutableStateOf<String?>(null) }
 
-    // Recording session - the shell-layer track recorder. Owns the in-memory polyline that drives
-    // the red-chevron overlay, gates writes by the recording state, and holds the staging file the
-    // save dialog will finalise. v1 reads from the existing foreground GPS subscription; foreground
-    // service / wake lock for background recording is out of scope (see CLAUDE.md).
-    val recorder = remember(trackStore) { Recorder(trackStore) }
-    val recordingState by recorder.state.collectAsState()
-    val recordedPoints by recorder.points.collectAsState()
+    // Recording session - driven by [RecordingService] (foreground service + PARTIAL_WAKE_LOCK so
+    // the track keeps being written with the screen off and the process in Doze). The activity
+    // does not hold the [Recorder] directly: it goes through [RecordingController] for state
+    // (overlay polyline, save-dialog trigger) and through service intents for start / stop.
+    val recordingState by RecordingController.state.collectAsState()
+    val recordedPoints by RecordingController.points.collectAsState()
+    // Set when the service stops mid-session (either via the bottom-bar button or the
+    // notification's stop action); drives the save / discard dialog flow.
+    val pendingRecordingSession by RecordingController.pendingSession.collectAsState()
+    val pendingSessionPoints by RecordingController.lastSessionPoints.collectAsState()
 
     // Dialog flags for the recording flow. saveTrackNameDraft mirrors saveNameDraft - preserved
     // across a rejected duplicate so the reopened dialog prefills the typed name for editing.
@@ -394,8 +407,11 @@ private fun MapScreen(
     var renameTrackTarget by remember { mutableStateOf<TrackStore.Summary?>(null) }
     var deleteTrackTarget by remember { mutableStateOf<TrackStore.Summary?>(null) }
     var saveTrackNameDraft by remember { mutableStateOf<String?>(null) }
-    // Set after stop() succeeds, while the save dialog is up. Cleared on dialog dismiss/finalize.
-    var pendingRecordingSession by remember { mutableStateOf<Recorder.Session?>(null) }
+    // Pending start request held across the permission flow. null source = brand-new recording;
+    // non-null source = continuation of that saved track. Cleared once the service is dispatched
+    // or the user cancels the rationale.
+    var pendingRecordingStart by remember { mutableStateOf<PendingRecordingStart?>(null) }
+    var showBackgroundLocationRationale by remember { mutableStateOf(false) }
 
     // History-track viewing state. historyTrack holds the loaded RecordedTrack (null when nothing is
     // loaded); historyTrackFile is the on-disk file it was loaded from (kept so 繼續錄製 can hand it
@@ -461,6 +477,75 @@ private fun MapScreen(
         } else {
             pendingStorageAction = action
             showStorageRationale = true
+        }
+    }
+
+    // Recording-start permission flow: POST_NOTIFICATIONS on Android 13+ (asked inline; the service
+    // still works without it, the notification is just hidden), then ACCESS_BACKGROUND_LOCATION on
+    // Android 10+ (the OS refuses to grant this via inline dialog on Android 11+, so we walk the
+    // user to the system settings page via [BackgroundLocationRationaleDialog]).
+    fun dispatchPendingStart() {
+        val pending = pendingRecordingStart ?: return
+        val src = pending.continuationSource
+        if (src == null) {
+            RecordingService.startNew(context)
+        } else {
+            RecordingService.startContinuation(context, src)
+        }
+        pendingRecordingStart = null
+    }
+
+    fun proceedAfterNotifPermission() {
+        if (pendingRecordingStart == null) return
+        val needsBg =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+                ) != PackageManager.PERMISSION_GRANTED
+        if (needsBg) {
+            showBackgroundLocationRationale = true
+            return
+        }
+        dispatchPendingStart()
+    }
+
+    val recordingNotifPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+            // Whether or not the user granted POST_NOTIFICATIONS, proceed with the next step:
+            // the foreground service is still allowed to run; the notification is just hidden.
+            proceedAfterNotifPermission()
+        }
+
+    // ACCESS_BACKGROUND_LOCATION via the runtime contract: Android 10 shows an inline dialog with
+    // the "Allow all the time" option; Android 11+ jumps to the App's location-permission page
+    // (one screen, four radios) - much shallower than ACTION_APPLICATION_DETAILS_SETTINGS, and the
+    // result comes back here so we can auto-resume the pending start without making the user tap
+    // the record button again.
+    val recordingBackgroundLocationLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                dispatchPendingStart()
+            } else {
+                pendingRecordingStart = null
+                scope.launch {
+                    snackbarHostState.showSnackbar("未取得背景定位權限, 無法在螢幕關閉時持續錄製")
+                }
+            }
+        }
+
+    fun requestStartRecording(continuationSource: File?) {
+        pendingRecordingStart = PendingRecordingStart(continuationSource)
+        val needsNotif =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+        if (needsNotif) {
+            recordingNotifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            proceedAfterNotifPermission()
         }
     }
 
@@ -561,17 +646,31 @@ private fun MapScreen(
         map.value?.layerManager?.redrawLayers()
     }
 
-    // Feed fixes into the recorder while a session is active. The recorder ignores fixes outside
-    // its RECORDING state, so the subscription can stay live without writes leaking through.
-    LaunchedEffect(recorder) {
-        locationProvider.fix.collect { fix ->
-            if (fix != null && recorder.active) {
-                val err = recorder.onFix(fix.latitude, fix.longitude, fix.timeMs)
-                if (err != null) {
-                    val session = recorder.stop()
-                    if (session != null) recorder.discard(session)
-                    snackbarHostState.showSnackbar("軌跡寫入失敗: ${err.message ?: "未知錯誤"}")
-                }
+    // Observe controller.pendingSession - set whenever the service stops (bottom-bar button or
+    // notification stop action). Snapshot the just-recorded polyline into the history-view
+    // overlay and bring up the save dialog. Cleared via RecordingController.clearPending() once
+    // the save / discard flow finishes.
+    LaunchedEffect(Unit) {
+        RecordingController.pendingSession.collect { session ->
+            if (session != null) {
+                val snapshot = RecordingController.lastSessionPoints.value
+                historyTrack =
+                    RecordedTrack(
+                        name = session.defaultName,
+                        createdAtEpochMs = session.startEpochMs,
+                        points =
+                            snapshot.map { p ->
+                                RecordedTrack.Point(
+                                    latitude = p.latitude,
+                                    longitude = p.longitude,
+                                    timeMs = 0L,
+                                )
+                            },
+                    )
+                historyTrackFile = null
+                viewingHistory = true
+                saveTrackNameDraft = session.defaultName
+                showSaveTrack = true
             }
         }
     }
@@ -1068,34 +1167,13 @@ private fun MapScreen(
                 // otherwise cause.
                 RecordingBottomBar(
                     onStop = {
-                        // Capture the in-memory polyline before stop() clears it, so we can
-                        // immediately re-render it in the blue history-view style underneath the
-                        // save dialog. The temporary RecordedTrack here carries timeMs=0 placeholders
-                        // - it is purely for the layer; the dialog flow below overwrites it with the
-                        // real loaded track (on save) or the original source (on discard of a
-                        // continuation), so the placeholder timestamps never reach the user.
-                        val livePoints = recorder.points.value
-                        val session = recorder.stop()
-                        if (session != null) {
-                            historyTrack =
-                                RecordedTrack(
-                                    name = session.defaultName,
-                                    createdAtEpochMs = session.startEpochMs,
-                                    points =
-                                        livePoints.map { p ->
-                                            RecordedTrack.Point(
-                                                latitude = p.latitude,
-                                                longitude = p.longitude,
-                                                timeMs = 0L,
-                                            )
-                                        },
-                                )
-                            historyTrackFile = null
-                            viewingHistory = true
-                            pendingRecordingSession = session
-                            saveTrackNameDraft = session.defaultName
-                            showSaveTrack = true
-                        }
+                        // Hand off to the service - it stops the GPS subscription, calls
+                        // RecordingController.handleStop() (which snapshots points into
+                        // lastSessionPoints and exposes the session via pendingSession), then
+                        // stopSelf()s. The pendingSession observer above brings up the save dialog
+                        // and the history-view overlay, so this path is symmetric with the
+                        // notification's stop action - both end up in the same flow.
+                        RecordingService.stop(context)
                     },
                 )
             } else if (!identifyMode && identifyResult == null) {
@@ -1113,13 +1191,7 @@ private fun MapScreen(
                                     val file = historyTrackFile
                                     if (file != null) {
                                         viewingHistory = false
-                                        scope.launch {
-                                            try {
-                                                withContext(Dispatchers.IO) { recorder.startContinuation(file) }
-                                            } catch (e: Exception) {
-                                                snackbarHostState.showSnackbar("繼續錄製失敗: ${e.message}")
-                                            }
-                                        }
+                                        requestStartRecording(continuationSource = file)
                                     }
                                 },
                                 onLeave = { viewingHistory = false },
@@ -1382,8 +1454,7 @@ private fun MapScreen(
         RecordEntryChooser(
             onNew = {
                 showRecordEntryChooser = false
-                val now = System.currentTimeMillis()
-                recorder.startNew(startEpochMs = now, defaultSaveName = defaultRecordingName(now))
+                requestStartRecording(continuationSource = null)
             },
             onLoad = {
                 showRecordEntryChooser = false
@@ -1481,18 +1552,18 @@ private fun MapScreen(
                     withStorageAccess {
                         scope.launch {
                             try {
-                                val savedFile = withContext(Dispatchers.IO) { recorder.finalize(session, name) }
+                                val savedFile = withContext(Dispatchers.IO) { RecordingController.finalize(session, name) }
                                 // Stop now leaves the just-saved track on screen in the blue
                                 // history-view style with the 繼續錄製 / 離開 controls (gui-redesign:
                                 // stopping should not erase what was just recorded). Reload from the
                                 // finalised file so historyTrack carries the real timestamps and
                                 // historyTrackFile points at a public file 繼續錄製 can hand to
-                                // recorder.startContinuation.
+                                // RecordingService.startContinuation.
                                 val loaded = withContext(Dispatchers.IO) { trackStore.load(savedFile) }
                                 historyTrack = loaded
                                 historyTrackFile = savedFile
                                 viewingHistory = true
-                                pendingRecordingSession = null
+                                RecordingController.clearPending()
                                 saveTrackNameDraft = null
                                 snackbarHostState.showSnackbar("已儲存軌跡: $name")
                             } catch (e: DuplicateTrackNameException) {
@@ -1521,7 +1592,7 @@ private fun MapScreen(
                 showDiscardRecording = false
                 if (session != null) {
                     scope.launch {
-                        withContext(Dispatchers.IO) { recorder.discard(session) }
+                        withContext(Dispatchers.IO) { RecordingController.discard(session) }
                         // A discarded continuation still has its original source file intact, so
                         // fall back to viewing that original (blue overlay + 繼續錄製 / 離開) - the
                         // user discarded only the newly added extension, not the underlying track.
@@ -1545,7 +1616,7 @@ private fun MapScreen(
                             historyTrackFile = null
                             viewingHistory = false
                         }
-                        pendingRecordingSession = null
+                        RecordingController.clearPending()
                         saveTrackNameDraft = null
                     }
                 }
@@ -1553,6 +1624,21 @@ private fun MapScreen(
             onDismiss = {
                 showDiscardRecording = false
                 showSaveTrack = true
+            },
+        )
+    }
+
+    if (showBackgroundLocationRationale) {
+        BackgroundLocationRationaleDialog(
+            onConfirm = {
+                showBackgroundLocationRationale = false
+                // Hand off to the runtime contract - the launcher's callback runs
+                // dispatchPendingStart() on grant, so the user does not have to tap 錄製 again.
+                recordingBackgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            },
+            onDismiss = {
+                showBackgroundLocationRationale = false
+                pendingRecordingStart = null
             },
         )
     }

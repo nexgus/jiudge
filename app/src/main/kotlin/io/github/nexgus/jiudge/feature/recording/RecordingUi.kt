@@ -296,3 +296,30 @@ fun defaultRecordingName(startEpochMs: Long): String {
     val fmt = SimpleDateFormat("yyyy-MM-dd_HHmmss", Locale.getDefault())
     return fmt.format(Date(startEpochMs))
 }
+
+/**
+ * Explains why background location is needed before triggering the system permission flow. Tapping
+ * confirm hands off to the caller's [ActivityResultContracts.RequestPermission] launcher for
+ * `ACCESS_BACKGROUND_LOCATION`: Android 10 surfaces an inline "Allow all the time" dialog, while
+ * Android 11+ jumps the user to the App's location-permission page (a far shallower target than the
+ * App-details page). The dialog is informational only - the launcher call lives in the caller.
+ */
+@Composable
+fun BackgroundLocationRationaleDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("需要背景定位權限") },
+        text = {
+            Text(
+                "為了在螢幕關閉或 App 進入背景時繼續錄製軌跡, 需要 \"一律允許\" 的定位權限. " +
+                    "點選 \"繼續\" 後系統會跳出權限選擇, 請選擇 \"一律允許\". " +
+                    "授權完成回到本 App 後會自動開始錄製.",
+            )
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("繼續") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}

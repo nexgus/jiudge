@@ -6,17 +6,25 @@
     <!-- Foreground service keeps the ~400 MB first-run download alive across screen-off/background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <!-- Long-running background work (map-data download now; background track recording later)
-         must hold PARTIAL_WAKE_LOCK so Doze does not suspend the CPU mid-transfer. WifiLock does
-         not require its own permission. -->
+    <!-- Background track recording runs as a foreground service of type=location so it keeps the
+         GPS subscription alive while the app is backgrounded. Required on Android 14+ for any
+         foreground service that uses the location runtime permission. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Long-running background work (map-data download, background track recording) must hold
+         PARTIAL_WAKE_LOCK so Doze does not suspend the CPU between fixes / mid-transfer. WifiLock
+         does not require its own permission. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Runtime-requested on Android 13+ so the download progress notification is visible. -->
+    <!-- Runtime-requested on Android 13+ so the download / recording notifications are visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Current-location marker on the map. Foreground-only (subscribed while the map is visible,
-         dropped on pause); background track recording will add a foreground service separately. -->
+    <!-- Current-location marker on the map (foreground-only) and background track recording
+         (foreground service). ACCESS_BACKGROUND_LOCATION is required on Android 10+ for the
+         recording service to keep receiving GPS fixes with the app in the background; it must be
+         granted via the system settings page ("Always allow"), which the in-app rationale routes
+         the user to. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- Route plans live in a fixed public folder (Documents/Jiudge) so they survive uninstall and a
          reinstall can re-read them (see CLAUDE.md storage rationale). On Android 11+ this needs All
@@ -49,6 +57,11 @@
             android:name=".core.mapdata.DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".core.recording.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
     </application>
 
 </manifest>
