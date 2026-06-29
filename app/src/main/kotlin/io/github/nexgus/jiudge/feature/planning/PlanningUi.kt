@@ -142,11 +142,11 @@ fun PlanningBottomBar(
 
 /**
  * Map-view mode controls: open a recording session, open the planning entry, or clear the displayed
- * route. "錄製軌跡" stays in place but is disabled when location permission is not yet held - the
+ * overlays. "錄製軌跡" stays in place but is disabled when location permission is not yet held - the
  * recording feature is meaningless without a fix, and the user picks the permission up via the
- * existing "我位置" entry rather than from a disabled pill. "清除規劃路徑" wording avoids the name
- * clash gui-redesign §3.2 flagged on the old "清除軌跡" label; the eventual "清除圖層" dialog
- * (§5.5) will subsume this once layer management lands.
+ * existing "我位置" entry rather than from a disabled pill. "清除軌跡/路徑" stands in for the eventual
+ * "清除圖層" dialog (gui-redesign §5.5); it sweeps both the planned-route overlay and the loaded
+ * history-track overlay in one tap, and hides itself when nothing is on the map.
  */
 @Composable
 fun MapViewControls(
@@ -162,7 +162,7 @@ fun MapViewControls(
         MapPill("規劃路徑", onPlan, primary = true)
         // Nothing to clear yet -> omit the button entirely instead of disabling it.
         if (canClear) {
-            MapPill("清除規劃路徑", onClear)
+            MapPill("清除軌跡/路徑", onClear)
         }
     }
 }
@@ -213,7 +213,7 @@ fun PlanEntryChooser(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("新規劃") }
-                OutlinedButton(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("載入已存檔") }
+                OutlinedButton(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("載入已存路徑") }
             }
         },
         confirmButton = {},

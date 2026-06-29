@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -55,8 +56,33 @@ fun RecordingBottomBar(
 }
 
 /**
+ * Bottom action bar for the history-track viewing sub-mode: continue recording on top of the loaded
+ * track, or leave the sub-mode (the track stays on the map until the user explicitly clears it).
+ * Both pills share a min-width so they read as a symmetric pair regardless of CJK character count -
+ * width is set to comfortably fit "繼續錄製" (the wider label), and "離開" stretches up to match.
+ */
+@Composable
+fun HistoryTrackViewControls(
+    onContinue: () -> Unit,
+    onLeave: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val pillModifier = Modifier.widthIn(min = 110.dp)
+        MapPill(text = "繼續錄製", onClick = onContinue, primary = true, modifier = pillModifier)
+        MapPill(text = "離開", onClick = onLeave, modifier = pillModifier)
+    }
+}
+
+/**
  * Recording entry chooser - matches the planning entry's shape so the user's mental model is the
- * same: a primary "new" path and a secondary "load existing then continue" path, plus 取消.
+ * same: a primary "new" path and a secondary "load saved" path, plus 取消. The load path opens the
+ * saved track for browsing first (history-view sub-mode); "繼續錄製" lives inside that sub-mode, not
+ * here, so the chooser stays a clean two-option fork.
  */
 @Composable
 fun RecordEntryChooser(
@@ -70,7 +96,7 @@ fun RecordEntryChooser(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("新軌跡") }
-                OutlinedButton(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("載入既有軌跡繼續錄製") }
+                OutlinedButton(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("載入已存軌跡") }
             }
         },
         confirmButton = {},
@@ -142,9 +168,11 @@ private fun formatDistance(meters: Double): String =
     }
 
 /**
- * Lists saved tracks for loading; tapping a row picks it to continue recording on. Each row's "更多"
- * menu offers rename and delete, delegated upward via [onRename]/[onDelete] (the caller confirms
- * and persists). Mirrors [io.github.nexgus.jiudge.feature.planning.LoadRouteDialog].
+ * Lists saved tracks for loading; tapping a row picks it. Each row's "更多" menu offers rename and
+ * delete, delegated upward via [onRename]/[onDelete] (the caller confirms and persists). Mirrors
+ * [io.github.nexgus.jiudge.feature.planning.LoadRouteDialog]. The dialog itself is purpose-neutral -
+ * the caller decides what "pick" means (load into the history viewer); 繼續錄製 lives in the
+ * history-view sub-mode after a pick, not on this dialog.
  */
 @Composable
 fun LoadTrackDialog(
@@ -157,7 +185,7 @@ fun LoadTrackDialog(
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("載入軌跡繼續錄製") },
+        title = { Text("載入軌跡") },
         text = {
             if (summaries.isEmpty()) {
                 Text("尚無已儲存的軌跡")

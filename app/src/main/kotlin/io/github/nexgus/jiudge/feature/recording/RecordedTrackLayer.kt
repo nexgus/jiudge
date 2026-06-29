@@ -18,15 +18,25 @@ import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.sin
 
+/** Blue chevron for the history-track viewer; pairs with [HISTORY_CHEVRON_HALO_COLOR]. */
+const val HISTORY_CHEVRON_COLOR: Int = 0xFF1976D2.toInt()
+
+/** Same halo as the live recording overlay so the history viewer shares the visual vocabulary. */
+const val HISTORY_CHEVRON_HALO_COLOR: Int = 0x99FFFFFF.toInt()
+
 /**
- * Draws a live recorded track as a series of red ">" chevrons laid back-to-back along the path - no
+ * Draws a recorded track as a series of ">" chevrons laid back-to-back along the path - no
  * continuous line, no casing, just the directional marks at high density. Designed to read as a
  * "track" purely from the marks' density and direction, distinct from a planned route's continuous
  * slope-coloured ribbon (see [io.github.nexgus.jiudge.feature.planning.PlannedRouteLayer]).
  *
+ * Used for both the live recording overlay (red, default) and the history-track viewer (blue, passed
+ * via [chevronColor]) so the two read as variants of one visual vocabulary while staying clearly
+ * distinguishable on a shared map (gui-redesign §4.2 multi-layer co-existence).
+ *
  * The chevron geometry (length, half-width, stroke, halo) is borrowed from the planned-route layer so
- * both share the same visual vocabulary; only the colour (red) and the on-screen spacing differ
- * (much tighter here so the chevrons read as a trail). Width follows the same zoom taper as the
+ * both share the same visual vocabulary; only the colour and the on-screen spacing differ (much
+ * tighter here so the chevrons read as a trail). Width follows the same zoom taper as the
  * planned-route line, so the recording overlay matches the planned overlay in scale at every zoom.
  *
  * State is pushed from the UI thread via [update]; [draw] runs on the render thread off one
@@ -34,13 +44,15 @@ import kotlin.math.sin
  */
 class RecordedTrackLayer(
     private val density: Float,
+    chevronColor: Int = DEFAULT_CHEVRON_COLOR,
+    chevronHaloColor: Int = DEFAULT_CHEVRON_HALO_COLOR,
 ) : Layer() {
     @Volatile
     private var snapshot: List<LatLong> = emptyList()
 
     private val factory = AndroidGraphicFactory.INSTANCE
-    private val chevronHalo = strokeRound(CHEVRON_HALO_COLOR, 1f)
-    private val chevronPaint = strokeRound(CHEVRON_COLOR, 1f)
+    private val chevronHalo = strokeRound(chevronHaloColor, 1f)
+    private val chevronPaint = strokeRound(chevronColor, 1f)
 
     /** Replaces the rendered polyline; the chevron walker is rebuilt on the next draw. */
     fun update(points: List<LatLong>) {
@@ -171,9 +183,10 @@ class RecordedTrackLayer(
         }
 
     private companion object {
-        // Red chevron with a faint white halo so it reads on both light and dark terrain.
-        val CHEVRON_COLOR = 0xFFD32F2F.toInt()
-        val CHEVRON_HALO_COLOR = 0x99FFFFFF.toInt()
+        // Red chevron with a faint white halo so it reads on both light and dark terrain - the
+        // default for the live recording overlay.
+        const val DEFAULT_CHEVRON_COLOR: Int = 0xFFD32F2F.toInt()
+        const val DEFAULT_CHEVRON_HALO_COLOR: Int = 0x99FFFFFF.toInt()
 
         // Width basis shared with PlannedRouteLayer.LINE_WIDTH_DP so the two overlays read at the
         // same physical scale; the chevron is sized off this width via the ratios below.

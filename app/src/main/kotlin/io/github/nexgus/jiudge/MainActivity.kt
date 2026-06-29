@@ -91,6 +91,7 @@ import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
 import io.github.nexgus.jiudge.data.route.DuplicateTrackNameException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
+import io.github.nexgus.jiudge.data.route.RecordedTrack
 import io.github.nexgus.jiudge.data.route.RouteStore
 import io.github.nexgus.jiudge.data.route.TrackStore
 import io.github.nexgus.jiudge.feature.about.AboutDialog
@@ -125,6 +126,9 @@ import io.github.nexgus.jiudge.feature.planning.SearchTargetControls
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
 import io.github.nexgus.jiudge.feature.recording.DeleteTrackDialog
 import io.github.nexgus.jiudge.feature.recording.DiscardRecordingDialog
+import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_COLOR
+import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_HALO_COLOR
+import io.github.nexgus.jiudge.feature.recording.HistoryTrackViewControls
 import io.github.nexgus.jiudge.feature.recording.LoadTrackDialog
 import io.github.nexgus.jiudge.feature.recording.RecordEntryChooser
 import io.github.nexgus.jiudge.feature.recording.RecordedTrackLayer
@@ -393,6 +397,16 @@ private fun MapScreen(
     // Set after stop() succeeds, while the save dialog is up. Cleared on dialog dismiss/finalize.
     var pendingRecordingSession by remember { mutableStateOf<Recorder.Session?>(null) }
 
+    // History-track viewing state. historyTrack holds the loaded RecordedTrack (null when nothing is
+    // loaded); historyTrackFile is the on-disk file it was loaded from (kept so 繼續錄製 can hand it
+    // to recorder.startContinuation without re-resolving by name). viewingHistory is the sub-mode
+    // flag that surfaces the "繼續錄製 / 離開" action bar - 離開 keeps historyTrack on screen but
+    // exits the sub-mode, so the user sees the main map controls again with the blue overlay still
+    // visible until cleared.
+    var historyTrack by remember { mutableStateOf<RecordedTrack?>(null) }
+    var historyTrackFile by remember { mutableStateOf<File?>(null) }
+    var viewingHistory by remember { mutableStateOf(false) }
+
     // Storage-access gate: saving/loading routes writes the fixed public folder Documents/Jiudge,
     // which needs All files access on Android 11+ (a Settings toggle) or legacy WRITE_EXTERNAL_STORAGE
     // below. We defer the action behind a rationale dialog, then send the user to grant it; the action
@@ -505,6 +519,20 @@ private fun MapScreen(
             }
         }
 
+    // History-track viewer overlay: same chevron layer in blue, rendering whichever saved track is
+    // currently loaded for viewing. Mounted for the life of this MapView; the polyline is pushed in
+    // whenever historyTrack changes (load / clear).
+    val historyTrackLayer =
+        remember(map.value) {
+            map.value?.let { mv ->
+                RecordedTrackLayer(
+                    density = density,
+                    chevronColor = HISTORY_CHEVRON_COLOR,
+                    chevronHaloColor = HISTORY_CHEVRON_HALO_COLOR,
+                ).also { mv.layerManager.layers.add(it) }
+            }
+        }
+
     // Clean up any leftover .recording-*.jsonl files from a previous run (e.g. a crash or kill mid-
     // recording). v1 has no resume - the dot-prefixed files would just sit and accumulate noise.
     LaunchedEffect(trackStore) {
@@ -515,6 +543,13 @@ private fun MapScreen(
     LaunchedEffect(recordedTrackLayer, recordedPoints) {
         val layer = recordedTrackLayer ?: return@LaunchedEffect
         layer.update(recordedPoints)
+        map.value?.layerManager?.redrawLayers()
+    }
+
+    // Push the loaded history track into its layer whenever it changes; null clears the overlay.
+    LaunchedEffect(historyTrackLayer, historyTrack) {
+        val layer = historyTrackLayer ?: return@LaunchedEffect
+        layer.update(historyTrack?.polyline ?: emptyList())
         map.value?.layerManager?.redrawLayers()
     }
 
@@ -1000,18 +1035,45 @@ private fun MapScreen(
             } else if (!identifyMode && identifyResult == null) {
                 when (mode) {
                     PlanMode.MAP_VIEW ->
-                        MapViewControls(
-                            canRecord = locationGranted,
-                            canClear = displayedRoute != null,
-                            onRecord = {
-                                withStorageAccess { showRecordEntryChooser = true }
-                            },
-                            onPlan = { showChooser = true },
-                            onClear = {
-                                viewer?.clear()
-                                displayedRoute = null
-                            },
-                        )
+                        if (viewingHistory && historyTrack != null) {
+                            // History-track viewing sub-mode: equal-width 繼續錄製 / 離開 pair.
+                            // 繼續錄製 seeds the recorder from the loaded file and transitions to
+                            // the recording state (RecordingBottomBar takes over via the
+                            // recordingState branch above). 離開 keeps the blue overlay on screen
+                            // but exits the sub-mode, returning to the default MapViewControls -
+                            // the user can then clear via "清除軌跡/路徑".
+                            HistoryTrackViewControls(
+                                onContinue = {
+                                    val file = historyTrackFile
+                                    if (file != null) {
+                                        viewingHistory = false
+                                        scope.launch {
+                                            try {
+                                                withContext(Dispatchers.IO) { recorder.startContinuation(file) }
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar("繼續錄製失敗: ${e.message}")
+                                            }
+                                        }
+                                    }
+                                },
+                                onLeave = { viewingHistory = false },
+                            )
+                        } else {
+                            MapViewControls(
+                                canRecord = locationGranted,
+                                canClear = displayedRoute != null || historyTrack != null,
+                                onRecord = {
+                                    withStorageAccess { showRecordEntryChooser = true }
+                                },
+                                onPlan = { showChooser = true },
+                                onClear = {
+                                    viewer?.clear()
+                                    displayedRoute = null
+                                    historyTrack = null
+                                    historyTrackFile = null
+                                },
+                            )
+                        }
 
                     PlanMode.ROUTE_EDIT ->
                         PlanningBottomBar(
@@ -1280,7 +1342,13 @@ private fun MapScreen(
                 loadTrackList = null
                 scope.launch {
                     try {
-                        withContext(Dispatchers.IO) { recorder.startContinuation(summary.file) }
+                        val loaded = withContext(Dispatchers.IO) { trackStore.load(summary.file) }
+                        historyTrack = loaded
+                        historyTrackFile = summary.file
+                        viewingHistory = true
+                        if (loaded.polyline.isNotEmpty()) {
+                            map.value?.fitToRoute(loaded.polyline)
+                        }
                     } catch (e: Exception) {
                         snackbarHostState.showSnackbar("載入軌跡失敗: ${e.message}")
                     }
