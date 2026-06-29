@@ -144,7 +144,9 @@ fun PlanningBottomBar(
  * Map-view mode controls: open a recording session, open the planning entry, or clear the displayed
  * route. "錄製軌跡" stays in place but is disabled when location permission is not yet held - the
  * recording feature is meaningless without a fix, and the user picks the permission up via the
- * existing "我位置" entry rather than from a disabled pill.
+ * existing "我位置" entry rather than from a disabled pill. "清除規劃路徑" wording avoids the name
+ * clash gui-redesign §3.2 flagged on the old "清除軌跡" label; the eventual "清除圖層" dialog
+ * (§5.5) will subsume this once layer management lands.
  */
 @Composable
 fun MapViewControls(
@@ -160,7 +162,7 @@ fun MapViewControls(
         MapPill("規劃路徑", onPlan, primary = true)
         // Nothing to clear yet -> omit the button entirely instead of disabling it.
         if (canClear) {
-            MapPill("清除軌跡", onClear)
+            MapPill("清除規劃路徑", onClear)
         }
     }
 }
@@ -254,7 +256,7 @@ private fun formatDistance(meters: Double): String =
     }
 
 /**
- * Lists saved routes for loading; tapping a row displays it on the map. Each row's "⋮" menu offers
+ * Lists saved routes for loading; tapping a row displays it on the map. Each row's "更多" menu offers
  * rename and delete, delegated upward via [onRename]/[onDelete] (the caller confirms and persists).
  */
 @Composable
@@ -304,7 +306,7 @@ fun LoadRouteDialog(
     )
 }
 
-/** Per-row "⋮" overflow menu offering rename and delete for a saved route. */
+/** Per-row "更多" overflow menu offering rename and delete for a saved route. */
 @Composable
 private fun RouteRowMenu(
     onRename: () -> Unit,
@@ -312,7 +314,7 @@ private fun RouteRowMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        TextButton(onClick = { expanded = true }) { Text("⋮", fontSize = 20.sp) }
+        TextButton(onClick = { expanded = true }) { Text("更多") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
                 text = { Text("改名") },

@@ -1,7 +1,6 @@
 # Hiking Map App - Project Memory
 
 台灣專用, 純離線的登山地圖 App, 僅支援 Android, 為單人開發的個人專案.
-完整規格請見 `docs/spec.md`.
 
 ## Communication
 
@@ -59,7 +58,17 @@
 
 ## v1 Scope Discipline
 
-v1 範圍內項目: 見 `docs/spec.md` §1.1.
+**v1 範圍內**:
+
+- 離線地圖瀏覽 (mapsforge 標準渲染, 連續捏放與旋轉)
+- 自動路線規劃 (起終點 + 中途 waypoint, snap 到 OSM 山徑)
+- 路線量測 (總長度, 總爬升 / 下降, 海拔剖面圖)
+- GPS 軌跡錄製 (背景錄製, 螢幕關閉持續記錄)
+- 軌跡即時統計 (已走距離, 總爬升, 時間, 平均速度)
+- 即時海拔剖面 (錄製中顯示已走剖面)
+- GPX / KML 匯入匯出 (tracks + routes + waypoints, 相容主流登山 App)
+- 圖資下載與更新 (App 內直接從 RudyMap 鏡像下載 `.map` + DEM + 樣式; "檢查更新" 比對 HTTP `Last-Modified`; 保留 "手動匯入本地檔" 備援)
+- Google Maps 跳轉 ("在 Google Maps 開啟此位置")
 
 **明確排除於 v1 之外** (不要實作, 即使某次重構 "自然而然就能順帶做到"):
 
@@ -74,7 +83,7 @@ v1 範圍內項目: 見 `docs/spec.md` §1.1.
 
 ## Development Status
 
-此處工作為**功能驅動, 而非嚴格的階段線性** - 功能在有用時才落地, 不照固定順序. `docs/spec.md` 仍記載一份 Phase 0-3 的計畫供參考, 但本專案刻意未按其順序進行, 因此**不要**以 "那屬於後面的階段" 來阻擋或設限工作. 舊的 "絕不跳階段" 規則已廢止.
+此處工作為**功能驅動, 而非嚴格的階段線性** - 功能在有用時才落地, 不照固定順序. 早期曾有 Phase 0-3 的階段計畫, 但本專案刻意未按其順序進行, 因此**不要**以 "那屬於後面的階段" 來阻擋或設限工作. 舊的 "絕不跳階段" 規則已廢止.
 
 **目前已建置:**
 - 含 hillshade 的離線地圖渲染 (`feature/map`)
@@ -156,7 +165,7 @@ docs/             # spec, design notes, architecture decisions
 
 ## Open Questions (Not Yet Decided)
 
-脈絡見 `docs/spec.md` §9. 不要擅自假設答案:
+不要擅自假設答案:
 
 1. v1 是否納入林務局通訊點 / 山屋疊圖
 2. 自動規劃出的路徑事後是否支援手動拖曳節點調整

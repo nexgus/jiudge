@@ -519,7 +519,7 @@ private fun MapScreen(
     }
 
     // Feed fixes into the recorder while a session is active. The recorder ignores fixes outside
-    // its RECORDING state, so we can stay subscribed in PAUSED without writes leaking through.
+    // its RECORDING state, so the subscription can stay live without writes leaking through.
     LaunchedEffect(recorder) {
         locationProvider.fix.collect { fix ->
             if (fix != null && recorder.active) {
@@ -983,15 +983,11 @@ private fun MapScreen(
                     },
                 )
             } else if (!identifyMode && identifyResult == null && recordingState != Recorder.State.IDLE) {
-                // While a recording session is alive (RECORDING or PAUSED) the bottom-start row is
-                // owned by the recording bar; the map-view / planning controls do not show. This
-                // also hides "規劃路徑" during recording, sidestepping the bottom-row collision the
-                // planning flow would otherwise cause.
+                // While a recording session is alive the bottom-start row is owned by the recording
+                // bar; the map-view / planning controls do not show. This also hides "規劃路徑"
+                // during recording, sidestepping the bottom-row collision the planning flow would
+                // otherwise cause.
                 RecordingBottomBar(
-                    paused = recordingState == Recorder.State.PAUSED,
-                    onPauseResume = {
-                        if (recordingState == Recorder.State.PAUSED) recorder.resume() else recorder.pause()
-                    },
                     onStop = {
                         val session = recorder.stop()
                         if (session != null) {

@@ -18,12 +18,14 @@ import java.io.IOException
  *
  * v1 scope: the staging file is dot-prefixed so a crashed session leaves no published noise (cleaned
  * at next start by [TrackStore.cleanupStaleRecordings]); the foreground-service background recording
- * is out of scope - see CLAUDE.md "尚未建置: 背景軌跡錄製".
+ * is out of scope - see CLAUDE.md "尚未建置: 背景軌跡錄製". Manual pause/resume is intentionally
+ * absent (gui-redesign §5.3): the statistics page subtracts rest periods automatically via
+ * stationary-segment detection, so there is no need for the user to toggle a pause state.
  */
 class Recorder(
     private val store: TrackStore,
 ) {
-    enum class State { IDLE, RECORDING, PAUSED }
+    enum class State { IDLE, RECORDING }
 
     /** A live recording session that exists from [startNew]/[startContinuation] until [stop]. */
     data class Session(
@@ -44,7 +46,7 @@ class Recorder(
 
     private var session: Session? = null
 
-    /** True iff there is an active session (RECORDING or PAUSED). */
+    /** True iff there is an active session ([State.RECORDING]). */
     val active: Boolean get() = session != null
 
     /** The current session, or null when no recording is in progress. */
@@ -92,16 +94,6 @@ class Recorder(
         _state.value = State.RECORDING
     }
 
-    /** Pauses writing; new fixes are dropped until [resume]. No-op outside [State.RECORDING]. */
-    fun pause() {
-        if (_state.value == State.RECORDING) _state.value = State.PAUSED
-    }
-
-    /** Resumes writing after [pause]. No-op outside [State.PAUSED]. */
-    fun resume() {
-        if (_state.value == State.PAUSED) _state.value = State.RECORDING
-    }
-
     /**
      * Push one fix in. When [State.RECORDING] the fix is appended to the staging file and the
      * in-memory polyline; otherwise it is dropped. Returns the IO error if the append failed, so the
@@ -125,9 +117,8 @@ class Recorder(
 
     /**
      * Ends the session and returns it so the caller can run the save dialog and call [finalize] or
-     * [discard]. The staging file is left in place; both states ([State.RECORDING] and
-     * [State.PAUSED]) are valid stops. After this call [active] is false and the in-memory polyline
-     * is cleared - the layer will already be off screen by then.
+     * [discard]. The staging file is left in place. After this call [active] is false and the
+     * in-memory polyline is cleared - the layer will already be off screen by then.
      */
     fun stop(): Session? {
         val s = session ?: return null

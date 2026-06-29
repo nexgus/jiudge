@@ -28,7 +28,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.nexgus.jiudge.data.route.TrackStore
 import io.github.nexgus.jiudge.feature.planning.MapPill
 import java.text.SimpleDateFormat
@@ -36,15 +35,13 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Bottom action bar for an active recording session. Mirrors
- * [io.github.nexgus.jiudge.feature.planning.PlanningBottomBar] for visual consistency: a primary
- * "暫停" (or "繼續" after pause) plus a "停止" that opens the save dialog. The pair's width is stable
- * across the pause/resume swap because both labels live in the same primary pill slot.
+ * Bottom action bar for an active recording session. Currently exposes only "停止"; manual pause is
+ * intentionally absent (gui-redesign §5.3) since the statistics page subtracts rest periods via
+ * automatic stationary-segment detection. The "統計" entry called for in §5.3 is deferred until the
+ * statistics screen (§10.2) is built.
  */
 @Composable
 fun RecordingBottomBar(
-    paused: Boolean,
-    onPauseResume: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -53,7 +50,6 @@ fun RecordingBottomBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MapPill(text = if (paused) "繼續" else "暫停", onClick = onPauseResume, primary = true)
         MapPill(text = "停止", onClick = onStop, primary = true)
     }
 }
@@ -146,7 +142,7 @@ private fun formatDistance(meters: Double): String =
     }
 
 /**
- * Lists saved tracks for loading; tapping a row picks it to continue recording on. Each row's "⋮"
+ * Lists saved tracks for loading; tapping a row picks it to continue recording on. Each row's "更多"
  * menu offers rename and delete, delegated upward via [onRename]/[onDelete] (the caller confirms
  * and persists). Mirrors [io.github.nexgus.jiudge.feature.planning.LoadRouteDialog].
  */
@@ -197,7 +193,7 @@ fun LoadTrackDialog(
     )
 }
 
-/** Per-row "⋮" overflow menu offering rename and delete for a saved track. */
+/** Per-row "更多" overflow menu offering rename and delete for a saved track. */
 @Composable
 private fun TrackRowMenu(
     onRename: () -> Unit,
@@ -205,7 +201,7 @@ private fun TrackRowMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        TextButton(onClick = { expanded = true }) { Text("⋮", fontSize = 20.sp) }
+        TextButton(onClick = { expanded = true }) { Text("更多") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
                 text = { Text("改名") },
