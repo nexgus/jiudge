@@ -89,8 +89,10 @@ import io.github.nexgus.jiudge.core.routing.BRouterProfile
 import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
+import io.github.nexgus.jiudge.data.route.DuplicateTrackNameException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RouteStore
+import io.github.nexgus.jiudge.data.route.TrackStore
 import io.github.nexgus.jiudge.feature.about.AboutDialog
 import io.github.nexgus.jiudge.feature.about.MainMenuButton
 import io.github.nexgus.jiudge.feature.identify.IdentifyBar
@@ -121,6 +123,16 @@ import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import io.github.nexgus.jiudge.feature.planning.SearchTargetControls
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
+import io.github.nexgus.jiudge.feature.recording.DeleteTrackDialog
+import io.github.nexgus.jiudge.feature.recording.DiscardRecordingDialog
+import io.github.nexgus.jiudge.feature.recording.LoadTrackDialog
+import io.github.nexgus.jiudge.feature.recording.RecordEntryChooser
+import io.github.nexgus.jiudge.feature.recording.RecordedTrackLayer
+import io.github.nexgus.jiudge.feature.recording.Recorder
+import io.github.nexgus.jiudge.feature.recording.RecordingBottomBar
+import io.github.nexgus.jiudge.feature.recording.RenameTrackDialog
+import io.github.nexgus.jiudge.feature.recording.SaveTrackDialog
+import io.github.nexgus.jiudge.feature.recording.defaultRecordingName
 import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
@@ -174,6 +186,7 @@ class MainActivity : ComponentActivity() {
                                 mapDir = paths.mapDir,
                                 engine = remember { BRouterEngine(paths.brouterDir) },
                                 routeStore = remember { RouteStore() },
+                                trackStore = remember { TrackStore() },
                                 snackbarHostState = snackbarHostState,
                                 onMapCreated = { mapView = it },
                                 modifier =
@@ -223,6 +236,7 @@ private fun MapScreen(
     mapDir: File,
     engine: BRouterEngine,
     routeStore: RouteStore,
+    trackStore: TrackStore,
     snackbarHostState: SnackbarHostState,
     onMapCreated: (MapView) -> Unit,
     modifier: Modifier = Modifier,
@@ -359,6 +373,26 @@ private fun MapScreen(
     // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
     var saveNameDraft by remember { mutableStateOf<String?>(null) }
 
+    // Recording session - the shell-layer track recorder. Owns the in-memory polyline that drives
+    // the red-chevron overlay, gates writes by the recording state, and holds the staging file the
+    // save dialog will finalise. v1 reads from the existing foreground GPS subscription; foreground
+    // service / wake lock for background recording is out of scope (see CLAUDE.md).
+    val recorder = remember(trackStore) { Recorder(trackStore) }
+    val recordingState by recorder.state.collectAsState()
+    val recordedPoints by recorder.points.collectAsState()
+
+    // Dialog flags for the recording flow. saveTrackNameDraft mirrors saveNameDraft - preserved
+    // across a rejected duplicate so the reopened dialog prefills the typed name for editing.
+    var showRecordEntryChooser by remember { mutableStateOf(false) }
+    var showSaveTrack by remember { mutableStateOf(false) }
+    var showDiscardRecording by remember { mutableStateOf(false) }
+    var loadTrackList by remember { mutableStateOf<List<TrackStore.Summary>?>(null) }
+    var renameTrackTarget by remember { mutableStateOf<TrackStore.Summary?>(null) }
+    var deleteTrackTarget by remember { mutableStateOf<TrackStore.Summary?>(null) }
+    var saveTrackNameDraft by remember { mutableStateOf<String?>(null) }
+    // Set after stop() succeeds, while the save dialog is up. Cleared on dialog dismiss/finalize.
+    var pendingRecordingSession by remember { mutableStateOf<Recorder.Session?>(null) }
+
     // Storage-access gate: saving/loading routes writes the fixed public folder Documents/Jiudge,
     // which needs All files access on Android 11+ (a Settings toggle) or legacy WRITE_EXTERNAL_STORAGE
     // below. We defer the action behind a rationale dialog, then send the user to grant it; the action
@@ -381,7 +415,7 @@ private fun MapScreen(
         if (granted) {
             action?.invoke()
         } else {
-            scope.launch { snackbarHostState.showSnackbar("未取得存取權, 無法儲存或讀取路線") }
+            scope.launch { snackbarHostState.showSnackbar("未取得存取權, 無法儲存或讀取資料") }
         }
     }
 
@@ -460,6 +494,44 @@ private fun MapScreen(
                     .also { mv.layerManager.layers.add(it) }
             }
         }
+
+    // Live recording overlay: red ">" chevrons rendering whichever polyline the recorder currently
+    // holds. Mounted for the life of this MapView; the recorder simply pushes points in via update().
+    val recordedTrackLayer =
+        remember(map.value) {
+            map.value?.let { mv ->
+                RecordedTrackLayer(density)
+                    .also { mv.layerManager.layers.add(it) }
+            }
+        }
+
+    // Clean up any leftover .recording-*.jsonl files from a previous run (e.g. a crash or kill mid-
+    // recording). v1 has no resume - the dot-prefixed files would just sit and accumulate noise.
+    LaunchedEffect(trackStore) {
+        withContext(Dispatchers.IO) { trackStore.cleanupStaleRecordings() }
+    }
+
+    // Push the recorder's live polyline into the layer whenever it changes.
+    LaunchedEffect(recordedTrackLayer, recordedPoints) {
+        val layer = recordedTrackLayer ?: return@LaunchedEffect
+        layer.update(recordedPoints)
+        map.value?.layerManager?.redrawLayers()
+    }
+
+    // Feed fixes into the recorder while a session is active. The recorder ignores fixes outside
+    // its RECORDING state, so we can stay subscribed in PAUSED without writes leaking through.
+    LaunchedEffect(recorder) {
+        locationProvider.fix.collect { fix ->
+            if (fix != null && recorder.active) {
+                val err = recorder.onFix(fix.latitude, fix.longitude, fix.timeMs)
+                if (err != null) {
+                    val session = recorder.stop()
+                    if (session != null) recorder.discard(session)
+                    snackbarHostState.showSnackbar("軌跡寫入失敗: ${err.message ?: "未知錯誤"}")
+                }
+            }
+        }
+    }
 
     LaunchedEffect(searchPeakLayer, pendingPeak) {
         val peak = pendingPeak
@@ -910,16 +982,39 @@ private fun MapScreen(
                         openSearch()
                     },
                 )
+            } else if (!identifyMode && identifyResult == null && recordingState != Recorder.State.IDLE) {
+                // While a recording session is alive (RECORDING or PAUSED) the bottom-start row is
+                // owned by the recording bar; the map-view / planning controls do not show. This
+                // also hides "規劃路徑" during recording, sidestepping the bottom-row collision the
+                // planning flow would otherwise cause.
+                RecordingBottomBar(
+                    paused = recordingState == Recorder.State.PAUSED,
+                    onPauseResume = {
+                        if (recordingState == Recorder.State.PAUSED) recorder.resume() else recorder.pause()
+                    },
+                    onStop = {
+                        val session = recorder.stop()
+                        if (session != null) {
+                            pendingRecordingSession = session
+                            saveTrackNameDraft = session.defaultName
+                            showSaveTrack = true
+                        }
+                    },
+                )
             } else if (!identifyMode && identifyResult == null) {
                 when (mode) {
                     PlanMode.MAP_VIEW ->
                         MapViewControls(
+                            canRecord = locationGranted,
                             canClear = displayedRoute != null,
+                            onRecord = {
+                                withStorageAccess { showRecordEntryChooser = true }
+                            },
+                            onPlan = { showChooser = true },
                             onClear = {
                                 viewer?.clear()
                                 displayedRoute = null
                             },
-                            onPlan = { showChooser = true },
                         )
 
                     PlanMode.ROUTE_EDIT ->
@@ -1064,8 +1159,8 @@ private fun MapScreen(
             title = { Text("需要 \"所有檔案存取權\"") },
             text = {
                 Text(
-                    "Jiudge 會將你規劃的路線存放在 \"文件/Jiudge\" 資料夾. 為了讓這些路線在解除安裝後仍然保留, " +
-                        "重新安裝後也能直接讀回, app 需要系統的 \"所有檔案存取權\". 此權限僅用於讀寫本 app 自己的路線檔.",
+                    "Jiudge 會將你規劃的路線與錄製的軌跡存放在 \"文件/Jiudge\" 資料夾. 為了讓這些檔案在解除安裝後仍然保留, " +
+                        "重新安裝後也能直接讀回, app 需要系統的 \"所有檔案存取權\". 此權限僅用於讀寫本 app 自己的路線與軌跡檔.",
                 )
             },
             confirmButton = {
@@ -1156,6 +1251,146 @@ private fun MapScreen(
                 }
             },
             onDismiss = { deleteTarget = null },
+        )
+    }
+
+    if (showRecordEntryChooser) {
+        RecordEntryChooser(
+            onNew = {
+                showRecordEntryChooser = false
+                val now = System.currentTimeMillis()
+                recorder.startNew(startEpochMs = now, defaultSaveName = defaultRecordingName(now))
+            },
+            onLoad = {
+                showRecordEntryChooser = false
+                withStorageAccess {
+                    scope.launch {
+                        try {
+                            loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("讀取軌跡清單失敗: ${e.message}")
+                        }
+                    }
+                }
+            },
+            onCancel = { showRecordEntryChooser = false },
+        )
+    }
+
+    loadTrackList?.let { summaries ->
+        LoadTrackDialog(
+            summaries = summaries,
+            onPick = { summary ->
+                loadTrackList = null
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { recorder.startContinuation(summary.file) }
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar("載入軌跡失敗: ${e.message}")
+                    }
+                }
+            },
+            onRename = { renameTrackTarget = it },
+            onDelete = { deleteTrackTarget = it },
+            onDismiss = { loadTrackList = null },
+        )
+    }
+
+    renameTrackTarget?.let { target ->
+        RenameTrackDialog(
+            initialName = target.name,
+            onConfirm = { newName ->
+                renameTrackTarget = null
+                withStorageAccess {
+                    scope.launch {
+                        try {
+                            val renamed = withContext(Dispatchers.IO) { trackStore.rename(target.file, newName) }
+                            loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                            snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
+                        } catch (e: DuplicateTrackNameException) {
+                            renameTrackTarget = target
+                            snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("改名失敗: ${e.message}")
+                        }
+                    }
+                }
+            },
+            onDismiss = { renameTrackTarget = null },
+        )
+    }
+
+    deleteTrackTarget?.let { target ->
+        DeleteTrackDialog(
+            trackName = target.name,
+            onConfirm = {
+                deleteTrackTarget = null
+                withStorageAccess {
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { trackStore.delete(target.file) }
+                            loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                            snackbarHostState.showSnackbar("已刪除 \"${target.name}\"")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("刪除失敗: ${e.message}")
+                        }
+                    }
+                }
+            },
+            onDismiss = { deleteTrackTarget = null },
+        )
+    }
+
+    if (showSaveTrack) {
+        val session = pendingRecordingSession
+        SaveTrackDialog(
+            initialName = saveTrackNameDraft ?: session?.defaultName ?: "",
+            onConfirm = { name ->
+                showSaveTrack = false
+                if (session != null) {
+                    withStorageAccess {
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) { recorder.finalize(session, name) }
+                                pendingRecordingSession = null
+                                saveTrackNameDraft = null
+                                snackbarHostState.showSnackbar("已儲存軌跡: $name")
+                            } catch (e: DuplicateTrackNameException) {
+                                saveTrackNameDraft = name
+                                showSaveTrack = true
+                                snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
+                            } catch (e: Exception) {
+                                snackbarHostState.showSnackbar("儲存失敗: ${e.message}")
+                            }
+                        }
+                    }
+                }
+            },
+            onDismiss = {
+                showSaveTrack = false
+                showDiscardRecording = true
+            },
+        )
+    }
+
+    if (showDiscardRecording) {
+        val session = pendingRecordingSession
+        DiscardRecordingDialog(
+            continuationName = if (session?.isContinuation == true) session.defaultName else null,
+            onConfirm = {
+                showDiscardRecording = false
+                if (session != null) {
+                    scope.launch {
+                        withContext(Dispatchers.IO) { recorder.discard(session) }
+                        pendingRecordingSession = null
+                        saveTrackNameDraft = null
+                    }
+                }
+            },
+            onDismiss = {
+                showDiscardRecording = false
+                showSaveTrack = true
+            },
         )
     }
 

@@ -79,7 +79,7 @@ fun CrosshairOverlay(modifier: Modifier = Modifier) {
  * row does not jump as the waypoint count changes.
  */
 @Composable
-private fun MapPill(
+internal fun MapPill(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -140,15 +140,23 @@ fun PlanningBottomBar(
     }
 }
 
-/** Map-view mode controls: clear the displayed route, or open the planning entry. */
+/**
+ * Map-view mode controls: open a recording session, open the planning entry, or clear the displayed
+ * route. "錄製軌跡" stays in place but is disabled when location permission is not yet held - the
+ * recording feature is meaningless without a fix, and the user picks the permission up via the
+ * existing "我位置" entry rather than from a disabled pill.
+ */
 @Composable
 fun MapViewControls(
+    canRecord: Boolean,
     canClear: Boolean,
-    onClear: () -> Unit,
+    onRecord: () -> Unit,
     onPlan: () -> Unit,
+    onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MapPill("錄製軌跡", onRecord, primary = true, enabled = canRecord)
         MapPill("規劃路徑", onPlan, primary = true)
         // Nothing to clear yet -> omit the button entirely instead of disabling it.
         if (canClear) {

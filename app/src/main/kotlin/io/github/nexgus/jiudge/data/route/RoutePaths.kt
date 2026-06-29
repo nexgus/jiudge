@@ -14,6 +14,7 @@ import java.io.File
 internal object RoutePaths {
     const val APP_DIR = "Jiudge"
     const val PLANS_DIR = "plans"
+    const val TRACKS_DIR = "tracks"
 
     /** `Documents/Jiudge/`, created on demand. */
     @Suppress("DEPRECATION") // getExternalStoragePublicDirectory still works under All files access.
@@ -25,4 +26,7 @@ internal object RoutePaths {
 
     /** `Documents/Jiudge/plans/`, created on demand. */
     fun plansDir(): File = File(appDir(), PLANS_DIR).apply { mkdirs() }
+
+    /** `Documents/Jiudge/tracks/`, created on demand. */
+    fun tracksDir(): File = File(appDir(), TRACKS_DIR).apply { mkdirs() }
 }
