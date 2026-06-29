@@ -5,7 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -100,10 +102,14 @@ internal fun MapPill(
         }
     Button(
         onClick = onClick,
-        modifier = modifier,
+        // Drop the Material3 minWidth (58 dp) so single-character pills like "+"/"−" do not get
+        // padded out, and tight the horizontal contentPadding from the default 24 dp to 12 dp so the
+        // pill row stays narrow on small screens (it otherwise overruns the bottom-end FAB column).
+        modifier = modifier.defaultMinSize(minWidth = 0.dp),
         enabled = enabled,
         colors = colors,
         elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(text, fontSize = fontSize)
     }

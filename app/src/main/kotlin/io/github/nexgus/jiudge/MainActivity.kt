@@ -486,6 +486,14 @@ private fun MapScreen(
     // recomputed on every map move (mapsforge Observer) and every new fix.
     var markerInViewport by remember { mutableStateOf(false) }
 
+    // Pixel sizes of the map-overlay container and the two bottom control groups. Drive the
+    // small-screen fallback that lifts the bottom-end FAB column above the bottom-start pill row
+    // when they would otherwise overlap (e.g. with three pills in MapViewControls on narrow phones).
+    var mapContainerWidthPx by remember { mutableStateOf(0) }
+    var pillRowWidthPx by remember { mutableStateOf(0) }
+    var pillRowHeightPx by remember { mutableStateOf(0) }
+    var fabColumnWidthPx by remember { mutableStateOf(0) }
+
     // Connection-info popup: long-pressing the location marker opens it; the DEM altitude shown there
     // is looked up off the main thread when it opens (independent of the GPS-reported altitude).
     var locationInfoOpen by remember { mutableStateOf(false) }
@@ -770,7 +778,7 @@ private fun MapScreen(
         }
     }
 
-    Box(modifier = modifier) {
+    Box(modifier = modifier.onSizeChanged { mapContainerWidthPx = it.width }) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
@@ -955,22 +963,52 @@ private fun MapScreen(
             }
         }
 
-        // Bottom-end controls, stacked: bearing-mode toggle on top, recenter FAB below. Sit on the
-        // same baseline as the bottom-start controls (same padding) so the recenter button shares one
-        // horizontal line with them; the bearing toggle stacks above. Hidden during identify and route
-        // editing so it does not collide with their bottom bars. The recenter button is highlighted
-        // only when the map is no longer tracking the marker (the marker has drifted off-viewport or
-        // there is no fix yet); otherwise it is dimmed to signal "already following".
+        // Bottom-end controls, stacked: bearing-mode toggle on top, recenter FAB below. Hidden during
+        // identify and route editing so it does not collide with their bottom bars. The recenter
+        // button is highlighted only when the map is no longer tracking the marker (the marker has
+        // drifted off-viewport or there is no fix yet); otherwise it is dimmed to signal "already
+        // following".
+        //
+        // Placement: by default it sits at BottomEnd on the same baseline as the bottom-start pill
+        // row. On small screens, where the pill row (e.g. all three of 錄製軌跡/規劃路徑/清除軌跡/路徑)
+        // would otherwise overlap this column, it lifts above the pill row instead - measured live
+        // off the actual pill-row width/height and the container width, so the choice adapts to
+        // whatever pill set the current mode is showing.
         if (!identifyMode &&
             identifyResult == null &&
             identifyCandidates == null &&
             mode != PlanMode.ROUTE_EDIT
         ) {
+            val stackAboveGapDp = 12.dp
+            // True only when we have measurements for both groups AND they would overlap. The
+            // measured pillRowWidthPx / fabColumnWidthPx already include each group's own 16 dp
+            // padding (onSizeChanged sits after padding in the modifier chain), so the sum touching
+            // the container width means the two padded edges already meet - no further gap is
+            // available. While any measurement is still 0 (first frame, or the pill row has not laid
+            // out yet) we keep the default BottomEnd placement so the FAB does not flash to an
+            // above-pills position.
+            val stackAbovePills =
+                pillRowWidthPx > 0 &&
+                    fabColumnWidthPx > 0 &&
+                    mapContainerWidthPx > 0 &&
+                    pillRowWidthPx + fabColumnWidthPx > mapContainerWidthPx
+            val pillRowHeightDp = with(LocalDensity.current) { pillRowHeightPx.toDp() }
+            // pillRowHeightDp already covers the row's own 16 dp top+bottom padding. To sit the FAB
+            // column's content edge stackAboveGapDp above the pill row's content edge, we want the
+            // FAB's bottom inset to equal (pillRow content top distance from box bottom) + gap, i.e.
+            // (pillRowHeightDp - 16 dp) + stackAboveGapDp.
+            val bottomPadding =
+                if (stackAbovePills) {
+                    pillRowHeightDp - 16.dp + stackAboveGapDp
+                } else {
+                    16.dp
+                }
             Column(
                 modifier =
                     Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(16.dp),
+                        .padding(end = 16.dp, bottom = bottomPadding)
+                        .onSizeChanged { fabColumnWidthPx = it.width },
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -1000,12 +1038,18 @@ private fun MapScreen(
         }
 
         // Bottom-start controls: the mode-specific action buttons sit in the lower-left corner and
-        // are hidden during identify, whose own bar/card owns the bottom.
+        // are hidden during identify, whose own bar/card owns the bottom. onSizeChanged feeds the
+        // small-screen check above that lifts the bottom-end FAB column when this row gets wide
+        // enough to overlap it.
         Row(
             modifier =
                 Modifier
                     .align(Alignment.BottomStart)
-                    .padding(16.dp),
+                    .padding(16.dp)
+                    .onSizeChanged {
+                        pillRowWidthPx = it.width
+                        pillRowHeightPx = it.height
+                    },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

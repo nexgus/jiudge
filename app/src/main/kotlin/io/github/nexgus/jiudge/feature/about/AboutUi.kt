@@ -1,6 +1,7 @@
 package io.github.nexgus.jiudge.feature.about
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -41,27 +42,30 @@ fun MainMenuButton(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    SmallFloatingActionButton(
-        onClick = { expanded = true },
-        modifier = modifier,
-    ) {
-        Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "主選單")
-    }
-    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-        DropdownMenuItem(
-            text = { Text("關於") },
-            onClick = {
-                expanded = false
-                onAbout()
-            },
-        )
-        DropdownMenuItem(
-            text = { Text("檢查地圖更新") },
-            onClick = {
-                expanded = false
-                onCheckUpdate()
-            },
-        )
+    // FAB 與 DropdownMenu 包在同一個 Box, 讓 popup 以 FAB 為錨從原位往下展開, 蓋過下方按鈕;
+    // 否則它們會成為父層 Column 的兩個 slot, 被 Arrangement.spacedBy 撐到搜尋鍵下方.
+    Box(modifier = modifier) {
+        SmallFloatingActionButton(
+            onClick = { expanded = true },
+        ) {
+            Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "主選單")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("關於") },
+                onClick = {
+                    expanded = false
+                    onAbout()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("檢查地圖更新") },
+                onClick = {
+                    expanded = false
+                    onCheckUpdate()
+                },
+            )
+        }
     }
 }
 
@@ -86,7 +90,7 @@ fun AboutDialog(
                     style = MaterialTheme.typography.headlineSmall,
                 )
                 Text(
-                    text = "簡單好用的軌跡錄製與路徑規劃",
+                    text = "極簡風格路徑規劃與軌跡錄製應用程式",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
