@@ -1,7 +1,6 @@
 package io.github.nexgus.jiudge.core.recording
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,20 +10,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
 import android.os.Build
-import android.os.Bundle
 import android.os.IBinder
-import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import io.github.nexgus.jiudge.MainActivity
+import io.github.nexgus.jiudge.core.location.GpsSource
 import io.github.nexgus.jiudge.feature.recording.defaultRecordingName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -32,12 +28,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Foreground service that owns the GPS subscription for a recording session, so the track keeps
+ * Foreground service that owns the Recording lease on [GpsSource] for a session, so the track keeps
  * being written with the screen off and the process in Doze. The `location` foreground type lets the
  * service stay alive while in the background (the only foreground type the platform accepts for a
  * service that needs background location); the [PowerManager.PARTIAL_WAKE_LOCK] held for the
  * lifetime of the session prevents Doze from suspending the CPU between fixes, which would
- * otherwise let `LocationListener` callbacks coalesce or drop.
+ * otherwise let fix updates coalesce or drop.
  *
  * Wiring: the activity sends [ACTION_START_NEW] / [ACTION_START_CONTINUATION] to begin a session,
  * the service drives [RecordingController] (start, fix-per-tick, stop), and [ACTION_STOP] hands the
@@ -54,27 +50,9 @@ import java.io.File
 class RecordingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wakeLock: PowerManager.WakeLock? = null
-    private var subscribed = false
+    private var gpsOwnership: GpsSource.Ownership? = null
+    private var fixJob: Job? = null
     private var startedForeground = false
-
-    private val locationManager: LocationManager
-        get() = applicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-
-    private val listener =
-        object : LocationListener {
-            override fun onLocationChanged(location: Location) = handleLocation(location)
-
-            override fun onProviderEnabled(provider: String) = Unit
-
-            override fun onProviderDisabled(provider: String) = Unit
-
-            @Deprecated("Required by interface; unused.")
-            override fun onStatusChanged(
-                provider: String?,
-                status: Int,
-                extras: Bundle?,
-            ) = Unit
-        }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -106,10 +84,10 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
-        // Defensive: subscribe()/handleStop() already release these on every normal exit, but
-        // onDestroy can fire without a STOP intent (system-initiated teardown), and leaking a
-        // wake lock silently drains the battery.
-        unsubscribe()
+        // Defensive: handleStop() already releases these on every normal exit, but onDestroy can
+        // fire without a STOP intent (system-initiated teardown), and leaking a wake lock or a
+        // GpsSource lease silently harms other consumers of the singleton.
+        releaseGps()
         releaseWakeLock()
         scope.cancel()
         super.onDestroy()
@@ -129,7 +107,7 @@ class RecordingService : Service() {
                 withContext(Dispatchers.IO) {
                     RecordingController.handleStartNew(startEpochMs = now, defaultSaveName = defaultName)
                 }
-                subscribe()
+                acquireGps()
             } catch (e: Exception) {
                 stopSelfCleanly()
             }
@@ -154,7 +132,7 @@ class RecordingService : Service() {
                 withContext(Dispatchers.IO) {
                     RecordingController.handleStartContinuation(source)
                 }
-                subscribe()
+                acquireGps()
             } catch (e: Exception) {
                 stopSelfCleanly()
             }
@@ -168,7 +146,7 @@ class RecordingService : Service() {
     }
 
     private fun handleStop() {
-        unsubscribe()
+        releaseGps()
         RecordingController.handleStop()
         stopSelfCleanly()
     }
@@ -182,11 +160,10 @@ class RecordingService : Service() {
         stopSelf()
     }
 
-    @SuppressLint("MissingPermission")
-    private fun subscribe() {
-        if (subscribed) return
+    private fun acquireGps() {
+        if (gpsOwnership != null) return
         // Belt-and-suspenders: ensureBackgroundLocation() already gated the start, but a coarse-only
-        // grant would still throw SecurityException on GPS_PROVIDER. Require fine.
+        // grant would still make Mode.Recording end up with an empty subscription and no fixes.
         val fine =
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED
@@ -194,31 +171,27 @@ class RecordingService : Service() {
             stopSelfCleanly()
             return
         }
-        // GPS only: the recorded track is meant to be a real movement trace. The network provider
-        // gives a coarse, often-stale location that would poison the polyline with non-positions.
-        locationManager.requestLocationUpdates(
-            LocationManager.GPS_PROVIDER,
-            MIN_TIME_MS,
-            MIN_DISTANCE_M,
-            listener,
-            Looper.getMainLooper(),
-        )
-        subscribed = true
+        // Anything already sitting in GpsSource.fix at this instant came from a prior owner (the
+        // foreground marker or a seedLastKnown from an earlier lease). Treat it as stale so the
+        // recorded polyline only extends once a genuinely new fix arrives.
+        val staleFixTimeMs = GpsSource.fix.value?.timeMs ?: Long.MIN_VALUE
+        gpsOwnership = GpsSource.acquire(this, GpsSource.Mode.Recording)
+        fixJob =
+            scope.launch {
+                GpsSource.fix.collect { fix ->
+                    if (fix != null && fix.timeMs > staleFixTimeMs) {
+                        val err = RecordingController.handleFix(fix.latitude, fix.longitude, fix.timeMs)
+                        if (err != null) handleStop()
+                    }
+                }
+            }
     }
 
-    private fun unsubscribe() {
-        if (!subscribed) return
-        locationManager.removeUpdates(listener)
-        subscribed = false
-    }
-
-    private fun handleLocation(location: Location) {
-        val err = RecordingController.handleFix(location.latitude, location.longitude, location.time)
-        if (err != null) {
-            // Disk failure mid-session: stop cleanly rather than spinning forever appending to a
-            // file we cannot write. The session is left as pending so the activity surfaces it.
-            handleStop()
-        }
+    private fun releaseGps() {
+        fixJob?.cancel()
+        fixJob = null
+        gpsOwnership?.release()
+        gpsOwnership = null
     }
 
     private fun ensureBackgroundLocation(): Boolean {
@@ -312,10 +285,6 @@ class RecordingService : Service() {
         private const val ACTION_START_CONTINUATION = "io.github.nexgus.jiudge.action.START_CONTINUATION_RECORDING"
         private const val ACTION_STOP = "io.github.nexgus.jiudge.action.STOP_RECORDING"
         private const val EXTRA_SOURCE_PATH = "source_path"
-
-        // 1 Hz GPS - matches the rate the foreground LocationProvider already uses for the marker.
-        private const val MIN_TIME_MS = 1_000L
-        private const val MIN_DISTANCE_M = 0f
 
         /** Starts a brand-new recording. Call from the foreground (activity). */
         fun startNew(context: Context) {

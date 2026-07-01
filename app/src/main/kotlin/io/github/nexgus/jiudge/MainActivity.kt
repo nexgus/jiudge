@@ -76,9 +76,9 @@ import io.github.nexgus.jiudge.core.elevation.DemElevation
 import io.github.nexgus.jiudge.core.index.Peak
 import io.github.nexgus.jiudge.core.index.PeakIndex
 import io.github.nexgus.jiudge.core.index.PeakIndexState
+import io.github.nexgus.jiudge.core.location.GpsSource
 import io.github.nexgus.jiudge.core.location.HeadingProvider
 import io.github.nexgus.jiudge.core.location.LocationFix
-import io.github.nexgus.jiudge.core.location.LocationProvider
 import io.github.nexgus.jiudge.core.mapdata.DownloadService
 import io.github.nexgus.jiudge.core.mapdata.DownloadState
 import io.github.nexgus.jiudge.core.mapdata.MapDataCatalog
@@ -414,6 +414,13 @@ private fun MapScreen(
     var pendingRecordingStart by remember { mutableStateOf<PendingRecordingStart?>(null) }
     var showBackgroundLocationRationale by remember { mutableStateOf(false) }
 
+    // The GpsSource lease this activity currently holds, if any. Managed by the DisposableEffect
+    // that tracks the map screen's lifecycle, by the RecordingController.state observer, and by
+    // dispatchPendingStart() (which releases it before dispatching the start Intent so the service's
+    // Strict-lease Recording acquire cannot collide). Declared up here rather than beside the other
+    // map-marker state so dispatchPendingStart, defined a few lines below, can see it.
+    var gpsOwnership: GpsSource.Ownership? by remember { mutableStateOf(null) }
+
     // History-track viewing state. historyTrack holds the loaded RecordedTrack (null when nothing is
     // loaded); historyTrackFile is the on-disk file it was loaded from (kept so 繼續錄製 can hand it
     // to recorder.startContinuation without re-resolving by name). viewingHistory is the sub-mode
@@ -487,6 +494,11 @@ private fun MapScreen(
     // user to the system settings page via [BackgroundLocationRationaleDialog]).
     fun dispatchPendingStart() {
         val pending = pendingRecordingStart ?: return
+        // Strict lease: the service will acquire GpsSource as Mode.Recording. Release the Foreground
+        // lease here (not only via the RecordingController.state observer, which fires after
+        // handleStartNew flips the state) so the two acquires cannot race.
+        gpsOwnership?.release()
+        gpsOwnership = null
         val src = pending.continuationSource
         if (src == null) {
             RecordingService.startNew(context)
@@ -550,16 +562,16 @@ private fun MapScreen(
         }
     }
 
-    // Current-location ("my location"): a blue dot + facing cone, fed by GPS and the compass only
-    // while the map is visible (foreground-only, see CLAUDE.md). The overlay layer lives for the
-    // life of the MapView; the recenter FAB below drives it.
+    // Current-location ("my location"): a blue dot + facing cone, fed by GpsSource (the process-wide
+    // singleton also used by RecordingService, so track head and marker read the same fix) and the
+    // compass. GpsSource keeps subscribing under RecordingService's Recording lease, but the
+    // activity's Foreground lease is only held while the map is visible.
     val lifecycleOwner = LocalLifecycleOwner.current
-    val locationProvider = remember { LocationProvider(context) }
     val headingProvider = remember { HeadingProvider(context) }
-    var locationGranted by remember { mutableStateOf(locationProvider.hasPermission()) }
+    var locationGranted by remember { mutableStateOf(GpsSource.hasPermission(context)) }
     // Center the map on the first fix: true at launch when permission is already held (so a returning
     // user opens straight onto their location), and re-armed when the recenter FAB is tapped.
-    var recenterOnFix by remember { mutableStateOf(locationProvider.hasPermission()) }
+    var recenterOnFix by remember { mutableStateOf(GpsSource.hasPermission(context)) }
 
     // Map bearing (NORTH_UP vs TRACK_UP). Persisted so the choice survives an app relaunch. Applied to
     // the MapView on every heading update so TRACK_UP rotation tracks the compass with no extra wiring.
@@ -697,10 +709,13 @@ private fun MapScreen(
             }
         }
 
-    // Subscribe to GPS + compass only while permission is held and the screen is resumed; release on
-    // pause so nothing runs in the background. The observer stays mounted regardless of the current
-    // grant so that ON_RESUME also catches the user adding (or revoking) permission from the system
-    // settings page - that path does not fire any ActivityResultLauncher.
+    // Take the GpsSource Foreground lease only while permission is held and the screen is resumed;
+    // release on pause so the singleton has no owner (and no LocationManager subscription) when the
+    // app is backgrounded. The observer stays mounted regardless of the current grant so that
+    // ON_RESUME also catches the user adding (or revoking) permission from the system settings page
+    // - that path does not fire any ActivityResultLauncher. Recording sessions own the lease
+    // separately (see the RecordingController.state observer below), so ON_RESUME while a recording
+    // is active skips the acquire and just re-syncs the banner.
     DisposableEffect(lifecycleOwner, locationLayer) {
         if (locationLayer == null) {
             onDispose {}
@@ -708,14 +723,24 @@ private fun MapScreen(
             fun syncOnResume() {
                 // Pull the banner's StateFlow into sync first; it must be correct even when there is
                 // nothing left to subscribe to (e.g. all location permissions were just revoked).
-                locationProvider.refreshPermissionState()
-                val granted = locationProvider.hasPermission()
+                GpsSource.refreshPermissionState(context)
+                val granted = GpsSource.hasPermission(context)
                 locationGranted = granted
                 if (granted) {
-                    locationProvider.start()
+                    if (RecordingController.state.value == Recorder.State.IDLE && gpsOwnership == null) {
+                        gpsOwnership = GpsSource.acquire(context, GpsSource.Mode.Foreground)
+                    }
                     headingProvider.start()
+                    // Coming back to the map mid-recording: the user actively cares about "where am
+                    // I on the track", so re-arm the one-shot recenter for the next fix. The idle
+                    // path is left alone so a manual pan the user did before backgrounding is not
+                    // undone on return.
+                    if (RecordingController.state.value == Recorder.State.RECORDING) {
+                        recenterOnFix = true
+                    }
                 } else {
-                    locationProvider.stop()
+                    gpsOwnership?.release()
+                    gpsOwnership = null
                     headingProvider.stop()
                 }
             }
@@ -724,7 +749,8 @@ private fun MapScreen(
                     when (event) {
                         Lifecycle.Event.ON_RESUME -> syncOnResume()
                         Lifecycle.Event.ON_PAUSE -> {
-                            locationProvider.stop()
+                            gpsOwnership?.release()
+                            gpsOwnership = null
                             headingProvider.stop()
                         }
                         else -> Unit
@@ -738,8 +764,34 @@ private fun MapScreen(
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(observer)
-                locationProvider.stop()
+                gpsOwnership?.release()
+                gpsOwnership = null
                 headingProvider.stop()
+            }
+        }
+    }
+
+    // Hand the Foreground lease back and forth around a recording session. When the activity is in
+    // the foreground and recording ends, this reacquires so the map marker resumes updating; when
+    // recording starts (via the button or a resume mid-recording), any activity-held lease is
+    // released so RecordingService can take Strict-lease ownership. The onClick path also releases
+    // the lease directly before dispatching the start Intent to close the tiny window between the
+    // Intent going out and this collector observing RECORDING.
+    LaunchedEffect(Unit) {
+        RecordingController.state.collect { state ->
+            when (state) {
+                Recorder.State.RECORDING -> {
+                    gpsOwnership?.release()
+                    gpsOwnership = null
+                }
+                Recorder.State.IDLE -> {
+                    if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                        GpsSource.hasPermission(context) &&
+                        gpsOwnership == null
+                    ) {
+                        gpsOwnership = GpsSource.acquire(context, GpsSource.Mode.Foreground)
+                    }
+                }
             }
         }
     }
@@ -751,10 +803,10 @@ private fun MapScreen(
     LaunchedEffect(locationLayer, bearingMode) {
         val layer = locationLayer ?: return@LaunchedEffect
         combine(
-            locationProvider.fix,
+            GpsSource.fix,
             headingProvider.heading,
             headingProvider.headingAccuracyDeg,
-            locationProvider.serviceEnabled,
+            GpsSource.serviceEnabled,
         ) { fix, heading, headingAccuracy, enabled ->
             // The compass reads magnetic north; shift it by the local declination so the facing
             // cone lines up with the true-north map. GPS movement bearing is already true north.
@@ -783,7 +835,7 @@ private fun MapScreen(
     LaunchedEffect(map.value, mode) {
         val mv = map.value ?: return@LaunchedEffect
         var lastFix: LocationFix? = null
-        locationProvider.fix.collect { fix ->
+        GpsSource.fix.collect { fix ->
             if (fix == null) {
                 lastFix = null
                 markerInViewport = false
@@ -821,7 +873,7 @@ private fun MapScreen(
         } else {
             val observer =
                 Observer {
-                    markerInViewport = MapFollow.isMarkerInViewport(mv, locationProvider.fix.value)
+                    markerInViewport = MapFollow.isMarkerInViewport(mv, GpsSource.fix.value)
                 }
             mv.model.mapViewPosition.addObserver(observer)
             onDispose { mv.model.mapViewPosition.removeObserver(observer) }
@@ -830,13 +882,13 @@ private fun MapScreen(
 
     // Collected in composition (1 Hz, unlike the high-rate heading) to drive the FAB highlight and the
     // recenter behaviour.
-    val currentFix by locationProvider.fix.collectAsState()
-    val serviceEnabled by locationProvider.serviceEnabled.collectAsState()
-    val gnss by locationProvider.gnss.collectAsState()
-    // Drives the persistent "only coarse location granted" warning banner. Refreshed inside
-    // LocationProvider.start() on every ON_RESUME so an upgrade to precise location made from the
-    // system settings page clears the banner automatically.
-    val fineLocationGranted by locationProvider.fineLocationGranted.collectAsState()
+    val currentFix by GpsSource.fix.collectAsState()
+    val serviceEnabled by GpsSource.serviceEnabled.collectAsState()
+    val gnss by GpsSource.gnss.collectAsState()
+    // Drives the persistent "only coarse location granted" warning banner. Refreshed in syncOnResume
+    // above (which calls GpsSource.refreshPermissionState) on every ON_RESUME so an upgrade to
+    // precise location made from the system settings page clears the banner automatically.
+    val fineLocationGranted by GpsSource.fineLocationGranted.collectAsState()
 
     // Refresh the popup's DEM altitude whenever it opens or the fix moves, off the main thread (the
     // first touch of a DEM tile memory-maps it). Cleared when the popup is closed.
@@ -869,7 +921,7 @@ private fun MapScreen(
             context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             return
         }
-        val fix = locationProvider.fix.value
+        val fix = GpsSource.fix.value
         if (fix != null) {
             map.value
                 ?.model

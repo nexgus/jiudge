@@ -59,53 +59,56 @@ data class GnssSummary(
 )
 
 /**
- * Foreground-only current-location source. Subscribes to the platform [LocationManager] while the
- * map screen is visible and exposes the latest fix as a [StateFlow]; the caller is expected to
- * [start] on resume and [stop] on pause so no updates run in the background (route recording, which
- * needs a foreground service, is separate - see CLAUDE.md).
+ * Process-wide owner of the platform [LocationManager] subscription. The map screen (foreground
+ * marker) and [io.github.nexgus.jiudge.core.recording.RecordingService] both read the same
+ * [fix] StateFlow, so a track's leading edge and the on-screen dot cannot drift apart the way two
+ * independent listeners used to.
  *
- * No Google Play Services dependency: the bare platform API keeps the app fully offline and free of
- * Google libraries, consistent with the rest of the stack.
+ * Ownership is a strict lease: [acquire] throws when a lease is already outstanding, so the caller
+ * must [Ownership.release] first. The activity guards the transition by releasing its Foreground
+ * lease before dispatching a Recording start Intent, and reacquires when [RecordingController]
+ * flips back to IDLE.
  */
-class LocationProvider(
-    context: Context,
-) {
-    private val appContext = context.applicationContext
-    private val locationManager =
-        appContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+object GpsSource {
+    enum class Mode { Foreground, Recording }
+
+    interface Ownership {
+        val mode: Mode
+
+        fun release()
+    }
 
     private val _fix = MutableStateFlow<LocationFix?>(null)
     val fix: StateFlow<LocationFix?> = _fix.asStateFlow()
 
     // Whether the system-wide location service (the master toggle, not this app's permission) is on.
-    // Goes false when the user disables location; the caller then freezes the marker and warns.
-    private val _serviceEnabled = MutableStateFlow(isLocationServiceEnabled())
+    private val _serviceEnabled = MutableStateFlow(false)
     val serviceEnabled: StateFlow<Boolean> = _serviceEnabled.asStateFlow()
 
-    // Live GNSS reception, fed by the satellite-status callback. Null until the first status arrives,
-    // and reset to null on stop; only populated when a fine-location subscription is active.
+    // Live GNSS reception, populated only while a fine-location subscription is active.
     private val _gnss = MutableStateFlow<GnssSummary?>(null)
     val gnss: StateFlow<GnssSummary?> = _gnss.asStateFlow()
 
-    // Whether ACCESS_FINE_LOCATION is currently granted. Refreshed on every start() so the UI can
-    // observe a permission upgrade made from the system settings page without further plumbing.
-    private val _fineLocationGranted = MutableStateFlow(hasFinePermission())
+    // Whether ACCESS_FINE_LOCATION is currently granted. Refreshed on every [acquire] and on
+    // [refreshPermissionState], so the banner picks up a settings-page grant/revoke.
+    private val _fineLocationGranted = MutableStateFlow(false)
     val fineLocationGranted: StateFlow<Boolean> = _fineLocationGranted.asStateFlow()
 
+    private var appContext: Context? = null
+    private var currentOwner: OwnershipImpl? = null
     private var lastLocation: Location? = null
-    private var started = false
+    private var subscribed = false
 
     private val listener =
         object : LocationListener {
             override fun onLocationChanged(location: Location) = onLocation(location)
 
-            // The master switch flips every provider at once, so just re-read the overall state.
             override fun onProviderEnabled(provider: String) {
-                _serviceEnabled.value = isLocationServiceEnabled()
+                appContext?.let { _serviceEnabled.value = computeServiceEnabled(it) }
             }
 
             override fun onProviderDisabled(provider: String) {
-                _serviceEnabled.value = isLocationServiceEnabled()
+                appContext?.let { _serviceEnabled.value = computeServiceEnabled(it) }
             }
         }
 
@@ -133,64 +136,110 @@ class LocationProvider(
         }
 
     /**
+     * Take the subscription lease. Throws [IllegalStateException] when a lease is already
+     * outstanding. Foreground mode subscribes to `gps + network` (or just `network` under a
+     * coarse-only grant); Recording mode subscribes to `gps` only, so no network fix ever pollutes
+     * a recorded track. Without any location permission the returned [Ownership] is real but the
+     * underlying subscription is empty; the StateFlows stay at their last values.
+     */
+    fun acquire(
+        context: Context,
+        mode: Mode,
+    ): Ownership {
+        val existing = currentOwner
+        if (existing != null) {
+            throw IllegalStateException(
+                "GpsSource is already owned by ${existing.mode}; call release() before re-acquiring.",
+            )
+        }
+        val ctx = context.applicationContext
+        appContext = ctx
+        val owner = OwnershipImpl(mode)
+        currentOwner = owner
+        startSubscription(ctx, mode)
+        return owner
+    }
+
+    /** True once the OS has granted fine or coarse location to this app. */
+    fun hasPermission(context: Context): Boolean =
+        hasFinePermission(context) ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /** True only when precise (fine) location is granted - the prerequisite for satellite status. */
+    fun hasFinePermission(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /** Whether the device's location service master switch is on (any provider usable). */
+    fun isLocationServiceEnabled(context: Context): Boolean = computeServiceEnabled(context)
+
+    /**
      * Resynchronises [fineLocationGranted] with the OS. Useful on `ON_RESUME` so a permission grant
      * or revocation made from the system settings page (where no `ActivityResultLauncher` fires) is
      * picked up immediately.
      */
-    fun refreshPermissionState() {
-        _fineLocationGranted.value = hasFinePermission()
+    fun refreshPermissionState(context: Context) {
+        _fineLocationGranted.value = hasFinePermission(context)
     }
 
-    /** True once the OS has granted fine or coarse location to this app. */
-    fun hasPermission(): Boolean =
-        hasFinePermission() ||
-            ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
-
-    /** True only when precise (fine) location is granted - the prerequisite for satellite status. */
-    fun hasFinePermission(): Boolean =
-        ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
-
-    /** Whether the device's location service master switch is on (any provider usable). */
-    fun isLocationServiceEnabled(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            locationManager.isLocationEnabled
+    private fun computeServiceEnabled(context: Context): Boolean {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            lm.isLocationEnabled
         } else {
-            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
-                locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
         }
+    }
 
-    /**
-     * Begins receiving updates from every enabled provider (GPS for precision, network as a quick
-     * indoor seed). Seeds [fix] with the freshest last-known location so the marker and recenter
-     * button have something to show before the first live update arrives. No-op without permission.
-     *
-     * Idempotent: calling [start] again rechecks permissions and resubscribes. The caller may invoke
-     * it on every `ON_RESUME` so that a permission change made in the system settings page (e.g. a
-     * coarse-to-fine upgrade) takes effect on return.
-     */
+    private fun releaseOwnership(owner: OwnershipImpl) {
+        if (currentOwner !== owner) return
+        stopSubscription()
+        currentOwner = null
+    }
+
+    private class OwnershipImpl(
+        override val mode: Mode,
+    ) : Ownership {
+        private var released = false
+
+        override fun release() {
+            if (released) return
+            released = true
+            releaseOwnership(this)
+        }
+    }
+
     @SuppressLint("MissingPermission")
-    fun start() {
-        // Release any prior subscription first so a re-entry on ON_RESUME does not double-register
-        // the GNSS callback or leave a stale listener bound to old permission state.
-        if (started) stop()
-        // Always reflect the current grant in the StateFlow, even when there is nothing to subscribe
-        // to: a permission revoked from the system settings page lands here through the early
-        // return below, and the banner must still update.
-        refreshPermissionState()
-        if (!hasPermission()) return
-        _serviceEnabled.value = isLocationServiceEnabled()
+    private fun startSubscription(
+        context: Context,
+        mode: Mode,
+    ) {
+        if (subscribed) stopSubscription()
+        _fineLocationGranted.value = hasFinePermission(context)
+        _serviceEnabled.value = computeServiceEnabled(context)
+        if (!hasPermission(context)) return
         val fine = _fineLocationGranted.value
-        val providers = locationManager.getProviders(true)
-        seedLastKnown(providers, fine)
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providers =
+            when (mode) {
+                Mode.Foreground -> {
+                    val enabled = lm.getProviders(true).filter { it != LocationManager.PASSIVE_PROVIDER }
+                    // GPS_PROVIDER requires ACCESS_FINE_LOCATION; subscribing without it throws
+                    // SecurityException at runtime. Skip it under a coarse-only grant and keep the
+                    // network provider as an indoor fallback.
+                    if (fine) enabled else enabled.filter { it != LocationManager.GPS_PROVIDER }
+                }
+                // Recording refuses network fixes: the recorded track must be a real movement trace,
+                // and a coarse cell/WiFi position would poison the polyline with non-positions. If
+                // fine is missing here the caller is expected to have bailed out before acquiring.
+                Mode.Recording -> if (fine) listOf(LocationManager.GPS_PROVIDER) else emptyList()
+            }
+        if (providers.isEmpty()) return
+        seedLastKnown(lm, providers)
         for (provider in providers) {
-            if (provider == LocationManager.PASSIVE_PROVIDER) continue
-            // GPS_PROVIDER requires ACCESS_FINE_LOCATION; subscribing without it throws
-            // SecurityException at runtime (the @SuppressLint annotation only silences the lint
-            // check). Skip it under a coarse-only grant and keep the network provider.
-            if (provider == LocationManager.GPS_PROVIDER && !fine) continue
-            locationManager.requestLocationUpdates(
+            lm.requestLocationUpdates(
                 provider,
                 MIN_TIME_MS,
                 MIN_DISTANCE_M,
@@ -198,32 +247,34 @@ class LocationProvider(
                 Looper.getMainLooper(),
             )
         }
-        // Satellite status needs fine location; with a coarse-only grant we skip it and leave gnss null.
         if (fine) {
-            locationManager.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
+            lm.registerGnssStatusCallback(gnssCallback, Handler(Looper.getMainLooper()))
         }
-        started = true
+        subscribed = true
     }
 
-    /** Stops all updates. Safe to call when not started. */
-    fun stop() {
-        locationManager.removeUpdates(listener)
-        locationManager.unregisterGnssStatusCallback(gnssCallback)
+    private fun stopSubscription() {
+        if (!subscribed) return
+        val ctx = appContext
+        if (ctx != null) {
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            lm.removeUpdates(listener)
+            lm.unregisterGnssStatusCallback(gnssCallback)
+        }
+        // Clear GNSS but keep _fix / lastLocation so a returning owner sees the last known position
+        // immediately (per gps-source-refactor "release preserves fix" decision).
         _gnss.value = null
-        started = false
+        subscribed = false
     }
 
     @SuppressLint("MissingPermission")
     private fun seedLastKnown(
+        lm: LocationManager,
         providers: List<String>,
-        fine: Boolean,
     ) {
         var best: Location? = null
         for (provider in providers) {
-            // Same fine-permission gate as the live subscription: getLastKnownLocation("gps")
-            // throws SecurityException under a coarse-only grant.
-            if (provider == LocationManager.GPS_PROVIDER && !fine) continue
-            val candidate = locationManager.getLastKnownLocation(provider) ?: continue
+            val candidate = lm.getLastKnownLocation(provider) ?: continue
             if (isBetter(candidate, best)) best = candidate
         }
         if (best != null) onLocation(best)
@@ -270,41 +321,36 @@ class LocationProvider(
             null
         }
 
-    /** Prefers a clearly newer fix, falling back to better accuracy when readings are close in time. */
+    /**
+     * Two rules: drop a fix that is clearly older than the current one, and hold a still-recent GPS
+     * fix against incoming network fixes so a briefly missing GPS cycle does not jump the marker to
+     * a cell/WiFi position. No accuracy tie-break (see gps-source-refactor decision 4): under 1 Hz
+     * updates the old tie-break froze the marker for seconds at a time when consecutive fixes
+     * happened to report worse-than-current accuracy.
+     */
     private fun isBetter(
         candidate: Location,
         current: Location?,
     ): Boolean {
         if (current == null) return true
         val ageDeltaMs = candidate.time - current.time
-        // Clearly older than what we already show: drop it.
         if (ageDeltaMs < -SIGNIFICANT_TIME_MS) return false
-        // Prefer GPS: while the shown fix is a still-recent GPS reading, do not let a coarser
-        // non-GPS (network) fix replace it - GPS briefly missing a cycle should not make the dot
-        // jump to a cell/WiFi position. Once GPS has been silent past the hold window, fall through
-        // so a stale GPS fix does not strand the marker forever.
         if (isGps(current) && !isGps(candidate) && ageDeltaMs < GPS_PREFERENCE_MS) return false
-        // Clearly newer: take it on freshness.
-        if (ageDeltaMs > SIGNIFICANT_TIME_MS) return true
-        // Close in time: the more accurate reading wins.
-        if (!candidate.hasAccuracy()) return false
-        if (!current.hasAccuracy()) return true
-        return candidate.accuracy <= current.accuracy
+        return true
     }
 
     private fun isGps(location: Location): Boolean = location.provider == LocationManager.GPS_PROVIDER
 
-    private companion object {
-        const val MIN_TIME_MS = 1_000L
-        const val MIN_DISTANCE_M = 1f
+    private const val MIN_TIME_MS = 1_000L
+    private const val MIN_DISTANCE_M = 1f
 
-        // Below ~0.5 m/s the device is effectively still; its reported bearing is unreliable.
-        const val MIN_BEARING_SPEED = 0.5f
+    // Below ~0.5 m/s the device is effectively still; its reported bearing is unreliable.
+    private const val MIN_BEARING_SPEED = 0.5f
 
-        // A fix more than 5 s newer wins regardless of accuracy; within the window, accuracy decides.
-        const val SIGNIFICANT_TIME_MS = 5_000L
+    // A fix more than 5 s newer wins regardless of provider (via the ageDeltaMs stale check going
+    // the other way); within the window the GPS-preference rule below decides.
+    private const val SIGNIFICANT_TIME_MS = 5_000L
 
-        // How long a recent GPS fix is held against incoming network fixes before they may take over.
-        const val GPS_PREFERENCE_MS = 20_000L
-    }
+    // How long a recent GPS fix is held against incoming network fixes before they may take over.
+    private const val GPS_PREFERENCE_MS = 20_000L
 }
