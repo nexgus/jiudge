@@ -93,6 +93,19 @@ class RecordingService : Service() {
         super.onDestroy()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // User swiped the app from Recents while a recording was live. A foreground service would
+        // otherwise keep running (and its notification stay pinned) after the activity is gone,
+        // which reads as "why is the notification still there when I closed the app". Treat the
+        // swipe the same as tapping the notification's Stop action: release the GPS lease, hand the
+        // in-flight session to RecordingController.pendingSession so the next launch can offer the
+        // save/discard dialog, then stopSelf. If the process is killed outright instead of just the
+        // task being removed, the notification goes with it and the staging file left on disk is
+        // cleaned up by trackStore.cleanupStaleRecordings() on next launch.
+        handleStop()
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun startNewSession() {
         if (RecordingController.active) {
             // Activity may resend START on rotation / re-entry; do not stack sessions.

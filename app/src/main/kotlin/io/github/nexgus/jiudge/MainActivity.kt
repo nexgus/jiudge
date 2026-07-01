@@ -246,6 +246,12 @@ private const val SHOW_ACCURACY_CIRCLE = true
 private const val PEAK_VIEW_MIN_ZOOM: Byte = 14
 private const val PEAK_VIEW_ZOOM: Byte = 15
 
+// On ON_RESUME, a fix older than this is treated as too stale to snap the map to (e.g. mid-tunnel
+// where GPS has been silent for a while - centring on the pre-tunnel spot would mislead). Short
+// signal shadows (traffic lights, dense urban canyons) commonly last well under this window and
+// still resolve to a usable "last known" position, so 60 s is a deliberately generous threshold.
+private const val STALE_FIX_THRESHOLD_MS: Long = 60_000L
+
 @Composable
 private fun MapScreen(
     mapDir: File,
@@ -745,6 +751,21 @@ private fun MapScreen(
                     // minutes later, the world moved" cases. If the user immediately pans again,
                     // they turn follow off in one gesture.
                     followUser = true
+                    // Snap the map onto the last known position now if it is fresh; a stale fix
+                    // (typically inside a long tunnel where GPS has been silent) would jump the map
+                    // to an outdated spot, so fall back to the one-shot recenterOnFix and wait for a
+                    // real fix. The touch listener also clears recenterOnFix on a manual pan, so
+                    // this cannot fight a user who returns and immediately looks elsewhere.
+                    val mv = map.value
+                    val fix = GpsSource.fix.value
+                    if (mv != null &&
+                        fix != null &&
+                        System.currentTimeMillis() - fix.timeMs < STALE_FIX_THRESHOLD_MS
+                    ) {
+                        mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
+                    } else {
+                        recenterOnFix = true
+                    }
                 } else {
                     gpsOwnership?.release()
                     gpsOwnership = null
@@ -848,9 +869,12 @@ private fun MapScreen(
                 markerInViewport = false
                 return@collect
             }
-            if (recenterOnFix) {
+            if (recenterOnFix && !userTouching) {
                 // One-shot land-on-marker; takes priority over safe-zone logic since the user
-                // explicitly asked for centring (either at launch or via the recenter FAB).
+                // explicitly asked for centring (either at launch or via the recenter FAB). Guarded
+                // by !userTouching so a fix arriving mid-gesture cannot fight the user's pan; if
+                // the gesture turns out to be a real pan, the touch listener clears recenterOnFix
+                // on release and this branch never fires.
                 recenterOnFix = false
                 mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
             } else if (mode != PlanMode.ROUTE_EDIT && !userTouching && followUser) {
@@ -992,6 +1016,10 @@ private fun MapScreen(
                                     val position = mv.model.mapViewPosition
                                     if (position.center != startCenter || position.zoomLevel != startZoom) {
                                         followUser = false
+                                        // A pan overrides any armed one-shot recenter: without this
+                                        // clear, a fix arriving after the user let go would still
+                                        // snap the map back onto the marker, defeating the pan.
+                                        recenterOnFix = false
                                     }
                                 }
                             }
