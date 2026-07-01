@@ -572,6 +572,13 @@ private fun MapScreen(
     // Center the map on the first fix: true at launch when permission is already held (so a returning
     // user opens straight onto their location), and re-armed when the recenter FAB is tapped.
     var recenterOnFix by remember { mutableStateOf(GpsSource.hasPermission(context)) }
+    // Persistent marker-follow toggle. While true, the map keeps the marker in sight on every fix -
+    // safe-zone push while it is inside the viewport, hard recenter once it drifts out (typical of
+    // GPS jumps out of a tunnel or on public transport). Cleared when the user pans / zooms the
+    // map (that is their signal they want to look elsewhere); re-armed on ON_RESUME (recording or
+    // not, a return to the app is a "refocus") and on the recenter FAB. Sits alongside the one-shot
+    // [recenterOnFix] which still owns first-fix / FAB "jump to me" behaviour.
+    var followUser by remember { mutableStateOf(true) }
 
     // Map bearing (NORTH_UP vs TRACK_UP). Persisted so the choice survives an app relaunch. Applied to
     // the MapView on every heading update so TRACK_UP rotation tracks the compass with no extra wiring.
@@ -731,13 +738,13 @@ private fun MapScreen(
                         gpsOwnership = GpsSource.acquire(context, GpsSource.Mode.Foreground)
                     }
                     headingProvider.start()
-                    // Coming back to the map mid-recording: the user actively cares about "where am
-                    // I on the track", so re-arm the one-shot recenter for the next fix. The idle
-                    // path is left alone so a manual pan the user did before backgrounding is not
-                    // undone on return.
-                    if (RecordingController.state.value == Recorder.State.RECORDING) {
-                        recenterOnFix = true
-                    }
+                    // Returning to the app is treated as a refocus: whatever the user was looking
+                    // at before backgrounding is not preserved, and the next fix pulls the map back
+                    // to the marker. This covers "recording, phone was in a pocket, come back and
+                    // the marker is off-screen" as well as ordinary "left the app, opened it a few
+                    // minutes later, the world moved" cases. If the user immediately pans again,
+                    // they turn follow off in one gesture.
+                    followUser = true
                 } else {
                     gpsOwnership?.release()
                     gpsOwnership = null
@@ -846,16 +853,30 @@ private fun MapScreen(
                 // explicitly asked for centring (either at launch or via the recenter FAB).
                 recenterOnFix = false
                 mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
-            } else if (mode != PlanMode.ROUTE_EDIT && !userTouching) {
-                when (val action = MapFollow.evaluate(mv, fix, lastFix)) {
-                    MapFollow.Action.None -> Unit
-                    is MapFollow.Action.Push -> {
-                        if (action.animate) {
-                            mv.model.mapViewPosition.animateTo(action.target)
-                        } else {
-                            mv.model.mapViewPosition.center = action.target
+            } else if (mode != PlanMode.ROUTE_EDIT && !userTouching && followUser) {
+                // followUser gates every automatic pan below. It is only false once the user has
+                // actually panned / zoomed the map themselves (see the touch listener above), so
+                // the two branches here can safely assume the user still wants to be followed.
+                if (MapFollow.isMarkerInViewport(mv, fix)) {
+                    // Marker on-screen: soft-follow through the safe zone as before.
+                    when (val action = MapFollow.evaluate(mv, fix, lastFix)) {
+                        MapFollow.Action.None -> Unit
+                        is MapFollow.Action.Push -> {
+                            if (action.animate) {
+                                mv.model.mapViewPosition.animateTo(action.target)
+                            } else {
+                                mv.model.mapViewPosition.center = action.target
+                            }
                         }
                     }
+                } else {
+                    // Marker off-screen. MapFollow.evaluate's original free-mode silence was there
+                    // to protect a hand-panned map, but that protection is already covered by the
+                    // followUser flag: reaching this branch means the user did not pan, and a fix
+                    // that puts the marker outside the viewport is a GPS jump (tunnel exit, MRT,
+                    // fast motion) that should snap the map back. No animate: crawling across the
+                    // screen for hundreds of metres is worse than a jump.
+                    mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
                 }
             }
             // Refresh the recentre-button highlight after any pan we just performed.
@@ -921,6 +942,10 @@ private fun MapScreen(
             context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             return
         }
+        // The FAB is the explicit "follow me" trigger, so re-arm the persistent follow as well as
+        // whatever one-shot centring path we take below. Without this, tapping the FAB after a
+        // manual pan would centre once and then stop tracking on the next fix.
+        followUser = true
         val fix = GpsSource.fix.value
         if (fix != null) {
             map.value
@@ -938,14 +963,38 @@ private fun MapScreen(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 RudyMapView.create(ctx, mapDir).also { mv ->
-                    // Observe touches so the safe-zone follow pauses while a finger (or two) is down,
-                    // and resumes only when every pointer has lifted - keeping multi-touch pinches
-                    // covered. Returning false lets mapsforge's own gesture handling run unchanged.
+                    // Observe touches for two things: (1) userTouching pauses the safe-zone follow
+                    // while a finger (or two) is down, so an incoming fix does not fight the user's
+                    // pan/pinch mid-gesture; (2) if the gesture actually changed the map's centre or
+                    // zoom, clear followUser so subsequent fixes leave the map alone until the user
+                    // asks for a recenter. Compare centre + zoom captured at DOWN against the values
+                    // at UP/CANCEL so a stray tap (which touches nothing) does not disengage follow.
+                    // rotation is left out because TRACK_UP applies rotation from the compass, not
+                    // the user's fingers. Returning false lets mapsforge's own gesture handling run
+                    // unchanged.
+                    var touchStartCenter: LatLong? = null
+                    var touchStartZoom: Byte? = null
                     mv.setOnTouchListener { _, event ->
                         when (event.actionMasked) {
-                            MotionEvent.ACTION_DOWN -> userTouching = true
-                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                            MotionEvent.ACTION_DOWN -> {
+                                userTouching = true
+                                val position = mv.model.mapViewPosition
+                                touchStartCenter = position.center
+                                touchStartZoom = position.zoomLevel
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                                 userTouching = false
+                                val startCenter = touchStartCenter
+                                val startZoom = touchStartZoom
+                                touchStartCenter = null
+                                touchStartZoom = null
+                                if (startCenter != null && startZoom != null) {
+                                    val position = mv.model.mapViewPosition
+                                    if (position.center != startCenter || position.zoomLevel != startZoom) {
+                                        followUser = false
+                                    }
+                                }
+                            }
                             else -> Unit
                         }
                         false
