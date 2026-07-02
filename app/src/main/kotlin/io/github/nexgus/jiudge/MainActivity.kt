@@ -695,6 +695,17 @@ private fun MapScreen(
         map.value?.layerManager?.redrawLayers()
     }
 
+    // Rubber-band segment (docs/gating.md §6): while actively recording, keep the trail visually
+    // connected to the current-location marker even when gating holds fixes back. Display-only -
+    // nothing here is written to the track. Cleared outside RECORDING so a paused or finished
+    // track does not chase the marker.
+    LaunchedEffect(recordedTrackLayer) {
+        val layer = recordedTrackLayer ?: return@LaunchedEffect
+        combine(GpsSource.fix, RecordingController.state) { fix, state ->
+            if (state == Recorder.State.RECORDING && fix != null) LatLong(fix.latitude, fix.longitude) else null
+        }.collect { tip -> layer.updateLiveTip(tip) }
+    }
+
     // Push the loaded history track into its layer whenever it changes; null clears the overlay.
     LaunchedEffect(historyTrackLayer, historyTrack) {
         val layer = historyTrackLayer ?: return@LaunchedEffect
@@ -837,7 +848,8 @@ private fun MapScreen(
             headingProvider.heading,
             headingProvider.headingAccuracyDeg,
             GpsSource.serviceEnabled,
-        ) { fix, heading, headingAccuracy, enabled ->
+            GpsSource.fixStale,
+        ) { fix, heading, headingAccuracy, enabled, stale ->
             // The compass reads magnetic north; shift it by the local declination so the facing
             // cone lines up with the true-north map. GPS movement bearing is already true north.
             val trueHeading =
@@ -852,8 +864,9 @@ private fun MapScreen(
                 headingAccuracyDeg = headingAccuracy,
                 hasCompass = headingProvider.hasCompass,
                 showAccuracy = SHOW_ACCURACY_CIRCLE,
-                // Location service off but we still hold a last fix: grey it to mark it stale.
-                frozen = !enabled && fix != null,
+                // Grey the held fix once it no longer reflects a live position: the location
+                // service was switched off, or every subscribed provider went quiet (fix stale).
+                frozen = (!enabled || stale) && fix != null,
             )
         }.collect { }
     }

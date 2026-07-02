@@ -52,12 +52,19 @@ object RecordingController {
         recorder.startContinuation(source)
     }
 
-    /** Service-only: push one fix in. Returns the IO error if the staging-file append failed. */
+    /** Service-only: push one fix in. Returns the IO error if a staging-file append failed. */
     internal fun handleFix(
         latitude: Double,
         longitude: Double,
         timeMs: Long,
-    ): IOException? = recorder.onFix(latitude, longitude, timeMs)
+        accuracyMeters: Float?,
+        speedMps: Float?,
+    ): IOException? = recorder.onFix(latitude, longitude, timeMs, accuracyMeters, speedMps)
+
+    /** Service-only: the fix stream went stale; drops the gate's pending fix (docs/gating.md rule 2). */
+    internal fun handleFixStale() {
+        recorder.onFixStale()
+    }
 
     /** Service-only: pause the session (enters [Recorder.State.PAUSED] - the "已停止" layer). */
     internal fun handlePause() {

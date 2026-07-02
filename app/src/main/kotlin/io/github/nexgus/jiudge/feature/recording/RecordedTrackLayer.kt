@@ -50,9 +50,19 @@ class RecordedTrackLayer(
     @Volatile
     private var snapshot: List<LatLong> = emptyList()
 
+    // Rubber-band endpoint (docs/gating.md §6): the current-location marker's position while
+    // actively recording, or null. Display-only - a dashed segment from the last written point to
+    // this position keeps the trail visually connected to the marker while gating holds points back.
+    @Volatile
+    private var liveTip: LatLong? = null
+
     private val factory = AndroidGraphicFactory.INSTANCE
     private val chevronHalo = strokeRound(chevronHaloColor, 1f)
     private val chevronPaint = strokeRound(chevronColor, 1f)
+    private val rubberPaint =
+        strokeRound(chevronColor, 1f).apply {
+            setDashPathEffect(floatArrayOf(RUBBER_DASH_ON_DP * density, RUBBER_DASH_OFF_DP * density))
+        }
 
     /** Replaces the rendered polyline; the chevron walker is rebuilt on the next draw. */
     fun update(points: List<LatLong>) {
@@ -60,9 +70,16 @@ class RecordedTrackLayer(
         requestRedraw()
     }
 
+    /** Moves (or with null, hides) the rubber-band segment's marker-side endpoint. */
+    fun updateLiveTip(tip: LatLong?) {
+        liveTip = tip
+        requestRedraw()
+    }
+
     /** Removes the rendered polyline; the layer stays mounted, ready for the next update. */
     fun clear() {
         snapshot = emptyList()
+        liveTip = null
         requestRedraw()
     }
 
@@ -74,7 +91,10 @@ class RecordedTrackLayer(
         rotation: Rotation,
     ) {
         val polyline = snapshot
-        if (polyline.size < 2) return
+        val tip = liveTip
+        val hasTrack = polyline.size >= 2
+        val hasBand = tip != null && polyline.isNotEmpty()
+        if (!hasTrack && !hasBand) return
         val mapSize = MercatorProjection.getMapSize(zoomLevel, displayModel.tileSize)
         val visualZoom = visualZoom(mapSize)
 
@@ -83,7 +103,30 @@ class RecordedTrackLayer(
         fun screenY(lat: Double) = MercatorProjection.latitudeToPixelY(lat, mapSize) - topLeftPoint.y
 
         val lineWidth = (LINE_WIDTH_DP * density * lineScaleForZoom(visualZoom)).coerceAtLeast(2f)
-        drawDirectionChevrons(canvas, polyline, lineWidth, ::screenX, ::screenY)
+        if (hasTrack) drawDirectionChevrons(canvas, polyline, lineWidth, ::screenX, ::screenY)
+        if (tip != null && polyline.isNotEmpty()) {
+            drawRubberBand(canvas, polyline.last(), tip, lineWidth, ::screenX, ::screenY)
+        }
+    }
+
+    /**
+     * The rubber-band segment (docs/gating.md §6): a thin dashed line from the last written point
+     * to the current-location marker, so the trail reads as connected to the marker even while the
+     * gate holds fixes back. Dashed and chevron-free so it cannot be mistaken for recorded track.
+     */
+    private fun drawRubberBand(
+        canvas: Canvas,
+        last: LatLong,
+        tip: LatLong,
+        lineWidth: Float,
+        screenX: (Double) -> Double,
+        screenY: (Double) -> Double,
+    ) {
+        rubberPaint.setStrokeWidth((lineWidth * RUBBER_WIDTH_RATIO).coerceAtLeast(1f))
+        val path = factory.createPath()
+        path.moveTo(screenX(last.longitude).toFloat(), screenY(last.latitude).toFloat())
+        path.lineTo(screenX(tip.longitude).toFloat(), screenY(tip.latitude).toFloat())
+        canvas.drawPath(path, rubberPaint)
     }
 
     /** Walks the projected track and lays a ">" chevron pointing along travel; sizes scale off [lineWidth]. */
@@ -206,6 +249,12 @@ class RecordedTrackLayer(
         // The whole point of this layer: chevrons nearly touch so the trail reads from density alone.
         // Tune this on-device; lower values pack the marks tighter at the cost of more draw work.
         const val CHEVRON_SPACING_RATIO = 1.2f
+
+        // Rubber-band segment: thinner than the track's width basis and dashed, so the display-only
+        // link to the marker stays visually distinct from recorded points.
+        const val RUBBER_WIDTH_RATIO = 0.4f
+        const val RUBBER_DASH_ON_DP = 4f
+        const val RUBBER_DASH_OFF_DP = 3f
 
         const val BASE_TILE_SIZE = 256
         val LOG_2 = ln(2.0)

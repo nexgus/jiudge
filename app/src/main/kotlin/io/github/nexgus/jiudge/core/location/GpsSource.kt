@@ -12,6 +12,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -81,6 +82,15 @@ object GpsSource {
     private val _fix = MutableStateFlow<LocationFix?>(null)
     val fix: StateFlow<LocationFix?> = _fix.asStateFlow()
 
+    private val _fixStale = MutableStateFlow(true)
+
+    /**
+     * True when no fix has arrived within [STALE_FIX_TIMEOUT_MS] - every subscribed provider has
+     * gone quiet (GPS + network in Foreground mode, GPS alone in Recording mode), so [fix] says
+     * where the device was, not where it is. Starts true and stays true until the first live fix.
+     */
+    val fixStale: StateFlow<Boolean> = _fixStale.asStateFlow()
+
     // Whether the system-wide location service (the master toggle, not this app's permission) is on.
     private val _serviceEnabled = MutableStateFlow(false)
     val serviceEnabled: StateFlow<Boolean> = _serviceEnabled.asStateFlow()
@@ -98,6 +108,12 @@ object GpsSource {
     private var currentOwner: OwnershipImpl? = null
     private var lastLocation: Location? = null
     private var subscribed = false
+
+    // Providers emit no "signal lost" event, so staleness is a countdown re-armed by every incoming
+    // fix. It deliberately keeps running across release/re-acquire: the preserved fix must still
+    // grey out on schedule while no subscription is delivering.
+    private val staleHandler = Handler(Looper.getMainLooper())
+    private val staleRunnable = Runnable { _fixStale.value = true }
 
     private val listener =
         object : LocationListener {
@@ -281,6 +297,10 @@ object GpsSource {
     }
 
     private fun onLocation(location: Location) {
+        // Freshness counts every arriving fix, including ones isBetter() rejects: a network fix
+        // held back by the GPS-preference window still proves a provider is alive, and the shown
+        // position will switch to it within that window - no grey blink during the handover.
+        markFreshness(location)
         if (!isBetter(location, lastLocation)) return
         lastLocation = location
         _fix.value =
@@ -298,6 +318,22 @@ object GpsSource {
                 provider = location.provider,
                 timeMs = location.time,
             )
+    }
+
+    /**
+     * Restarts the staleness countdown from [location]'s age (monotonic clock, immune to wall-clock
+     * jumps). A live fix is ~0 old and arms the full window; an old getLastKnownLocation seed keeps
+     * the flag stale, so a stored position is never presented as current.
+     */
+    private fun markFreshness(location: Location) {
+        val ageMs = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000
+        staleHandler.removeCallbacks(staleRunnable)
+        if (ageMs >= STALE_FIX_TIMEOUT_MS) {
+            _fixStale.value = true
+        } else {
+            _fixStale.value = false
+            staleHandler.postDelayed(staleRunnable, STALE_FIX_TIMEOUT_MS - ageMs)
+        }
     }
 
     /** Local magnetic declination from the world magnetic model; ~once per second is negligible cost. */
@@ -342,7 +378,15 @@ object GpsSource {
     private fun isGps(location: Location): Boolean = location.provider == LocationManager.GPS_PROVIDER
 
     private const val MIN_TIME_MS = 1_000L
-    private const val MIN_DISTANCE_M = 1f
+
+    // 0 on purpose (not 1 m): a stationary device with a good fix must keep reporting, otherwise a
+    // lost signal and standing still would look identical to the staleness countdown. The recorded
+    // track re-applies a spacing gate before appending points (see Recorder.onFix).
+    private const val MIN_DISTANCE_M = 0f
+
+    // With MIN_DISTANCE_M = 0 a live provider reports about once per MIN_TIME_MS, so this many
+    // missed cycles means every subscribed provider has lost its fix -> [fixStale] flips true.
+    private const val STALE_FIX_TIMEOUT_MS = 10_000L
 
     // Below ~0.5 m/s the device is effectively still; its reported bearing is unreliable.
     private const val MIN_BEARING_SPEED = 0.5f

@@ -60,6 +60,7 @@ class RecordingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var gpsOwnership: GpsSource.Ownership? = null
     private var fixJob: Job? = null
+    private var staleJob: Job? = null
     private var startedForeground = false
     private var displayName: String = ""
 
@@ -234,9 +235,24 @@ class RecordingService : Service() {
             scope.launch {
                 GpsSource.fix.collect { fix ->
                     if (fix != null && fix.timeMs > staleFixTimeMs) {
-                        val err = RecordingController.handleFix(fix.latitude, fix.longitude, fix.timeMs)
+                        val err =
+                            RecordingController.handleFix(
+                                fix.latitude,
+                                fix.longitude,
+                                fix.timeMs,
+                                fix.accuracyMeters,
+                                fix.speedMps,
+                            )
                         if (err != null) pauseSessionOnFixError()
                     }
+                }
+            }
+        staleJob =
+            scope.launch {
+                // A stale stream means the gate's pending fix will never get its corroborating
+                // successor - drop it (docs/gating.md rule 2).
+                GpsSource.fixStale.collect { stale ->
+                    if (stale) RecordingController.handleFixStale()
                 }
             }
     }
@@ -244,6 +260,8 @@ class RecordingService : Service() {
     private fun releaseGps() {
         fixJob?.cancel()
         fixJob = null
+        staleJob?.cancel()
+        staleJob = null
         gpsOwnership?.release()
         gpsOwnership = null
     }

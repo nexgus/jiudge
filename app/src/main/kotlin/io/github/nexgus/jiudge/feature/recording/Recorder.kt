@@ -50,6 +50,9 @@ class Recorder(
 
     private var session: Session? = null
 
+    // Write-gating rules (docs/gating.md); re-armed per session, pending cleared on pause/stale.
+    private val gate = FixGate()
+
     /** True iff there is a live session ([State.RECORDING] or [State.PAUSED]). */
     val active: Boolean get() = session != null
 
@@ -75,6 +78,7 @@ class Recorder(
                 defaultName = defaultSaveName,
             )
         _points.value = emptyList()
+        gate.reset()
         _state.value = State.RECORDING
     }
 
@@ -82,6 +86,8 @@ class Recorder(
      * Continues an existing saved track. Copies its header and points into a fresh staging file,
      * seeds the live polyline with the prior points so the overlay shows the existing path, and
      * enters [State.RECORDING]. The original [source] is left untouched until [finalize] commits.
+     * The gate's anchor is seeded with the source's last point, so the continuation's first fixes
+     * are spacing-gated against where the track actually ends.
      */
     fun startContinuation(source: File) {
         val staging = store.startContinuationStaging(source)
@@ -95,28 +101,52 @@ class Recorder(
                 defaultName = seeded.name,
             )
         _points.value = seeded.polyline
+        gate.reset(
+            anchor =
+                seeded.points.lastOrNull()?.let {
+                    FixGate.Fix(it.latitude, it.longitude, it.timeMs, accuracyMeters = null, speedMps = null)
+                },
+        )
         _state.value = State.RECORDING
     }
 
     /**
-     * Push one fix in. When [State.RECORDING] the fix is appended to the staging file and the
-     * in-memory polyline; otherwise it is dropped. Returns the IO error if the append failed, so the
-     * caller can surface it and stop the session.
+     * Push one fix in. When [State.RECORDING] the fix runs through the [FixGate] rules
+     * (docs/gating.md §3); what the gate accepts is appended to the staging file and the in-memory
+     * polyline (a corroborated pending fix arrives together with its successor, so a single call
+     * may append two points). Outside RECORDING the fix is dropped. Returns the IO error if an
+     * append failed, so the caller can surface it and stop the session.
      */
     fun onFix(
         latitude: Double,
         longitude: Double,
         timeMs: Long,
+        accuracyMeters: Float?,
+        speedMps: Float?,
     ): IOException? {
         if (_state.value != State.RECORDING) return null
         val s = session ?: return null
+        val accepted = gate.offer(FixGate.Fix(latitude, longitude, timeMs, accuracyMeters, speedMps))
         return try {
-            store.appendPoint(s.staging, latitude, longitude, timeMs)
-            _points.value = _points.value + LatLong(latitude, longitude)
+            for (fix in accepted) {
+                store.appendPoint(s.staging, fix.latitude, fix.longitude, fix.timeMs)
+                // Update the polyline per append, so file and overlay stay in step even when the
+                // second of two appends fails.
+                _points.value = _points.value + LatLong(fix.latitude, fix.longitude)
+            }
             null
         } catch (e: IOException) {
             e
         }
+    }
+
+    /**
+     * Signals that the fix stream has gone stale (GpsSource.fixStale flipped true): the gate's
+     * pending fix, if any, will never get its corroborating successor, so it is dropped
+     * (docs/gating.md rule 2).
+     */
+    fun onFixStale() {
+        gate.clearPending()
     }
 
     /**
@@ -127,6 +157,7 @@ class Recorder(
      */
     fun pause() {
         if (session == null) return
+        gate.clearPending()
         _state.value = State.PAUSED
     }
 
@@ -146,6 +177,7 @@ class Recorder(
         session = null
         _state.value = State.IDLE
         _points.value = emptyList()
+        gate.reset()
         return s
     }
 

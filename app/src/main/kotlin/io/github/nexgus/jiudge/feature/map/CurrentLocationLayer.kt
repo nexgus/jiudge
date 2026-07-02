@@ -82,7 +82,7 @@ class CurrentLocationLayer(
     // widths are set per frame so they can be inverse-scaled against the frame buffer's stretch.
     private val dotFill = fill()
     private val dotStroke = stroke(0xFFFFFFFF.toInt())
-    private val frozenFill = solid(0xFF9E9E9E.toInt()) // grey: the fix is stale (location service off)
+    private val frozenFill = solid(0xFF9E9E9E.toInt()) // grey: the fix is stale (no live fix / service off)
     private val frozenStroke = stroke(0xFFFFFFFF.toInt())
     private val accuracyFill = fill()
     private val accuracyStroke = stroke(0xFFFFFFFF.toInt())
@@ -108,8 +108,9 @@ class CurrentLocationLayer(
             if (fix == null) {
                 null
             } else if (frozen) {
-                // Location service off mid-session: keep the last point in place but grey, with no
-                // direction or accuracy, to signal it is stale and no longer updating.
+                // Stale fix (every subscribed provider quiet, or the location service switched
+                // off): keep the last point in place but grey, with no direction or accuracy, to
+                // signal it no longer tracks the device.
                 Snapshot(fix, DirectionMode.NONE, 0f, 0f, showAccuracy = false, frozen = true)
             } else if (hasCompass && headingDeg != null) {
                 val half =
