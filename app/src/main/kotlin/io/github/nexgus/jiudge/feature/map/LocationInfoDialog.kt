@@ -37,10 +37,15 @@ import kotlin.math.floor
  * [demAltitude] is the elevation looked up from the on-device DEM at the fix position (independent
  * of the GPS-reported altitude); [gnss] is null when satellite status is unavailable (no fine-
  * location grant or no reading yet).
+ *
+ * [fixStale] mirrors the marker's grey state: [fix] is the last known position, but no provider
+ * has delivered for a while, so the link row reports a lost signal instead of presenting the old
+ * fix's provider as a live connection.
  */
 @Composable
 fun LocationInfoDialog(
     fix: LocationFix?,
+    fixStale: Boolean,
     gnss: GnssSummary?,
     serviceEnabled: Boolean,
     demAltitude: Double?,
@@ -63,7 +68,7 @@ fun LocationInfoDialog(
                 InfoRow("TWD97", twd97Text(fix))
                 InfoRow("海拔", altitudeText(demAltitude, fix?.altitudeMeters))
                 HorizontalDivider()
-                InfoRow("連線狀態", connectionText(serviceEnabled, fix))
+                InfoRow("連線狀態", connectionText(serviceEnabled, fix, fixStale))
                 InfoRow("信號強度", signalText(gnss))
                 InfoRow("衛星數量", satelliteCountText(gnss))
                 InfoRow("平均 C/N0", cn0Text(gnss))
@@ -118,10 +123,12 @@ private const val DASH = "--"
 private fun connectionText(
     serviceEnabled: Boolean,
     fix: LocationFix?,
+    fixStale: Boolean,
 ): String =
     when {
         !serviceEnabled -> "定位服務已關閉"
         fix == null -> "尚未定位"
+        fixStale -> "信號中斷 (最後定位: ${if (fix.fromGps) "GPS 衛星" else "網路"})"
         fix.fromGps -> "GPS 衛星定位"
         else -> "網路定位 (WiFi/行動網路)"
     }

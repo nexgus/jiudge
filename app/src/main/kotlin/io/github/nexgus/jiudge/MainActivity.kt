@@ -962,6 +962,7 @@ private fun MapScreen(
     // Collected in composition (1 Hz, unlike the high-rate heading) to drive the FAB highlight and the
     // recenter behaviour.
     val currentFix by GpsSource.fix.collectAsState()
+    val currentFixStale by GpsSource.fixStale.collectAsState()
     val serviceEnabled by GpsSource.serviceEnabled.collectAsState()
     val gnss by GpsSource.gnss.collectAsState()
     // Drives the persistent "only coarse location granted" warning banner. Refreshed in syncOnResume
@@ -1865,6 +1866,7 @@ private fun MapScreen(
     if (locationInfoOpen) {
         LocationInfoDialog(
             fix = currentFix,
+            fixStale = currentFixStale,
             gnss = gnss,
             serviceEnabled = serviceEnabled,
             demAltitude = locationInfoDemAltitude,
