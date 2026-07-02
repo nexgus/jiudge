@@ -757,27 +757,29 @@ private fun MapScreen(
                         gpsOwnership = GpsSource.acquire(context, GpsSource.Mode.Foreground)
                     }
                     headingProvider.start()
-                    // Returning to the app is treated as a refocus: whatever the user was looking
-                    // at before backgrounding is not preserved, and the next fix pulls the map back
-                    // to the marker. This covers "recording, phone was in a pocket, come back and
-                    // the marker is off-screen" as well as ordinary "left the app, opened it a few
-                    // minutes later, the world moved" cases. If the user immediately pans away
-                    // again, that gesture's end state turns follow back off.
-                    followUser = true
-                    // Snap the map onto the last known position now if it is fresh; a stale fix
-                    // (typically inside a long tunnel where GPS has been silent) would jump the map
-                    // to an outdated spot, so fall back to the one-shot recenterOnFix and wait for a
-                    // real fix. The touch listener also clears recenterOnFix on a manual pan, so
-                    // this cannot fight a user who returns and immediately looks elsewhere.
-                    val mv = map.value
-                    val fix = GpsSource.fix.value
-                    if (mv != null &&
-                        fix != null &&
-                        System.currentTimeMillis() - fix.timeMs < STALE_FIX_THRESHOLD_MS
-                    ) {
-                        mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
-                    } else {
-                        recenterOnFix = true
+                    // Only refocus when the current UI context is one where following makes sense
+                    // (plain map view, or recording on top of it - all with no search / route work
+                    // in progress). Inside ROUTE_VIEW / ROUTE_EDIT, or with a pending search peak
+                    // / open search dialog, the user is deliberately looking at something else -
+                    // keep the map where they left it and let followUser retain its prior value.
+                    if (mode == PlanMode.MAP_VIEW && pendingPeak == null && !searchDialogOpen) {
+                        followUser = true
+                        // Snap the map onto the last known position now if it is fresh; a stale
+                        // fix (typically inside a long tunnel where GPS has been silent) would
+                        // jump the map to an outdated spot, so fall back to the one-shot
+                        // recenterOnFix and wait for a real fix. The touch listener also clears
+                        // recenterOnFix on a manual pan, so this cannot fight a user who returns
+                        // and immediately looks elsewhere.
+                        val mv = map.value
+                        val fix = GpsSource.fix.value
+                        if (mv != null &&
+                            fix != null &&
+                            System.currentTimeMillis() - fix.timeMs < STALE_FIX_THRESHOLD_MS
+                        ) {
+                            mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
+                        } else {
+                            recenterOnFix = true
+                        }
                     }
                 } else {
                     gpsOwnership?.release()
@@ -891,11 +893,22 @@ private fun MapScreen(
                 // on release and this branch never fires.
                 recenterOnFix = false
                 mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
-            } else if (mode != PlanMode.ROUTE_EDIT && !userTouching && followUser) {
+            } else if (mode == PlanMode.MAP_VIEW &&
+                pendingPeak == null &&
+                !searchDialogOpen &&
+                !userTouching &&
+                followUser
+            ) {
+                // The mode / pendingPeak / searchDialogOpen trio is the context gate: follow only
+                // in plain map view (recording sits on top of MAP_VIEW so it is included) with no
+                // search dialog and no pending search peak. ROUTE_VIEW / ROUTE_EDIT and the search
+                // flow are cases where the user is deliberately looking at something other than
+                // their own location, so an incoming fix must not drag the map away.
                 // followUser gates every automatic pan below. It is only false once one of the
                 // user's own map gestures ended with the marker outside the viewport (see the
-                // touch listener below), so the two branches here can safely assume the user
-                // still wants to be followed.
+                // touch listener below), or the user explicitly picked a target to look at
+                // (centerOnPeak, loading a route to edit), so the two branches here can safely
+                // assume the user still wants to be followed.
                 if (MapFollow.isMarkerInViewport(mv, fix)) {
                     // Marker on-screen: soft-follow through the safe zone as before.
                     when (val action = MapFollow.evaluate(mv, fix, lastFix)) {
@@ -1407,6 +1420,10 @@ private fun MapScreen(
                                 if (route != null && planner != null) {
                                     viewer?.clear()
                                     planner.loadFrom(route)
+                                    // loadFrom pans to the route's first waypoint: stop following
+                                    // so the next fix does not drag the map back onto the marker.
+                                    followUser = false
+                                    recenterOnFix = false
                                     editBaseline = route
                                     isNewRoute = false
                                     mode = PlanMode.ROUTE_EDIT
@@ -1828,6 +1845,11 @@ private fun MapScreen(
                     searchDialogOpen = false
                     pendingPeak = peak
                     centerOnPeak(peak)
+                    // User asked to look at a specific summit: stop following so the next fix does
+                    // not drag the map back onto the current-location marker. The recentre FAB
+                    // re-arms follow when tapped.
+                    followUser = false
+                    recenterOnFix = false
                 },
                 onDismiss = { searchDialogOpen = false },
             )
