@@ -35,11 +35,19 @@ import java.io.File
  * lifetime of the session prevents Doze from suspending the CPU between fixes, which would
  * otherwise let fix updates coalesce or drop.
  *
- * Wiring: the activity sends [ACTION_START_NEW] / [ACTION_START_CONTINUATION] to begin a session,
- * the service drives [RecordingController] (start, fix-per-tick, stop), and [ACTION_STOP] hands the
- * stopped session over to [RecordingController.pendingSession] so the activity can open its save /
- * discard dialog. The service then `stopSelf()`s; the staged session survives in the controller
- * until the user commits or drops it.
+ * Wiring follows the three-layer UI state machine (錄製中 -> 已停止 -> 存檔對話框):
+ * - [ACTION_START_NEW] / [ACTION_START_CONTINUATION] begin a session and enter 錄製中.
+ * - [ACTION_PAUSE] (sent by the bottom bar's "停止", or by [MainActivity] after the notification's
+ *   "停止" action brought it to the foreground - see [buildNotification]) moves the session to
+ *   已停止 (`Recorder.State.PAUSED`). The service keeps running in the foreground: the GPS
+ *   subscription and wake lock are held exactly as they were while recording (see [GpsSource] lease
+ *   and [wakeLock] below) - only [RecordingController.handlePause] gates fixes from being appended.
+ *   This is a deliberate simplification over tearing down and re-acquiring the lease on every pause.
+ * - [ACTION_RESUME] moves back to 錄製中, appending to the same staging file.
+ * - [ACTION_FINISH] is sent by the UI once the save or discard dialog has completed (i.e. after
+ *   [RecordingController.finalize] / [RecordingController.discard] has already run): it releases the
+ *   GPS lease and wake lock, ends the session in [RecordingController], removes the notification, and
+ *   stops the service.
  *
  * No WifiLock: recording does not touch the network. Background location permission
  * ([Manifest.permission.ACCESS_BACKGROUND_LOCATION]) must be granted before starting; the activity
@@ -53,6 +61,7 @@ class RecordingService : Service() {
     private var gpsOwnership: GpsSource.Ownership? = null
     private var fixJob: Job? = null
     private var startedForeground = false
+    private var displayName: String = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -69,8 +78,16 @@ class RecordingService : Service() {
         when (intent?.action) {
             ACTION_START_NEW -> startNewSession()
             ACTION_START_CONTINUATION -> startContinuationSession(intent)
-            ACTION_STOP -> {
-                handleStop()
+            ACTION_PAUSE -> {
+                pauseSession()
+                return START_STICKY
+            }
+            ACTION_RESUME -> {
+                resumeSession()
+                return START_STICKY
+            }
+            ACTION_FINISH -> {
+                finishSession()
                 return START_NOT_STICKY
             }
             else -> {
@@ -84,8 +101,8 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
-        // Defensive: handleStop() already releases these on every normal exit, but onDestroy can
-        // fire without a STOP intent (system-initiated teardown), and leaking a wake lock or a
+        // Defensive: finishSession() already releases these on every normal exit, but onDestroy can
+        // fire without a FINISH intent (system-initiated teardown), and leaking a wake lock or a
         // GpsSource lease silently harms other consumers of the singleton.
         releaseGps()
         releaseWakeLock()
@@ -94,15 +111,16 @@ class RecordingService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // User swiped the app from Recents while a recording was live. A foreground service would
-        // otherwise keep running (and its notification stay pinned) after the activity is gone,
-        // which reads as "why is the notification still there when I closed the app". Treat the
-        // swipe the same as tapping the notification's Stop action: release the GPS lease, hand the
-        // in-flight session to RecordingController.pendingSession so the next launch can offer the
-        // save/discard dialog, then stopSelf. If the process is killed outright instead of just the
-        // task being removed, the notification goes with it and the staging file left on disk is
-        // cleaned up by trackStore.cleanupStaleRecordings() on next launch.
-        handleStop()
+        // User swiped the app from Recents while a recording was live (recording or paused). A
+        // foreground service would otherwise keep running (and its notification stay pinned) after
+        // the activity is gone, which reads as "why is the notification still there when I closed the
+        // app". Spec H: terminate the recording outright, remove the notification, and stop the
+        // service - but the staging file itself is NOT deleted here; it is left on disk for the next
+        // launch's trackStore.cleanupStaleRecordings() to sweep, mirroring the existing (already
+        // correct) staging cleanup contract rather than reaching into TrackStore from the service.
+        releaseGps()
+        RecordingController.handleEnd()
+        stopSelfCleanly()
         super.onTaskRemoved(rootIntent)
     }
 
@@ -138,8 +156,8 @@ class RecordingService : Service() {
         }
         if (!ensureBackgroundLocation()) return
         val source = File(path)
-        val displayName = source.nameWithoutExtension.removePrefix(".recording-").ifEmpty { source.name }
-        beginForeground(displayName)
+        val name = source.nameWithoutExtension.removePrefix(".recording-").ifEmpty { source.name }
+        beginForeground(name)
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -152,15 +170,38 @@ class RecordingService : Service() {
         }
     }
 
-    private fun beginForeground(displayName: String) {
-        startAsForeground(buildNotification(displayName))
+    private fun beginForeground(name: String) {
+        displayName = name
+        startAsForeground(buildNotification(recording = true))
         startedForeground = true
         acquireWakeLock()
     }
 
-    private fun handleStop() {
+    /**
+     * Spec C: pausing keeps the GPS subscription, wake lock, and foreground status untouched - only
+     * [RecordingController.handlePause] flips the gate that [RecordingController.handleFix] checks.
+     * Bringing the app to the foreground is deliberately NOT done here: a service calling
+     * startActivity off a notification action is the "notification trampoline" pattern Android 12+
+     * blocks outright (Android 10-11's background-activity-launch restrictions block it too). The
+     * notification's "停止" action is instead an Activity PendingIntent into [MainActivity], which
+     * reaches the foreground first and forwards [ACTION_PAUSE] back to us - see [buildNotification].
+     */
+    private fun pauseSession() {
+        RecordingController.handlePause()
+        updateNotification(recording = false)
+    }
+
+    private fun resumeSession() {
+        RecordingController.handleResume()
+        updateNotification(recording = true)
+    }
+
+    /** Spec I: an append failure is treated exactly like the user pressing 停止. */
+    private fun pauseSessionOnFixError() = pauseSession()
+
+    private fun finishSession() {
         releaseGps()
-        RecordingController.handleStop()
+        RecordingController.handleEnd()
         stopSelfCleanly()
     }
 
@@ -194,7 +235,7 @@ class RecordingService : Service() {
                 GpsSource.fix.collect { fix ->
                     if (fix != null && fix.timeMs > staleFixTimeMs) {
                         val err = RecordingController.handleFix(fix.latitude, fix.longitude, fix.timeMs)
-                        if (err != null) handleStop()
+                        if (err != null) pauseSessionOnFixError()
                     }
                 }
             }
@@ -222,6 +263,11 @@ class RecordingService : Service() {
         } else {
             startForeground(NOTIF_ID, notification)
         }
+    }
+
+    private fun updateNotification(recording: Boolean) {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIF_ID, buildNotification(recording))
     }
 
     private fun acquireWakeLock() {
@@ -261,7 +307,21 @@ class RecordingService : Service() {
         nm.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(displayName: String): Notification {
+    /**
+     * Spec C: the recording notification keeps its "停止" action (pauses and brings the app to the
+     * foreground); the paused notification drops every action button (no "放棄", no "繼續") and its
+     * text switches to reflect the stopped state - only tapping the notification body (the existing
+     * content intent) brings the app back, where the user picks 儲存 / 放棄 / 繼續錄製 from the 已停止
+     * bottom bar.
+     *
+     * The "停止" action is an Activity PendingIntent into [MainActivity] (with
+     * [MainActivity.ACTION_PAUSE_RECORDING]), not a service PendingIntent: the system launching the
+     * activity straight from the notification is exempt from background-activity-launch limits, so
+     * the app reliably reaches the foreground, and the activity forwards the pause to this service.
+     * [Intent.FLAG_ACTIVITY_SINGLE_TOP] routes the action through onNewIntent on the live single
+     * instance instead of recreating it.
+     */
+    private fun buildNotification(recording: Boolean): Notification {
         val openApp =
             PendingIntent.getActivity(
                 this,
@@ -269,24 +329,30 @@ class RecordingService : Service() {
                 Intent(this, MainActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-        val stop =
-            PendingIntent.getService(
-                this,
-                1,
-                Intent(this, RecordingService::class.java).setAction(ACTION_STOP),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-        return NotificationCompat
-            .Builder(this, CHANNEL_ID)
-            .setContentTitle("錄製軌跡中")
-            .setContentText(displayName)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setContentIntent(openApp)
-            .addAction(0, "停止", stop)
-            .build()
+        val builder =
+            NotificationCompat
+                .Builder(this, CHANNEL_ID)
+                .setContentText(displayName)
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setContentIntent(openApp)
+        if (recording) {
+            val pause =
+                PendingIntent.getActivity(
+                    this,
+                    1,
+                    Intent(this, MainActivity::class.java)
+                        .setAction(MainActivity.ACTION_PAUSE_RECORDING)
+                        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+            builder.setContentTitle("錄製軌跡中").addAction(0, "停止", pause)
+        } else {
+            builder.setContentTitle("軌跡錄製已停止")
+        }
+        return builder.build()
     }
 
     companion object {
@@ -296,7 +362,9 @@ class RecordingService : Service() {
         private const val WAKELOCK_TAG = "Jiudge:RecordingService"
         private const val ACTION_START_NEW = "io.github.nexgus.jiudge.action.START_NEW_RECORDING"
         private const val ACTION_START_CONTINUATION = "io.github.nexgus.jiudge.action.START_CONTINUATION_RECORDING"
-        private const val ACTION_STOP = "io.github.nexgus.jiudge.action.STOP_RECORDING"
+        private const val ACTION_PAUSE = "io.github.nexgus.jiudge.action.PAUSE_RECORDING"
+        private const val ACTION_RESUME = "io.github.nexgus.jiudge.action.RESUME_RECORDING"
+        private const val ACTION_FINISH = "io.github.nexgus.jiudge.action.FINISH_RECORDING"
         private const val EXTRA_SOURCE_PATH = "source_path"
 
         /** Starts a brand-new recording. Call from the foreground (activity). */
@@ -320,10 +388,27 @@ class RecordingService : Service() {
             )
         }
 
-        /** Requests the service to stop the current session and stage it for the save dialog. */
-        fun stop(context: Context) {
+        /** Pauses the current session (錄製中 -> 已停止). The session and its staging file stay alive. */
+        fun pause(context: Context) {
             context.startService(
-                Intent(context, RecordingService::class.java).setAction(ACTION_STOP),
+                Intent(context, RecordingService::class.java).setAction(ACTION_PAUSE),
+            )
+        }
+
+        /** Resumes a paused session (已停止 -> 錄製中), appending to the same staging file. */
+        fun resume(context: Context) {
+            context.startService(
+                Intent(context, RecordingService::class.java).setAction(ACTION_RESUME),
+            )
+        }
+
+        /**
+         * Ends the session after the UI has already finalised (saved) or discarded it: releases the
+         * GPS lease and wake lock, removes the notification, and stops the service.
+         */
+        fun finish(context: Context) {
+            context.startService(
+                Intent(context, RecordingService::class.java).setAction(ACTION_FINISH),
             )
         }
     }

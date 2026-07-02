@@ -134,6 +134,7 @@ import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_COLOR
 import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_HALO_COLOR
 import io.github.nexgus.jiudge.feature.recording.HistoryTrackViewControls
 import io.github.nexgus.jiudge.feature.recording.LoadTrackDialog
+import io.github.nexgus.jiudge.feature.recording.PausedBottomBar
 import io.github.nexgus.jiudge.feature.recording.RecordEntryChooser
 import io.github.nexgus.jiudge.feature.recording.RecordedTrackLayer
 import io.github.nexgus.jiudge.feature.recording.Recorder
@@ -164,6 +165,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Only on a genuinely fresh launch: a recreation (process death restore) redelivers the same
+        // intent, and replaying the pause then would be wrong - the user may have resumed since.
+        if (savedInstanceState == null) handleRecordingIntent(intent)
         val paths = AppPaths(this)
         // Copy the bundled routing profile into place before any planning can use it.
         BRouterProfile.install(this, paths.brouterDir)
@@ -227,10 +231,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Replace the stored intent so a later configuration change does not replay the original
+        // launch intent's (possibly stale) action.
+        setIntent(intent)
+        handleRecordingIntent(intent)
+    }
+
+    /**
+     * The notification's "停止" action is an Activity PendingIntent aimed here (spec C: pressing it
+     * must both pause the recording and bring the app to the foreground). It cannot be a service
+     * PendingIntent that then calls startActivity: Android 12+ blocks that "notification trampoline"
+     * pattern outright, and Android 10-11's background-activity-launch restrictions block it too. So
+     * the system launches this activity directly (activity PendingIntents from a notification are
+     * exempt from BAL restrictions) and we forward the pause to the service from here.
+     * [io.github.nexgus.jiudge.feature.recording.Recorder.pause] is a no-op without a live session,
+     * so a stale or duplicated delivery is harmless.
+     */
+    private fun handleRecordingIntent(intent: Intent?) {
+        if (intent?.action == ACTION_PAUSE_RECORDING) {
+            RecordingService.pause(this)
+        }
+    }
+
     override fun onDestroy() {
         mapView?.destroyAll()
         mapView = null
         super.onDestroy()
+    }
+
+    companion object {
+        /** Sent by the recording notification's "停止" action - see [handleRecordingIntent]. */
+        const val ACTION_PAUSE_RECORDING = "io.github.nexgus.jiudge.action.PAUSE_RECORDING_FROM_NOTIFICATION"
     }
 }
 
@@ -397,13 +430,13 @@ private fun MapScreen(
     // Recording session - driven by [RecordingService] (foreground service + PARTIAL_WAKE_LOCK so
     // the track keeps being written with the screen off and the process in Doze). The activity
     // does not hold the [Recorder] directly: it goes through [RecordingController] for state
-    // (overlay polyline, save-dialog trigger) and through service intents for start / stop.
+    // (overlay polyline, the 已停止 layer) and through service intents for start / pause / resume /
+    // finish. The three-layer state machine (錄製中 -> 已停止 -> 存檔對話框) is driven directly off
+    // recordingState: RECORDING shows RecordingBottomBar, PAUSED shows PausedBottomBar: there is no
+    // separate "pending session" signal - the save/discard dialogs read the session straight from
+    // RecordingController.currentSession() while paused.
     val recordingState by RecordingController.state.collectAsState()
     val recordedPoints by RecordingController.points.collectAsState()
-    // Set when the service stops mid-session (either via the bottom-bar button or the
-    // notification's stop action); drives the save / discard dialog flow.
-    val pendingRecordingSession by RecordingController.pendingSession.collectAsState()
-    val pendingSessionPoints by RecordingController.lastSessionPoints.collectAsState()
 
     // Dialog flags for the recording flow. saveTrackNameDraft mirrors saveNameDraft - preserved
     // across a rejected duplicate so the reopened dialog prefills the typed name for editing.
@@ -675,35 +708,6 @@ private fun MapScreen(
         map.value?.layerManager?.redrawLayers()
     }
 
-    // Observe controller.pendingSession - set whenever the service stops (bottom-bar button or
-    // notification stop action). Snapshot the just-recorded polyline into the history-view
-    // overlay and bring up the save dialog. Cleared via RecordingController.clearPending() once
-    // the save / discard flow finishes.
-    LaunchedEffect(Unit) {
-        RecordingController.pendingSession.collect { session ->
-            if (session != null) {
-                val snapshot = RecordingController.lastSessionPoints.value
-                historyTrack =
-                    RecordedTrack(
-                        name = session.defaultName,
-                        createdAtEpochMs = session.startEpochMs,
-                        points =
-                            snapshot.map { p ->
-                                RecordedTrack.Point(
-                                    latitude = p.latitude,
-                                    longitude = p.longitude,
-                                    timeMs = 0L,
-                                )
-                            },
-                    )
-                historyTrackFile = null
-                viewingHistory = true
-                saveTrackNameDraft = session.defaultName
-                showSaveTrack = true
-            }
-        }
-    }
-
     LaunchedEffect(searchPeakLayer, pendingPeak) {
         val peak = pendingPeak
         if (peak != null) searchPeakLayer?.show(peak.position) else searchPeakLayer?.clear()
@@ -740,6 +744,10 @@ private fun MapScreen(
                 val granted = GpsSource.hasPermission(context)
                 locationGranted = granted
                 if (granted) {
+                    // Spec G: the service keeps its Strict-lease Recording ownership through a pause
+                    // (GPS subscription and wake lock stay held; only the state gate in Recorder
+                    // drops fixes), so the activity must not also try to acquire the Foreground lease
+                    // while RECORDING or PAUSED - only once the session is fully IDLE again.
                     if (RecordingController.state.value == Recorder.State.IDLE && gpsOwnership == null) {
                         gpsOwnership = GpsSource.acquire(context, GpsSource.Mode.Foreground)
                     }
@@ -804,11 +812,13 @@ private fun MapScreen(
     // recording starts (via the button or a resume mid-recording), any activity-held lease is
     // released so RecordingService can take Strict-lease ownership. The onClick path also releases
     // the lease directly before dispatching the start Intent to close the tiny window between the
-    // Intent going out and this collector observing RECORDING.
+    // Intent going out and this collector observing RECORDING. PAUSED is grouped with RECORDING here
+    // (spec G): the service keeps its Recording lease through a pause, so the activity's Foreground
+    // lease stays released until the session is fully IDLE.
     LaunchedEffect(Unit) {
         RecordingController.state.collect { state ->
             when (state) {
-                Recorder.State.RECORDING -> {
+                Recorder.State.RECORDING, Recorder.State.PAUSED -> {
                     gpsOwnership?.release()
                     gpsOwnership = null
                 }
@@ -1303,21 +1313,41 @@ private fun MapScreen(
                         openSearch()
                     },
                 )
-            } else if (!identifyMode && identifyResult == null && recordingState != Recorder.State.IDLE) {
+            } else if (!identifyMode && identifyResult == null && recordingState == Recorder.State.RECORDING) {
                 // While a recording session is alive the bottom-start row is owned by the recording
                 // bar; the map-view / planning controls do not show. This also hides "規劃路徑"
                 // during recording, sidestepping the bottom-row collision the planning flow would
                 // otherwise cause.
                 RecordingBottomBar(
                     onStop = {
-                        // Hand off to the service - it stops the GPS subscription, calls
-                        // RecordingController.handleStop() (which snapshots points into
-                        // lastSessionPoints and exposes the session via pendingSession), then
-                        // stopSelf()s. The pendingSession observer above brings up the save dialog
-                        // and the history-view overlay, so this path is symmetric with the
-                        // notification's stop action - both end up in the same flow.
-                        RecordingService.stop(context)
+                        // Spec C: pause (not stop-and-finalise) - the service keeps the GPS
+                        // subscription, wake lock, and foreground notification alive, only flipping
+                        // RecordingController to PAUSED so the 已停止 bar takes over below.
+                        RecordingService.pause(context)
                     },
+                    onDiscard = {
+                        // Spec B: 放棄 while recording first pauses (exactly like 停止) and lands on
+                        // the 已停止 layer with the confirmation on top. Cancelling the dialog then
+                        // leaves the user paused - resuming is an explicit 繼續錄製, the same recovery
+                        // as after a mistaken 停止. Pausing first also guarantees the discard never
+                        // races the fix writer: the append gate is closed before the file can go away.
+                        RecordingService.pause(context)
+                        showDiscardRecording = true
+                    },
+                )
+            } else if (!identifyMode && identifyResult == null && recordingState == Recorder.State.PAUSED) {
+                // 已停止 layer (spec A/F): 儲存 opens the save dialog, 放棄 opens the discard
+                // confirmation, 繼續錄製 resumes the same session. 儲存 is disabled only for a
+                // brand-new recording with zero points so far; a continuation always has at least the
+                // source track's own points and is never disabled here.
+                PausedBottomBar(
+                    canSave = recordedPoints.isNotEmpty(),
+                    onSave = {
+                        saveTrackNameDraft = RecordingController.currentSession()?.defaultName
+                        showSaveTrack = true
+                    },
+                    onDiscard = { showDiscardRecording = true },
+                    onResume = { RecordingService.resume(context) },
                 )
             } else if (!identifyMode && identifyResult == null) {
                 when (mode) {
@@ -1686,7 +1716,11 @@ private fun MapScreen(
     }
 
     if (showSaveTrack) {
-        val session = pendingRecordingSession
+        // Spec D: the session lives in RecordingController for as long as the 已停止 layer is up
+        // (state stays PAUSED), so the save dialog reads it straight off currentSession() rather than
+        // a one-shot "pending session" signal - it is still there if the dialog reopens after a
+        // rejected duplicate name.
+        val session = RecordingController.currentSession()
         SaveTrackDialog(
             initialName = saveTrackNameDraft ?: session?.defaultName ?: "",
             onConfirm = { name ->
@@ -1696,20 +1730,23 @@ private fun MapScreen(
                         scope.launch {
                             try {
                                 val savedFile = withContext(Dispatchers.IO) { RecordingController.finalize(session, name) }
-                                // Stop now leaves the just-saved track on screen in the blue
-                                // history-view style with the 繼續錄製 / 離開 controls (gui-redesign:
-                                // stopping should not erase what was just recorded). Reload from the
-                                // finalised file so historyTrack carries the real timestamps and
+                                // Spec J: saving ends the session - RecordingService.finish() tells
+                                // the service to release GPS/wake lock, remove the notification, and
+                                // call RecordingController.handleEnd() (back to IDLE) - and moves to
+                                // the history-view sub-mode showing the just-saved track. Reload from
+                                // the finalised file so historyTrack carries the real timestamps and
                                 // historyTrackFile points at a public file 繼續錄製 can hand to
                                 // RecordingService.startContinuation.
+                                RecordingService.finish(context)
                                 val loaded = withContext(Dispatchers.IO) { trackStore.load(savedFile) }
                                 historyTrack = loaded
                                 historyTrackFile = savedFile
                                 viewingHistory = true
-                                RecordingController.clearPending()
                                 saveTrackNameDraft = null
                                 snackbarHostState.showSnackbar("已儲存軌跡: $name")
                             } catch (e: DuplicateTrackNameException) {
+                                // Spec E: keep the session alive (still PAUSED) and reopen the dialog
+                                // with the user's typed name preserved so they can retry.
                                 saveTrackNameDraft = name
                                 showSaveTrack = true
                                 snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
@@ -1721,14 +1758,15 @@ private fun MapScreen(
                 }
             },
             onDismiss = {
+                // Spec D: back / outside-tap / 取消 all just close the dialog - back to 已停止, no
+                // discard, no session change.
                 showSaveTrack = false
-                showDiscardRecording = true
             },
         )
     }
 
     if (showDiscardRecording) {
-        val session = pendingRecordingSession
+        val session = RecordingController.currentSession()
         DiscardRecordingDialog(
             continuationName = if (session?.isContinuation == true) session.defaultName else null,
             onConfirm = {
@@ -1736,6 +1774,10 @@ private fun MapScreen(
                 if (session != null) {
                     scope.launch {
                         withContext(Dispatchers.IO) { RecordingController.discard(session) }
+                        // Spec J: discarding always ends the session - RecordingService.finish()
+                        // releases GPS/wake lock, removes the notification, and calls
+                        // RecordingController.handleEnd() (back to IDLE).
+                        RecordingService.finish(context)
                         // A discarded continuation still has its original source file intact, so
                         // fall back to viewing that original (blue overlay + 繼續錄製 / 離開) - the
                         // user discarded only the newly added extension, not the underlying track.
@@ -1759,14 +1801,15 @@ private fun MapScreen(
                             historyTrackFile = null
                             viewingHistory = false
                         }
-                        RecordingController.clearPending()
                         saveTrackNameDraft = null
                     }
                 }
             },
             onDismiss = {
+                // Spec B: 取消 just closes this dialog, landing on the 已停止 layer (放棄 from the
+                // recording layer pauses before opening this dialog, so the session is always PAUSED
+                // here); the user resumes explicitly via 繼續錄製.
                 showDiscardRecording = false
-                showSaveTrack = true
             },
         )
     }

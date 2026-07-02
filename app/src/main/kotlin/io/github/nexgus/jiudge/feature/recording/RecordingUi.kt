@@ -36,14 +36,15 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Bottom action bar for an active recording session. Currently exposes only "停止"; manual pause is
- * intentionally absent (gui-redesign §5.3) since the statistics page subtracts rest periods via
- * automatic stationary-segment detection. The "統計" entry called for in §5.3 is deferred until the
- * statistics screen (§10.2) is built.
+ * Bottom action bar for the 錄製中 layer of the recording state machine: "停止" pauses the session
+ * (staging file and points are kept - see [Recorder.pause]) and "放棄" pauses the same way and then
+ * opens the discard confirmation on top of the 已停止 layer, per spec B - so the confirmation always
+ * faces a paused session and cancelling it leaves the user paused, one 繼續錄製 away from resuming.
  */
 @Composable
 fun RecordingBottomBar(
     onStop: () -> Unit,
+    onDiscard: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -52,6 +53,34 @@ fun RecordingBottomBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         MapPill(text = "停止", onClick = onStop, primary = true)
+        MapPill(text = "放棄", onClick = onDiscard)
+    }
+}
+
+/**
+ * Bottom action bar for the 已停止 layer: "儲存" opens the save dialog, "放棄" opens the discard
+ * confirmation, "繼續錄製" resumes the same session (same staging file, new fixes appended after a
+ * legitimate time gap - spec G). "儲存" is disabled for a brand-new recording with no points yet
+ * (spec F); a continuation is never disabled here since it always carries at least the source
+ * track's own points. The "已停止" text is the explicit status cue spec A calls for.
+ */
+@Composable
+fun PausedBottomBar(
+    canSave: Boolean,
+    onSave: () -> Unit,
+    onDiscard: () -> Unit,
+    onResume: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("已停止", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(end = 4.dp))
+        MapPill(text = "儲存", onClick = onSave, primary = true, enabled = canSave)
+        MapPill(text = "放棄", onClick = onDiscard)
+        MapPill(text = "繼續錄製", onClick = onResume, primary = true)
     }
 }
 
@@ -134,9 +163,11 @@ fun SaveTrackDialog(
 }
 
 /**
- * Confirms throwing away an unsaved recording. The wording shifts by [continuationName]: a fresh
- * recording is gone for good when discarded; a continuation only loses its newly added segment,
- * with the original track left intact. Saying so explicitly keeps "取消" from feeling destructive.
+ * Confirms throwing away an unsaved recording, reachable from both the 錄製中 and 已停止 layers
+ * (spec B; the 錄製中 path pauses the session before this dialog opens, so it always faces a paused
+ * session). The wording shifts by [continuationName]: a fresh recording is gone for good when
+ * discarded; a continuation only loses its newly added segment, with the original track left intact.
+ * "取消" simply closes this dialog, leaving the user on the 已停止 layer to 儲存 / 放棄 / 繼續錄製.
  */
 @Composable
 fun DiscardRecordingDialog(
@@ -155,7 +186,7 @@ fun DiscardRecordingDialog(
         title = { Text("不儲存軌跡") },
         text = { Text(message) },
         confirmButton = { TextButton(onClick = onConfirm) { Text("丟棄") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("回到儲存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 

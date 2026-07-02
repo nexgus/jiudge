@@ -11,23 +11,27 @@ import java.io.IOException
 /**
  * Stateful coordinator for one recording session: holds the in-memory point list that drives the live
  * red-chevron overlay, gates writes by the recording state, and owns the staging file that
- * [TrackStore] will finalise (or discard) on stop. Pure state and file IO; no Android dependency, no
- * subscription to the location provider - the caller pushes fixes in via [onFix]. The location
- * subscription itself stays where it already lives (the map screen's foreground GPS), so we do not
- * duplicate provider work.
+ * [TrackStore] will finalise (or discard) once the user is done. Pure state and file IO; no Android
+ * dependency, no subscription to the location provider - the caller pushes fixes in via [onFix]. The
+ * location subscription itself stays where it already lives (the map screen's foreground GPS), so we
+ * do not duplicate provider work.
  *
  * v1 scope: the staging file is dot-prefixed so a crashed session leaves no published noise (cleaned
  * at next start by [TrackStore.cleanupStaleRecordings]); the foreground-service background recording
- * is out of scope - see CLAUDE.md "尚未建置: 背景軌跡錄製". Manual pause/resume is intentionally
- * absent (gui-redesign §5.3): the statistics page subtracts rest periods automatically via
- * stationary-segment detection, so there is no need for the user to toggle a pause state.
+ * is out of scope - see CLAUDE.md "尚未建置: 背景軌跡錄製". Manual pause/resume ([pause]/[resume]) is
+ * the three-layer UI state machine's "已停止" layer: the session and its staging file stay alive
+ * across a pause, [points] is left untouched (the map overlay keeps showing the path so far), and
+ * [onFix] silently drops fixes while paused rather than appending them - a deliberate simplification
+ * over buffering/discarding at the source. Resuming appends to the same staging file, so a pause
+ * leaves a legitimate time gap between two consecutive points; this does not change the trace file
+ * format.
  */
 class Recorder(
     private val store: TrackStore,
 ) {
-    enum class State { IDLE, RECORDING }
+    enum class State { IDLE, RECORDING, PAUSED }
 
-    /** A live recording session that exists from [startNew]/[startContinuation] until [stop]. */
+    /** A live recording session that exists from [startNew]/[startContinuation] until finalised or discarded. */
     data class Session(
         val startEpochMs: Long,
         val staging: File,
@@ -46,7 +50,7 @@ class Recorder(
 
     private var session: Session? = null
 
-    /** True iff there is an active session ([State.RECORDING]). */
+    /** True iff there is a live session ([State.RECORDING] or [State.PAUSED]). */
     val active: Boolean get() = session != null
 
     /** The current session, or null when no recording is in progress. */
@@ -55,7 +59,7 @@ class Recorder(
     /**
      * Begins a fresh recording at [startEpochMs] (caller supplies wall-clock; tests can inject a
      * fixed value). Creates an empty staging file and enters [State.RECORDING]. [defaultSaveName] is
-     * the name pre-filled in the save dialog on stop.
+     * the name pre-filled in the save dialog once the session ends.
      */
     fun startNew(
         startEpochMs: Long,
@@ -116,11 +120,28 @@ class Recorder(
     }
 
     /**
-     * Ends the session and returns it so the caller can run the save dialog and call [finalize] or
-     * [discard]. The staging file is left in place. After this call [active] is false and the
-     * in-memory polyline is cleared - the layer will already be off screen by then.
+     * Pauses the session: further [onFix] calls are dropped until [resume]. The session, its staging
+     * file, and the in-memory [points] polyline are all left untouched, so the overlay keeps showing
+     * the path recorded so far and "繼續錄製" can pick up exactly where this left off. No-op when
+     * there is no active session.
      */
-    fun stop(): Session? {
+    fun pause() {
+        if (session == null) return
+        _state.value = State.PAUSED
+    }
+
+    /** Resumes a [State.PAUSED] session, appending subsequent fixes to the same staging file. */
+    fun resume() {
+        if (session == null) return
+        _state.value = State.RECORDING
+    }
+
+    /**
+     * Ends the session (from either [State.RECORDING] or [State.PAUSED]) and returns it so the caller
+     * can [finalize] or [discard] it. The staging file is left in place. After this call [active] is
+     * false and the in-memory polyline is cleared - the layer will already be off screen by then.
+     */
+    fun end(): Session? {
         val s = session ?: return null
         session = null
         _state.value = State.IDLE
@@ -129,7 +150,7 @@ class Recorder(
     }
 
     /**
-     * Publishes [session] (returned by [stop]) under [name], replacing the original on continuations.
+     * Publishes [session] (returned by [end]) under [name], replacing the original on continuations.
      * Throws [io.github.nexgus.jiudge.data.route.DuplicateTrackNameException] on a name collision.
      */
     fun finalize(
@@ -143,7 +164,7 @@ class Recorder(
         }
 
     /**
-     * Drops [session]'s staging file (returned by [stop]) without publishing. On continuations the
+     * Drops [session]'s staging file (returned by [end]) without publishing. On continuations the
      * original source file is left intact - the contract for "discard a continuation" is "throw
      * away what was newly recorded, keep the original".
      */
