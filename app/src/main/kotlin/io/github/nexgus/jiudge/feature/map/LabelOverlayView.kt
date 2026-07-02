@@ -1,6 +1,7 @@
 package io.github.nexgus.jiudge.feature.map
 
 import android.content.Context
+import android.view.Choreographer
 import android.view.View
 import org.mapsforge.core.mapelements.MapElementContainer
 import org.mapsforge.core.model.BoundingBox
@@ -67,6 +68,31 @@ class LabelOverlayView(
             }
         }
 
+    // Last version of the label store this overlay drew from. LabelStore has no observer interface;
+    // it only exposes a monotonically increasing version bumped whenever tile rendering populates
+    // new labels. mapsforge's built-in LabelLayer is driven every frame by LayerManager and reads
+    // the version there; this overlay is a plain Android View with no such driver, so we poll the
+    // version via Choreographer instead (see [versionPoll] below). Without this, jumping the map to
+    // a fresh area (e.g. picking a distant peak in the search dialog) shows no labels until the
+    // user pans / zooms - the tile render finishes but the overlay is never invalidated.
+    private var lastLabelStoreVersion: Int = Int.MIN_VALUE
+
+    private val versionPoll =
+        object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (!isAttachedToWindow) return
+                val store = labelStore
+                if (store != null) {
+                    val v = store.getVersion()
+                    if (v != lastLabelStoreVersion) {
+                        lastLabelStoreVersion = v
+                        postInvalidateOnAnimation()
+                    }
+                }
+                Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+
     init {
         // Transparent overlay; default View is non-clickable so touches fall through to MapView.
         setWillNotDraw(false)
@@ -75,11 +101,13 @@ class LabelOverlayView(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         mapView.model.mapViewPosition.addObserver(observer)
+        Choreographer.getInstance().postFrameCallback(versionPoll)
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         mapView.model.mapViewPosition.removeObserver(observer)
+        Choreographer.getInstance().removeFrameCallback(versionPoll)
     }
 
     override fun onDraw(canvas: AndroidCanvas) {
