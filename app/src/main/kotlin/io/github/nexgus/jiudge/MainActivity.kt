@@ -909,6 +909,12 @@ private fun MapScreen(
                 // touch listener below), or the user explicitly picked a target to look at
                 // (centerOnPeak, loading a route to edit), so the two branches here can safely
                 // assume the user still wants to be followed.
+                // Foreground mode subscribes to every enabled non-passive provider (GPS + network,
+                // plus fused on Android 12+; GPS is dropped under a coarse-only grant), and all of
+                // them drive the marker; the follow path deliberately treats them the same so a
+                // coarse network fix indoors still keeps the marker roughly on screen. Recording is
+                // a separate concern - GpsSource enforces GPS-only at the subscription layer for
+                // Recording mode.
                 if (MapFollow.isMarkerInViewport(mv, fix)) {
                     // Marker on-screen: soft-follow through the safe zone as before.
                     when (val action = MapFollow.evaluate(mv, fix, lastFix)) {
