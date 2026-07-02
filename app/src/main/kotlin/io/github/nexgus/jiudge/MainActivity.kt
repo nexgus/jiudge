@@ -30,9 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.North
 import androidx.compose.material.icons.filled.QuestionMark
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -107,12 +105,9 @@ import io.github.nexgus.jiudge.feature.identify.SymbolTable
 import io.github.nexgus.jiudge.feature.map.CurrentLocationLayer
 import io.github.nexgus.jiudge.feature.map.LabelOverlayView
 import io.github.nexgus.jiudge.feature.map.LocationInfoDialog
-import io.github.nexgus.jiudge.feature.map.MapBearingMode
-import io.github.nexgus.jiudge.feature.map.MapBearingPrefs
 import io.github.nexgus.jiudge.feature.map.MapFollow
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.map.SearchPeakMarkerLayer
-import io.github.nexgus.jiudge.feature.map.applyMapBearing
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
@@ -613,15 +608,14 @@ private fun MapScreen(
     var recenterOnFix by remember { mutableStateOf(GpsSource.hasPermission(context)) }
     // Persistent marker-follow toggle. While true, the map keeps the marker in sight on every fix -
     // safe-zone push while it is inside the viewport, hard recenter once it drifts out (typical of
-    // GPS jumps out of a tunnel or on public transport). Cleared when the user pans / zooms the
-    // map (that is their signal they want to look elsewhere); re-armed on ON_RESUME (recording or
-    // not, a return to the app is a "refocus") and on the recenter FAB. Sits alongside the one-shot
-    // [recenterOnFix] which still owns first-fix / FAB "jump to me" behaviour.
+    // GPS jumps out of a tunnel or on public transport). Decided by each map gesture's end state:
+    // a gesture that ends with the marker still projecting inside the viewport keeps (or re-arms)
+    // the follow, one that ends with it outside stops it (that is the user's signal they want to
+    // look elsewhere). Also re-armed on ON_RESUME (recording or not, a return to the app is a
+    // "refocus") and on the recenter FAB. Sits alongside the one-shot [recenterOnFix] which still
+    // owns first-fix / FAB "jump to me" behaviour.
     var followUser by remember { mutableStateOf(true) }
 
-    // Map bearing (NORTH_UP vs TRACK_UP). Persisted so the choice survives an app relaunch. Applied to
-    // the MapView on every heading update so TRACK_UP rotation tracks the compass with no extra wiring.
-    var bearingMode by remember { mutableStateOf(MapBearingPrefs.load(context)) }
     // True while at least one finger is on the map. Pauses the safe-zone follow so an incoming GPS
     // update does not fight the user's pan/pinch mid-gesture.
     var userTouching by remember { mutableStateOf(false) }
@@ -756,8 +750,8 @@ private fun MapScreen(
                     // at before backgrounding is not preserved, and the next fix pulls the map back
                     // to the marker. This covers "recording, phone was in a pocket, come back and
                     // the marker is off-screen" as well as ordinary "left the app, opened it a few
-                    // minutes later, the world moved" cases. If the user immediately pans again,
-                    // they turn follow off in one gesture.
+                    // minutes later, the world moved" cases. If the user immediately pans away
+                    // again, that gesture's end state turns follow back off.
                     followUser = true
                     // Snap the map onto the last known position now if it is fresh; a stale fix
                     // (typically inside a long tunnel where GPS has been silent) would jump the map
@@ -835,10 +829,8 @@ private fun MapScreen(
     }
 
     // Feed fixes + heading into the overlay by collecting in an effect (not collectAsState) so the
-    // frequent compass ticks redraw only the map layer, not the whole MapScreen composable. Also
-    // applies the map bearing on every heading tick: NORTH_UP would only need a one-shot apply, but
-    // TRACK_UP needs it per tick to follow the compass, and re-applying a NULL_ROTATION is cheap.
-    LaunchedEffect(locationLayer, bearingMode) {
+    // frequent compass ticks redraw only the map layer, not the whole MapScreen composable.
+    LaunchedEffect(locationLayer) {
         val layer = locationLayer ?: return@LaunchedEffect
         combine(
             GpsSource.fix,
@@ -863,7 +855,6 @@ private fun MapScreen(
                 // Location service off but we still hold a last fix: grey it to mark it stale.
                 frozen = !enabled && fix != null,
             )
-            map.value?.let { applyMapBearing(it, bearingMode, trueHeading) }
         }.collect { }
     }
 
@@ -888,9 +879,10 @@ private fun MapScreen(
                 recenterOnFix = false
                 mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
             } else if (mode != PlanMode.ROUTE_EDIT && !userTouching && followUser) {
-                // followUser gates every automatic pan below. It is only false once the user has
-                // actually panned / zoomed the map themselves (see the touch listener above), so
-                // the two branches here can safely assume the user still wants to be followed.
+                // followUser gates every automatic pan below. It is only false once one of the
+                // user's own map gestures ended with the marker outside the viewport (see the
+                // touch listener below), so the two branches here can safely assume the user
+                // still wants to be followed.
                 if (MapFollow.isMarkerInViewport(mv, fix)) {
                     // Marker on-screen: soft-follow through the safe zone as before.
                     when (val action = MapFollow.evaluate(mv, fix, lastFix)) {
@@ -999,36 +991,29 @@ private fun MapScreen(
                 RudyMapView.create(ctx, mapDir).also { mv ->
                     // Observe touches for two things: (1) userTouching pauses the safe-zone follow
                     // while a finger (or two) is down, so an incoming fix does not fight the user's
-                    // pan/pinch mid-gesture; (2) if the gesture actually changed the map's centre or
-                    // zoom, clear followUser so subsequent fixes leave the map alone until the user
-                    // asks for a recenter. Compare centre + zoom captured at DOWN against the values
-                    // at UP/CANCEL so a stray tap (which touches nothing) does not disengage follow.
-                    // rotation is left out because TRACK_UP applies rotation from the compass, not
-                    // the user's fingers. Returning false lets mapsforge's own gesture handling run
-                    // unchanged.
-                    var touchStartCenter: LatLong? = null
-                    var touchStartZoom: Byte? = null
+                    // pan/pinch mid-gesture; (2) at gesture end, decide followUser purely from the
+                    // end state: a marker still projecting inside the viewport means the user kept
+                    // (or brought back) their position in sight, so keep following - zooming around
+                    // the marker or panning back onto it re-arms the follow without the FAB. A
+                    // marker outside the viewport means they want to look elsewhere, so stop
+                    // following and drop any armed one-shot recenter (without that clear, a fix
+                    // arriving after the user let go would still snap the map back onto the marker,
+                    // defeating the pan). With no usable fix (none yet, or the last one is stale)
+                    // there is nothing to project, so both flags keep their pre-gesture values.
+                    // Returning false lets mapsforge's own gesture handling run unchanged.
                     mv.setOnTouchListener { _, event ->
                         when (event.actionMasked) {
-                            MotionEvent.ACTION_DOWN -> {
-                                userTouching = true
-                                val position = mv.model.mapViewPosition
-                                touchStartCenter = position.center
-                                touchStartZoom = position.zoomLevel
-                            }
+                            MotionEvent.ACTION_DOWN -> userTouching = true
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                                 userTouching = false
-                                val startCenter = touchStartCenter
-                                val startZoom = touchStartZoom
-                                touchStartCenter = null
-                                touchStartZoom = null
-                                if (startCenter != null && startZoom != null) {
-                                    val position = mv.model.mapViewPosition
-                                    if (position.center != startCenter || position.zoomLevel != startZoom) {
+                                val fix = GpsSource.fix.value
+                                if (fix != null &&
+                                    System.currentTimeMillis() - fix.timeMs < STALE_FIX_THRESHOLD_MS
+                                ) {
+                                    if (MapFollow.isMarkerInViewport(mv, fix)) {
+                                        followUser = true
+                                    } else {
                                         followUser = false
-                                        // A pan overrides any armed one-shot recenter: without this
-                                        // clear, a fix arriving after the user let go would still
-                                        // snap the map back onto the marker, defeating the pan.
                                         recenterOnFix = false
                                     }
                                 }
@@ -1264,19 +1249,6 @@ private fun MapScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                BearingModeButton(
-                    mode = bearingMode,
-                    onToggle = {
-                        val next =
-                            if (bearingMode == MapBearingMode.NORTH_UP) {
-                                MapBearingMode.TRACK_UP
-                            } else {
-                                MapBearingMode.NORTH_UP
-                            }
-                        bearingMode = next
-                        MapBearingPrefs.save(context, next)
-                    },
-                )
                 MyLocationButton(
                     onClick = { recenterOnCurrentLocation() },
                     active = locationGranted && serviceEnabled && !markerInViewport,
@@ -1883,36 +1855,6 @@ private fun MyLocationButton(
             },
     ) {
         Icon(imageVector = Icons.Filled.MyLocation, contentDescription = "回到目前位置")
-    }
-}
-
-/**
- * Map-bearing toggle (NORTH_UP vs TRACK_UP). Shows the *currently active* mode's icon: a fixed north
- * arrow for NORTH_UP, the rotating compass needle for TRACK_UP. TRACK_UP gets the accent fill since
- * it is the "engaged" rotating mode that the user normally wants to be aware of; NORTH_UP is the
- * resting default and uses the standard FAB fill.
- */
-@Composable
-private fun BearingModeButton(
-    mode: MapBearingMode,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val accent = mode == MapBearingMode.TRACK_UP
-    SmallFloatingActionButton(
-        onClick = onToggle,
-        modifier = modifier,
-        containerColor =
-            if (accent) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                FloatingActionButtonDefaults.containerColor
-            },
-    ) {
-        Icon(
-            imageVector = if (accent) Icons.Filled.Explore else Icons.Filled.North,
-            contentDescription = if (accent) "地圖隨方向旋轉 (按下切回北方朝上)" else "北方朝上 (按下切為隨方向旋轉)",
-        )
     }
 }
 
