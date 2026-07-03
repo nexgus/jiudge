@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.view.MotionEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -70,6 +71,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import io.github.nexgus.jiudge.core.elevation.DemElevation
 import io.github.nexgus.jiudge.core.index.Peak
 import io.github.nexgus.jiudge.core.index.PeakIndex
@@ -163,6 +165,21 @@ class MainActivity : ComponentActivity() {
         // Only on a genuinely fresh launch: a recreation (process death restore) redelivers the same
         // intent, and replaying the pause then would be wrong - the user may have resumed since.
         if (savedInstanceState == null) handleRecordingIntent(intent)
+        // Keep the screen from timing out while actively recording (RECORDING only - PAUSED and
+        // IDLE restore the normal timeout). The flag freezes the idle countdown; the power button
+        // still turns the screen off, after which the foreground service + PARTIAL_WAKE_LOCK keep
+        // the track being written. Collected on lifecycleScope (not per-screen) so the flag stays
+        // correct whichever screen is composed, and a recreation re-syncs from the StateFlow's
+        // current value.
+        lifecycleScope.launch {
+            RecordingController.state.collect { state ->
+                if (state == Recorder.State.RECORDING) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+        }
         val paths = AppPaths(this)
         // Copy the bundled routing profile into place before any planning can use it.
         BRouterProfile.install(this, paths.brouterDir)
