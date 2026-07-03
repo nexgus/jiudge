@@ -25,7 +25,8 @@ import java.io.IOException
  * the notification, stop the foreground service) once that completes.
  */
 object RecordingController {
-    private val recorder = Recorder(TrackStore())
+    private val store = TrackStore()
+    private val recorder = Recorder(store)
 
     /** The recorder's live state - drives whether the recording / paused bottom bar shows. */
     val state: StateFlow<Recorder.State> = recorder.state
@@ -39,7 +40,22 @@ object RecordingController {
     /** The current session, or null when no recording is in progress. Used by the UI to drive the save / discard dialogs while paused. */
     fun currentSession(): Recorder.Session? = recorder.currentSession()
 
+    /**
+     * Sweeps leftover staging files (`tracks/.recording-*.jsonl`) from crashed or swiped-away
+     * sessions, never touching the live session's file. Owned here rather than by the UI because
+     * this singleton is the only place that knows whether a session is live: the activity that
+     * triggers the sweep may be destroyed and recreated while the service keeps recording, so
+     * "sweeping at UI start" and "a recording in progress" legitimately coexist. Synchronised with
+     * session start so a sweep can never race a brand-new staging file. Blocking file IO - call off
+     * the main thread. Safe to call at any time, any number of times.
+     */
+    @Synchronized
+    fun sweepStaleStaging() {
+        store.cleanupStaleRecordings(keep = recorder.currentSession()?.staging)
+    }
+
     /** Service-only: begin a fresh recording. */
+    @Synchronized
     internal fun handleStartNew(
         startEpochMs: Long,
         defaultSaveName: String,
@@ -48,6 +64,7 @@ object RecordingController {
     }
 
     /** Service-only: continue an existing track from [source]. */
+    @Synchronized
     internal fun handleStartContinuation(source: File) {
         recorder.startContinuation(source)
     }

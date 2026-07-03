@@ -5,8 +5,9 @@
 
 ## 1. 背景與動機
 
-現況: 規劃路線存成單一 JSON 物件 (`PlannedRoute`: `name` / `createdAtEpochMs` /
-`waypoints` / `segments`), 一條一檔, 放在 `Documents/Jiudge/plans/`. 軌跡錄製尚未實作.
+本格式設計時的現況: 規劃路線存成單一 JSON 物件 (`PlannedRoute`: `name` / `createdAtEpochMs` /
+`waypoints` / `segments`), 一條一檔, 放在 `Documents/Jiudge/plans/`; 軌跡錄製當時尚未實作
+(現皆已依本格式完成, 見 §14).
 
 重新設計的觸發點是"可以 append"這項需求. 背景軌跡錄製在 8 小時, 約 1 Hz 取樣下會累積
 近 2.8 萬個定位點. 若沿用"單一 JSON 物件", 每收到一個 GPS 點就得整檔重寫一次, 既浪費
@@ -97,17 +98,17 @@ polyline 由讀取端按需衍生.
 | `i` | int | 是 | 段序號, 對應 `wpt[i]` 到 `wpt[i+1]` |
 | `pts` | array | 是 | `[[lat,lon], ...]` 座標序列 |
 
-### 5.3 `tpt` - GPS 定位點 (實際軌跡)
+### 5.3 `pt` - GPS 定位點 (實際軌跡)
 
-錄製時每一筆 GPS 取樣. 這是 append 的主要對象.
+錄製時每一筆通過 gating (docs/gating.md) 的 GPS 取樣. 這是 append 的主要對象.
 
 ```json
-{"k":"tpt","t":1687123460000,"lat":24.5123456,"lon":121.2345678,"ele":1820.4,"acc":4.0,"spd":1.1,"brg":135.0}
+{"k":"pt","t":1687123460000,"lat":24.5123456,"lon":121.2345678,"ele":1820.4,"acc":4.0,"spd":1.1,"brg":135.0}
 ```
 
 | 欄位 | 型別 | 必填 | 說明 |
 |---|---|---|---|
-| `k` | string | 是 | 固定 `"tpt"` |
+| `k` | string | 是 | 固定 `"pt"` |
 | `t` | int | 是 | 取樣時間, Unix epoch 毫秒 |
 | `lat` / `lon` | number | 是 | 座標 |
 | `ele` | number | 否 | 海拔, 公尺. 僅承接匯入的外部 GPX 高度; App 自身錄製不寫 (見 §8 高度與坡度) |
@@ -137,12 +138,12 @@ polyline 由讀取端按需衍生.
 {"k":"seg","i":0,"pts":[[24.5123456,121.2345678],[24.5234000,121.2456000],[24.5345000,121.2567000]]}
 ```
 
-**實際軌跡 (`type:"track"`)**: 1 行 header + 多行 `tpt` (錄製過程逐行附加).
+**實際軌跡 (`type:"track"`)**: 1 行 header + 多行 `pt` (錄製過程逐行附加).
 
 ```
 {"v":1,"type":"track","name":"2026-06-24 大霸","createdAt":1687123456789,"app":"jiudge"}
-{"k":"tpt","t":1687123460000,"lat":24.5123456,"lon":121.2345678,"ele":1820.4,"acc":4.0}
-{"k":"tpt","t":1687123461000,"lat":24.5123500,"lon":121.2345700,"ele":1820.6,"acc":3.8}
+{"k":"pt","t":1687123460000,"lat":24.5123456,"lon":121.2345678,"ele":1820.4,"acc":4.0}
+{"k":"pt","t":1687123461000,"lat":24.5123500,"lon":121.2345700,"ele":1820.6,"acc":3.8}
 ```
 
 ## 7. 行進方向
@@ -150,7 +151,7 @@ polyline 由讀取端按需衍生.
 格式不另設"方向"欄位, 而是讓方向可由內容唯一還原:
 
 - **規劃路線**: 依 `wpt` 的 `i` 與 `seg` 的 `i` 遞增順序, 即為前進方向.
-- **實際軌跡**: 依 `tpt` 的時間戳 `t` 遞增順序, 即為前進方向.
+- **實際軌跡**: 依 `pt` 的時間戳 `t` 遞增順序, 即為前進方向.
 
 渲染端據此沿線繪製方向箭頭. 如此可避免"方向"與"點序"兩個來源不一致的問題.
 
@@ -163,13 +164,13 @@ polyline 由讀取端按需衍生.
   DEM 沿線連續平滑, 微分後坡度穩定.
 - 不在檔案內存 DEM 取得的高度: 既可隨時重建, 又能避免 DEM 日後更新後存值變成過時死資料.
   如需避免重複查詢, 於載入時在記憶體快取即可, 不落地.
-- `tpt.ele` (見 §5.3) 維持 optional, 僅用來承接匯入的外部 GPX 高度; App 自身錄製不寫此欄.
+- `pt.ele` (見 §5.3) 維持 optional, 僅用來承接匯入的外部 GPX 高度; App 自身錄製不寫此欄.
 - 匯出 GPX 的 `<ele>` 一律改由 DEM 取得 (見 §11 匯出), 以與上述單一高度來源一致.
 
 ## 9. Append 與防損毀
 
 - 錄製開始時建立檔案並寫入 header 行 (僅一次).
-- 之後每收到一筆 GPS 取樣, 以 append 模式補一行 `tpt`, 不重寫既有內容.
+- 之後每收到一筆 GPS 取樣, 以 append 模式補一行 `pt`, 不重寫既有內容.
 - 讀取時逐行解析, 對每一行單獨 try/catch: 因閃退或電力耗盡造成的不完整末行直接略過,
   其餘記錄完整保留.
 - header 與每筆記錄都是獨立的一行, 不存在"整檔需一致才可解析"的限制, 因此天然耐中斷.
@@ -177,13 +178,13 @@ polyline 由讀取端按需衍生.
 ### 寫入策略 (記憶體 O(1))
 
 - foreground service 持有一個開著的 buffered 寫入器 (例如 append 模式的 `BufferedWriter`),
-  每收到一筆 `tpt` 即 append 一行, 寫完即釋放該筆; **記憶體不隨軌跡長度成長, 為 O(1)**.
+  每收到一筆 `pt` 即 append 一行, 寫完即釋放該筆; **記憶體不隨軌跡長度成長, 為 O(1)**.
   嚴禁 "累積到錄製結束才一次寫出" - 那會把記憶體用量變成 O(n), 且中途中斷時全部遺失.
 - 落盤分三層, 不可混為一談: (1) `BufferedWriter` 的 JVM buffer; (2) `write()` syscall 把資料
   送入 OS page cache (kernel RAM); (3) kernel 背景 writeback 把 dirty page 批次寫入 flash
   (Linux 預設約 30 秒內), 或 `fsync()` 強制立刻寫. 耗電與磨損 flash 的是第 3 層的 `fsync`,
   不是 `flush`.
-- 每筆 `tpt` 就 `write()` (經 buffered writer) 即可: 資料進 page cache 後, **app 閃退不會丟**
+- 每筆 `pt` 就 `write()` (經 buffered writer) 即可: 資料進 page cache 後, **app 閃退不會丟**
   (kernel 持有並會回寫), 故抗閃退不需 `fsync`. `flush()` 只是把 JVM buffer 推進 page cache,
   成本極低. 批次落盤交給 OS writeback, 不需自己拉長週期省電.
 - **不要每筆 (或每秒) `fsync`** - 那會強制實體寫入而傷電/磨損. 僅在自然停頓點做 `fsync`
@@ -194,7 +195,7 @@ polyline 由讀取端按需衍生.
 
 ### 大小與記憶體預算
 
-- 1 Hz 連續 12 小時 = 43,200 筆 `tpt`, 每行約 64-100 B, 檔案約 **3-4 MB**; 24 小時約 7-8 MB.
+- 1 Hz 連續 12 小時 = 43,200 筆 `pt`, 每行約 64-100 B, 檔案約 **3-4 MB**; 24 小時約 7-8 MB.
   相對於底圖等資料 (~298 MB) 屬零頭, 不需特別處理.
 - 全部點即使常駐記憶體 (供即時繪製) 也僅約 2-5 MB, 遠低於 app 可用 heap, 不會爆.
 - 若量級顯著放大 (多日連續或更高取樣率), 兩個不動格式的調節桿: 座標精度降為 6 位小數
@@ -218,10 +219,10 @@ polyline 由讀取端按需衍生.
 |---|---|
 | `type:"plan"` 的 `seg` 幾何 | `<rte>` / `<rtept>` (或攤平為單一 route) |
 | `type:"plan"` 的 `wpt` | `<wpt>` (獨立航點) |
-| `type:"track"` 的 `tpt` | `<trk>` / `<trkseg>` / `<trkpt>`, 含 `<ele>` 與 `<time>` |
+| `type:"track"` 的 `pt` | `<trk>` / `<trkseg>` / `<trkpt>`, 含 `<ele>` 與 `<time>` |
 
-`tpt` 的 `t` 轉為 GPX `<trkpt>` 的 `<time>` (ISO 8601 UTC); `<trkpt>` 的 `<ele>` 由 DEM 以
-(lat, lon) 取得, 不採 `tpt.ele` (見 §8 高度與坡度).
+`pt` 的 `t` 轉為 GPX `<trkpt>` 的 `<time>` (ISO 8601 UTC); `<trkpt>` 的 `<ele>` 由 DEM 以
+(lat, lon) 取得, 不採 `pt.ele` (見 §8 高度與坡度).
 
 ### 其他格式
 
@@ -248,10 +249,11 @@ KML, GeoJSON 透過同一中介結構轉出. 本文件不展開細節, 僅確認
 
 ## 14. 與既有程式碼的對應 (概要)
 
-非實作規範, 僅記錄預期落點, 供後續開發參考:
+非實作規範, 僅記錄實際落點 (皆位於 `data/route/`, 除另註明者):
 
-- 一個共用的低階逐行讀寫層, 負責 header 與記錄行的序列化/反序列化.
-- 其上掛兩個領域模型: 既有 `PlannedRoute` (沿用 `segments` 為 source of truth 的編輯模型),
-  與新的 `RecordedTrack`.
-- 一個 `GpxExporter` (及未來其他匯出器) 讀取中介結構轉出對應格式.
-- 背景軌跡錄製的 foreground service 為獨立工作項目, 不在本格式設計範圍內.
+- 低階逐行讀寫層: `Trace` / `TraceHeader`, 負責 header 與記錄行的序列化/反序列化.
+- 其上掛兩個領域模型: `PlannedRoute` (沿用 `segments` 為 source of truth 的編輯模型,
+  存取經 `RouteStore`) 與 `RecordedTrack` (存取經 `TrackStore`; 錄製時的逐點 append 與
+  staging 檔生命週期亦由 `TrackStore` 提供).
+- 背景軌跡錄製的 foreground service (`core/recording`) 為獨立工作項目, 不在本格式設計範圍內.
+- `GpxExporter` (及未來其他匯出器) **尚未實作**, 為已知待辦 (見 CLAUDE.md Development Status).

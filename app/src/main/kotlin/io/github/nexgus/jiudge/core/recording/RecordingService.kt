@@ -92,8 +92,8 @@ class RecordingService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                // Restart from the system with no recoverable state - v1 has no resume protocol, so
-                // just shut down rather than spinning up a half-state foreground notification.
+                // Restarted by the system with no recoverable state (the in-memory session died
+                // with the process), so shut down rather than spin up a half-state notification.
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -116,9 +116,9 @@ class RecordingService : Service() {
         // foreground service would otherwise keep running (and its notification stay pinned) after
         // the activity is gone, which reads as "why is the notification still there when I closed the
         // app". Spec H: terminate the recording outright, remove the notification, and stop the
-        // service - but the staging file itself is NOT deleted here; it is left on disk for the next
-        // launch's trackStore.cleanupStaleRecordings() to sweep, mirroring the existing (already
-        // correct) staging cleanup contract rather than reaching into TrackStore from the service.
+        // service - but the staging file itself is NOT deleted here; the session is ended below, so
+        // [RecordingController.sweepStaleStaging] (run at the next map entry) no longer sees it as
+        // live and sweeps it, rather than this service reaching into TrackStore itself.
         releaseGps()
         RecordingController.handleEnd()
         stopSelfCleanly()

@@ -16,9 +16,9 @@ import java.io.IOException
  * location subscription itself stays where it already lives (the map screen's foreground GPS), so we
  * do not duplicate provider work.
  *
- * v1 scope: the staging file is dot-prefixed so a crashed session leaves no published noise (cleaned
- * at next start by [TrackStore.cleanupStaleRecordings]); the foreground-service background recording
- * is out of scope - see CLAUDE.md "尚未建置: 背景軌跡錄製". Manual pause/resume ([pause]/[resume]) is
+ * The staging file is dot-prefixed so a dead session leaves no published noise (swept at the next
+ * map entry by [TrackStore.cleanupStaleRecordings], which is handed the live session's file to
+ * skip - a recording may still be running when the sweep fires). Manual pause/resume ([pause]/[resume]) is
  * the three-layer UI state machine's "已停止" layer: the session and its staging file stay alive
  * across a pause, [points] is left untouched (the map overlay keeps showing the path so far), and
  * [onFix] silently drops fixes while paused rather than appending them - a deliberate simplification

@@ -1,6 +1,7 @@
 package io.github.nexgus.jiudge.data.route
 
 import java.io.File
+import java.io.IOException
 
 /** Thrown by [TrackStore.save] when a new track reuses an existing track's name. */
 class DuplicateTrackNameException(
@@ -13,17 +14,23 @@ class DuplicateTrackNameException(
  * re-reads them once the user re-grants storage access. Mirrors [RouteStore] for plans.
  *
  * Live recording writes to a per-session staging file under the same folder, prefixed with a leading
- * dot ([STAGING_PREFIX]). The dot keeps it off the picker even before it is finalised, so a crash
- * mid-recording leaves a hidden remnant that the next launch cleans up via [cleanupStaleRecordings]
- * rather than presenting a half-written track to the user. v1 does not recover from staging files -
- * see CLAUDE.md "尚未建置: 背景軌跡錄製". Finalising via [finalize] / [finalizeAsCopyOf] rewrites the
+ * dot ([STAGING_PREFIX]). The dot keeps it off the picker even before it is finalised, so a session
+ * that dies mid-recording (crash, task swiped away) leaves a hidden remnant rather than a
+ * half-written track in the picker. Remnants are swept by [cleanupStaleRecordings]; a recording may
+ * be live while the sweep runs (the session outlives the activity that triggers sweeping), so the
+ * caller that knows which staging file is live - RecordingController - passes it via `keep` and the
+ * sweep never touches it. Finalising via [finalizeNew] / [finalizeContinuation] rewrites the staging
  * file as a published trace under its display name.
+ *
+ * [tracksDir] exists so tests can point the store at a temp folder; production uses the default.
  *
  * Every method does blocking file I/O - call off the main thread. Reaching the public folder needs
  * `MANAGE_EXTERNAL_STORAGE` (Android 11+) or `WRITE_EXTERNAL_STORAGE` (Android 10 and below);
  * callers must hold it before saving/loading, otherwise the I/O fails.
  */
-class TrackStore {
+class TrackStore(
+    private val tracksDir: () -> File = { RoutePaths.tracksDir() },
+) {
     /** Lightweight listing entry - identifies a saved track file and its summary fields. */
     data class Summary(
         val file: File,
@@ -41,7 +48,7 @@ class TrackStore {
         startEpochMs: Long,
         displayName: String,
     ): File {
-        val file = File(RoutePaths.tracksDir(), stagingFileName(startEpochMs))
+        val file = File(tracksDir(), stagingFileName(startEpochMs))
         // Truncate to a single header line; never carry over stale lines if the same epoch is somehow reused.
         val header = TraceHeader(type = Trace.TYPE_TRACK, name = displayName, createdAtEpochMs = startEpochMs)
         file.bufferedWriter().use { writer ->
@@ -58,18 +65,26 @@ class TrackStore {
      */
     fun startContinuationStaging(source: File): File {
         val parsed = Trace.read(source) ?: error("not a track file: ${source.name}")
-        val file = File(RoutePaths.tracksDir(), stagingFileName(parsed.header.createdAtEpochMs))
+        val file = File(tracksDir(), stagingFileName(parsed.header.createdAtEpochMs))
         Trace.write(file, parsed.header, parsed.records)
         return file
     }
 
-    /** Appends one `pt` record (serialised by [RecordedTrack.pointRecord]) to [staging] as one line. */
+    /**
+     * Appends one `pt` record (serialised by [RecordedTrack.pointRecord]) to [staging] as one line.
+     *
+     * Throws [IOException] when [staging] no longer exists: this layer only ever extends a file the
+     * session created, never (re)creates one - a silently recreated file would lack the header line
+     * and fail at finalise, long after whatever deleted it. Failing on the very next fix lets the
+     * caller stop the session immediately instead.
+     */
     fun appendPoint(
         staging: File,
         latitude: Double,
         longitude: Double,
         timeMs: Long,
     ) {
+        if (!staging.exists()) throw IOException("staging file missing: ${staging.name}")
         // FileWriter(append = true) is the simplest reliable append; flushed on close so each call
         // flushes at most one short line. spec §3: append-only line layer.
         java.io.FileWriter(staging, true).use { writer ->
@@ -92,7 +107,7 @@ class TrackStore {
         val target = newName.trim().ifEmpty { "未命名軌跡" }
         if (list().any { it.name.trim() == target }) throw DuplicateTrackNameException(target)
         val header = parsed.header.copy(name = target)
-        val out = File(RoutePaths.tracksDir(), publishedFileName(target, header.createdAtEpochMs))
+        val out = File(tracksDir(), publishedFileName(target, header.createdAtEpochMs))
         Trace.write(out, header, parsed.records)
         staging.delete()
         return out
@@ -117,7 +132,7 @@ class TrackStore {
             throw DuplicateTrackNameException(target)
         }
         val header = parsed.header.copy(name = target)
-        val out = File(RoutePaths.tracksDir(), publishedFileName(target, header.createdAtEpochMs))
+        val out = File(tracksDir(), publishedFileName(target, header.createdAtEpochMs))
         Trace.write(out, header, parsed.records)
         if (out != original) original.delete()
         staging.delete()
@@ -128,18 +143,21 @@ class TrackStore {
     fun discardStaging(staging: File): Boolean = staging.delete()
 
     /**
-     * Removes every leftover staging file (`tracks/.recording-*.jsonl`). Run on app start so a
-     * crash mid-recording does not leave noise behind in the public folder.
+     * Removes every leftover staging file (`tracks/.recording-*.jsonl`) except [keep], so a crash
+     * or swiped-away task does not leave noise behind in the public folder. [keep] is the live
+     * session's staging file (null when no session is live): stale remnants and the file being
+     * recorded right now share the same name pattern, and only the caller can tell them apart.
      */
-    fun cleanupStaleRecordings() {
-        (RoutePaths.tracksDir().listFiles() ?: emptyArray())
+    fun cleanupStaleRecordings(keep: File? = null) {
+        (tracksDir().listFiles() ?: emptyArray())
             .filter { it.isFile && it.name.startsWith(STAGING_PREFIX) && it.name.endsWith(Trace.FILE_SUFFIX) }
+            .filterNot { it == keep }
             .forEach { it.delete() }
     }
 
     /** Lists saved tracks newest-first; files that fail to parse or are still staging are skipped. */
     fun list(): List<Summary> =
-        (RoutePaths.tracksDir().listFiles() ?: emptyArray())
+        (tracksDir().listFiles() ?: emptyArray())
             .filter {
                 it.isFile &&
                     it.name.endsWith(Trace.FILE_SUFFIX) &&
@@ -177,7 +195,7 @@ class TrackStore {
             throw DuplicateTrackNameException(target)
         }
         val track = load(file).copy(name = target)
-        val newFile = File(RoutePaths.tracksDir(), publishedFileName(target, track.createdAtEpochMs))
+        val newFile = File(tracksDir(), publishedFileName(target, track.createdAtEpochMs))
         Trace.write(newFile, track.header(), track.toRecords())
         if (newFile != file) file.delete()
         return Summary(

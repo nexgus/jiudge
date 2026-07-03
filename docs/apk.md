@@ -1,4 +1,4 @@
-這隻 APK 只支援規劃路徑與查詢圖例, GPS 還沒加入, 會直接跳到八里觀音山.
+這隻 APK 支援離線地圖瀏覽, 路徑規劃, 圖例查詢 ("?"), 山名搜尋, GPS 現在位置顯示, 以及軌跡錄製 (螢幕關閉後仍持續錄). 尚未支援 GPX 匯入匯出與高程剖面.
 
 提醒
 1. 這支 APK 用 debug 簽章 (見 app/build.gradle.kts 的 buildTypes.release 沿用 debug signing). 能正常安裝與使用.

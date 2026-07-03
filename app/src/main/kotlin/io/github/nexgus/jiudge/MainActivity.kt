@@ -730,10 +730,11 @@ private fun MapScreen(
             }
         }
 
-    // Clean up any leftover .recording-*.jsonl files from a previous run (e.g. a crash or kill mid-
-    // recording). v1 has no resume - the dot-prefixed files would just sit and accumulate noise.
-    LaunchedEffect(trackStore) {
-        withContext(Dispatchers.IO) { trackStore.cleanupStaleRecordings() }
+    // Sweep any leftover .recording-*.jsonl staging files (from a crash or a swiped-away task).
+    // Delegated to RecordingController, which skips the live session's file: this effect re-runs on
+    // every activity recreation, and a background recording may well be in progress at that moment.
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { RecordingController.sweepStaleStaging() }
     }
 
     // Push the recorder's live polyline into the layer whenever it changes.

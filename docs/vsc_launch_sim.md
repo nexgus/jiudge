@@ -37,7 +37,7 @@ $ADB -s $DEV push \
   ~/rudymap-data/hgt \
   $DATA/map/
 # 必要: adb 建立的目錄 owner 為 shell, app (另一 uid) 無法穿越 -> 放寬權限後 app 才讀得到.
-# (僅 dev adb-push 需要; Phase 1 由 app 自己下載寫入時無此問題)
+# (僅 dev adb-push 需要; app 內建下載自行寫入時無此問題)
 $ADB -s $DEV shell chmod -R 777 $DATA/map
 ```
 

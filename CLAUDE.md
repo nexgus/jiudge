@@ -56,31 +56,6 @@
 - 連續錄製軌跡 8 小時: 於現代中階 Android 上 < 30% 電量消耗
 - 安裝後 App 大小: < 100 MB (RudyMap 資料於首次執行時由 App 內下載, 不隨包附帶; 光底圖壓縮後就約 298 MB)
 
-## v1 Scope Discipline
-
-**v1 範圍內**:
-
-- 離線地圖瀏覽 (mapsforge 標準渲染, 連續捏放與旋轉)
-- 自動路線規劃 (起終點 + 中途 waypoint, snap 到 OSM 山徑)
-- 路線量測 (總長度, 總爬升 / 下降, 海拔剖面圖)
-- GPS 軌跡錄製 (背景錄製, 螢幕關閉持續記錄)
-- 軌跡即時統計 (已走距離, 總爬升, 時間, 平均速度)
-- 即時海拔剖面 (錄製中顯示已走剖面)
-- GPX / KML 匯入匯出 (tracks + routes + waypoints, 相容主流登山 App)
-- 圖資下載與更新 (App 內直接從 RudyMap 鏡像下載 `.map` + DEM + 樣式; "檢查更新" 比對 HTTP `Last-Modified`; 保留 "手動匯入本地檔" 備援)
-- Google Maps 跳轉 ("在 Google Maps 開啟此位置")
-
-**明確排除於 v1 之外** (不要實作, 即使某次重構 "自然而然就能順帶做到"):
-
-- 多使用者, 帳號, 雲端同步
-- 含過夜停點與逐日行程的多日路徑規劃
-- 錄製途中的偏離路線警示
-- 衛星 / 空拍影像疊圖
-- 使用者自註的 POI (水源, 營地等)
-- 林務局通訊點疊圖
-
-若某項請求自然引向以上之一, 請將其列為 v2 候選並**停下**; 未經明確同意不要實作.
-
 ## Development Status
 
 此處工作為**功能驅動, 而非嚴格的階段線性** - 功能在有用時才落地, 不照固定順序. 早期曾有 Phase 0-3 的階段計畫, 但本專案刻意未按其順序進行, 因此**不要**以 "那屬於後面的階段" 來阻擋或設限工作. 舊的 "絕不跳階段" 規則已廢止.
@@ -101,14 +76,19 @@
   以不阻斷的建置 banner 顯示進度
 - 山名搜尋 (`feature/search`): 左側控制列的 "🔍" 開啟一個依子字串即時過濾索引的對話框;
   點選命中項會將地圖置中於該山頭 (若縮放太遠則拉近)
+- 背景軌跡錄製 (`core/recording`, `feature/recording`, `data/route`): foreground service GPS
+  (`FOREGROUND_SERVICE_LOCATION`) + partial wake lock + 電池最佳化豁免詢問 (advisory, 見
+  docs/permissions.md) + 錄製中螢幕恆亮; fix gating 規則 (`FixGate`, 定義於 docs/gating.md);
+  staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`TrackStore`, 格式見 docs/trace_spec.md);
+  已存軌跡的列表 / 載入檢視 / 改名 / 刪除
 
 **尚未建置 (已知待辦):**
-- 背景軌跡錄製 (foreground-service GPS) + GPX 匯入 / 匯出 - 這是原本的
-  "Phase 1 核心", 仍未完成
+- GPX / KML 匯入 / 匯出 (tracks + routes + waypoints)
+- 錄製中的即時統計 (距離, 爬升, 時間, 均速) 與即時海拔剖面
 - 規劃時的高程剖面
 - 更新檢查機制
 
-仍然適用: 做被要求的事, 不要無聲擴張範圍 (見 Working With Me), 並在未獲明確同意前, 將下方 v1 排除清單視為禁區.
+仍然適用: 做被要求的事, 不要無聲擴張範圍 (見 Working With Me).
 
 ## Build, Lint & Install Commands
 
@@ -121,7 +101,7 @@ repo 根目錄有兩支輔助腳本封裝了常見流程 (兩者都會先 `cd` �
 
 - `./gradlew assembleDebug` / `assembleRelease` - APK 位於 `app/build/outputs/apk/<variant>/`.
 - `./gradlew ktlintCheck` - Kotlin style 檢查; 已 wire 進 `check`. `./gradlew ktlintFormat` 自動修正. 兩者皆透過 `JavaExec` task 執行 **ktlint CLI** (非 ktlint-gradle plugin), 因此唯一的 style gate 就是 ktlint - 沒有另外的 cartography/lint 設定要滿足.
-- `./gradlew test` - JUnit 單元測試. 單一測試: `./gradlew test --tests "io.github.nexgus.jiudge.SomeTest"` (或 `"...SomeTest.someMethod"`).
+- `./gradlew test` - JUnit 單元測試. 單一測試需指定 variant task (`test` 是 lifecycle task, 不接受 `--tests`): `./gradlew testDebugUnitTest --tests "io.github.nexgus.jiudge.SomeTest"` (或 `"...SomeTest.someMethod"`).
 
 值得知道的建置事實:
 
@@ -138,8 +118,8 @@ repo 根目錄有兩支輔助腳本封裝了常見流程 (兩者都會先 `cd` �
 ### Directory layout (native Android)
 ```
 app/src/main/kotlin/io/github/nexgus/jiudge/
-  feature/        # feature modules: map (+ current-location overlay), planning, identify, mapdata, about, search (peak-name lookup) (planned: recording, gpx, settings)
-  core/           # shared infra: mapdata, routing, storage, location (foreground GPS + compass), elevation (.hgt DEM lookup), index (summit-position index for search) (planned: background recording service, networking)
+  feature/        # feature modules: map (+ current-location overlay), planning, identify, mapdata, about, search (peak-name lookup), recording (recorder + fix gating + UI) (planned: gpx, settings)
+  core/           # shared infra: mapdata, routing, storage, location (foreground GPS + compass), elevation (.hgt DEM lookup), index (summit-position index for search), recording (foreground service + controller) (planned: networking)
   data/           # repositories, models, data sources (currently: route)
   ui/             # Compose components, theming, design tokens (planned)
 docs/             # spec, design notes, architecture decisions
