@@ -14,6 +14,11 @@
          PARTIAL_WAKE_LOCK so Doze does not suspend the CPU between fixes / mid-transfer. WifiLock
          does not require its own permission. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Doze ignores wake locks unless the app is exempt from battery optimizations, so a recording
+         through a long stationary rest (screen off, device still) would drop fixes. Normal
+         (install-time) permission; the actual grant is the system dialog fired by
+         ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS from the pre-recording rationale flow. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Runtime-requested on Android 13+ so the download / recording notifications are visible. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

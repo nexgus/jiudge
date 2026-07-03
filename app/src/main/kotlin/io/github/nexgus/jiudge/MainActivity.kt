@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -125,6 +126,7 @@ import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import io.github.nexgus.jiudge.feature.planning.SearchTargetControls
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
 import io.github.nexgus.jiudge.feature.recording.BackgroundLocationRationaleDialog
+import io.github.nexgus.jiudge.feature.recording.BatteryExemptionRationaleDialog
 import io.github.nexgus.jiudge.feature.recording.DeleteTrackDialog
 import io.github.nexgus.jiudge.feature.recording.DiscardRecordingDialog
 import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_COLOR
@@ -464,6 +466,7 @@ private fun MapScreen(
     // or the user cancels the rationale.
     var pendingRecordingStart by remember { mutableStateOf<PendingRecordingStart?>(null) }
     var showBackgroundLocationRationale by remember { mutableStateOf(false) }
+    var showBatteryExemptionRationale by remember { mutableStateOf(false) }
 
     // The GpsSource lease this activity currently holds, if any. Managed by the DisposableEffect
     // that tracks the map screen's lifecycle, by the RecordingController.state observer, and by
@@ -542,7 +545,9 @@ private fun MapScreen(
     // Recording-start permission flow: POST_NOTIFICATIONS on Android 13+ (asked inline; the service
     // still works without it, the notification is just hidden), then ACCESS_BACKGROUND_LOCATION on
     // Android 10+ (the OS refuses to grant this via inline dialog on Android 11+, so we walk the
-    // user to the system settings page via [BackgroundLocationRationaleDialog]).
+    // user to the system settings page via [BackgroundLocationRationaleDialog]), then the advisory
+    // battery-optimization exemption ([BatteryExemptionRationaleDialog] - recording starts whether
+    // or not the user grants it).
     fun dispatchPendingStart() {
         val pending = pendingRecordingStart ?: return
         // Strict lease: the service will acquire GpsSource as Mode.Recording. Release the Foreground
@@ -559,6 +564,24 @@ private fun MapScreen(
         pendingRecordingStart = null
     }
 
+    // Last gate before dispatch, and the only advisory one: without the battery-optimization
+    // exemption, Doze ignores the recording service's wake lock once the device sits still long
+    // enough with the screen off, so fixes may be dropped during long stationary rests. Asked on
+    // every start while unexempted (the user can revoke the exemption in Settings at any time, so
+    // no refusal is remembered); every path out of the rationale still starts the recording.
+    fun proceedAfterBatteryExemption() {
+        if (pendingRecordingStart == null) return
+        val exempt =
+            context
+                .getSystemService(PowerManager::class.java)
+                .isIgnoringBatteryOptimizations(context.packageName)
+        if (exempt) {
+            dispatchPendingStart()
+        } else {
+            showBatteryExemptionRationale = true
+        }
+    }
+
     fun proceedAfterNotifPermission() {
         if (pendingRecordingStart == null) return
         val needsBg =
@@ -571,7 +594,7 @@ private fun MapScreen(
             showBackgroundLocationRationale = true
             return
         }
-        dispatchPendingStart()
+        proceedAfterBatteryExemption()
     }
 
     val recordingNotifPermissionLauncher =
@@ -589,13 +612,21 @@ private fun MapScreen(
     val recordingBackgroundLocationLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                dispatchPendingStart()
+                proceedAfterBatteryExemption()
             } else {
                 pendingRecordingStart = null
                 scope.launch {
                     snackbarHostState.showSnackbar("未取得背景定位權限, 無法在螢幕關閉時持續錄製")
                 }
             }
+        }
+
+    // The system exemption dialog fired by [BatteryExemptionRationaleDialog]'s 前往允許. The result
+    // code is deliberately ignored: allow or deny, the recording proceeds - the exemption only
+    // affects fix reliability through Doze, not the ability to record.
+    val batteryExemptionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            dispatchPendingStart()
         }
 
     fun requestStartRecording(continuationSource: File?) {
@@ -1851,6 +1882,26 @@ private fun MapScreen(
             onDismiss = {
                 showBackgroundLocationRationale = false
                 pendingRecordingStart = null
+            },
+        )
+    }
+
+    if (showBatteryExemptionRationale) {
+        BatteryExemptionRationaleDialog(
+            onConfirm = {
+                showBatteryExemptionRationale = false
+                // The launcher's callback dispatches the pending start when the system dialog
+                // returns, whichever way the user answered.
+                batteryExemptionLauncher.launch(
+                    Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.fromParts("package", context.packageName, null),
+                    ),
+                )
+            },
+            onSkip = {
+                showBatteryExemptionRationale = false
+                dispatchPendingStart()
             },
         )
     }

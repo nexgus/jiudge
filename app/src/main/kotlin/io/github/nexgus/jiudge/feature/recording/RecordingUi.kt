@@ -354,3 +354,32 @@ fun BackgroundLocationRationaleDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+/**
+ * Explains why the battery-optimization exemption matters before firing the system
+ * ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS dialog. Unlike the background-location rationale,
+ * this gate is advisory: recording starts either way (the caller proceeds both when the system
+ * dialog returns and on 略過), because the only cost of refusing is possible fix loss once Doze
+ * kicks in - screen off plus a long stationary stretch, such as an overnight camp. Shown on every
+ * recording start while unexempted, with no "do not ask again" state: the exemption is a system
+ * setting the user can flip back at any time, so remembering a past refusal could go stale.
+ */
+@Composable
+fun BatteryExemptionRationaleDialog(
+    onConfirm: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text("建議解除電池用量限制") },
+        text = {
+            Text(
+                "螢幕關閉且手機長時間靜止時 (例如中途休息), 系統省電機制可能暫停錄製, 使軌跡出現缺口. " +
+                    "點選 \"前往允許\" 後, 請在系統對話框選擇 \"允許\", 讓錄製不受省電限制. " +
+                    "點選 \"略過\" 仍會開始錄製.",
+            )
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("前往允許") } },
+        dismissButton = { TextButton(onClick = onSkip) { Text("略過") } },
+    )
+}
