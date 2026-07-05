@@ -266,4 +266,7 @@ KML, GeoJSON 透過同一中介結構轉出. 本文件不展開細節, 僅確認
 - GPX 匯入: `GpxImporter` (`data/route/`) 以 SAX 串流解析外部 GPX, 每個 `<trkseg>` / `<rte>`
   對應一個 `seg` (`origin:"import"`), 段邊界點成為 `wpt`; 匯入時以 Douglas-Peucker
   (`core/geo/PolylineSimplify`) 抽稀. 匯入的 GPX `<ele>` 依 §8 丟棄.
-- `GpxExporter` (及未來其他匯出器) **尚未實作**, 為已知待辦 (見 CLAUDE.md Development Status).
+- GPX 匯出: `GpxExporter` (`data/route/`) 依 §11 對應表串流輸出 GPX 1.1 - plan 為 `<wpt>` +
+  攤平成單一 `<rte>`, track 為單一 `<trk>`/`<trkseg>` 且每點必含 `<time>`; `<ele>` 依 §8 以
+  注入的 DEM 查詢取得, 無 DEM 或查無值時省略. 儲存位置經 SAF `ACTION_CREATE_DOCUMENT`
+  (預設開在下載目錄) 由使用者決定. 其他格式 (KML, GeoJSON) 的匯出器尚未實作.

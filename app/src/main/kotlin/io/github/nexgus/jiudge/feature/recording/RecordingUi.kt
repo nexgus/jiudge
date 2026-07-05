@@ -206,17 +206,18 @@ private fun formatDistance(meters: Double): String =
     }
 
 /**
- * Lists saved tracks for loading; tapping a row picks it. Each row's "更多" menu offers rename and
- * delete, delegated upward via [onRename]/[onDelete] (the caller confirms and persists). Mirrors
- * [io.github.nexgus.jiudge.feature.planning.LoadRouteDialog]. The dialog itself is purpose-neutral -
- * the caller decides what "pick" means (load into the history viewer); 繼續錄製 lives in the
- * history-view sub-mode after a pick, not on this dialog.
+ * Lists saved tracks for loading; tapping a row picks it. Each row's "更多" menu offers rename,
+ * export to GPX, and delete, delegated upward via [onRename]/[onExport]/[onDelete] (the caller
+ * confirms and persists). Mirrors [io.github.nexgus.jiudge.feature.planning.LoadRouteDialog]. The
+ * dialog itself is purpose-neutral - the caller decides what "pick" means (load into the history
+ * viewer); 繼續錄製 lives in the history-view sub-mode after a pick, not on this dialog.
  */
 @Composable
 fun LoadTrackDialog(
     summaries: List<TrackStore.Summary>,
     onPick: (TrackStore.Summary) -> Unit,
     onRename: (TrackStore.Summary) -> Unit,
+    onExport: (TrackStore.Summary) -> Unit,
     onDelete: (TrackStore.Summary) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -246,7 +247,11 @@ fun LoadTrackDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                TrackRowMenu(onRename = { onRename(s) }, onDelete = { onDelete(s) })
+                                TrackRowMenu(
+                                    onRename = { onRename(s) },
+                                    onExport = { onExport(s) },
+                                    onDelete = { onDelete(s) },
+                                )
                             }
                             HorizontalDivider()
                         }
@@ -259,10 +264,11 @@ fun LoadTrackDialog(
     )
 }
 
-/** Per-row "更多" overflow menu offering rename and delete for a saved track. */
+/** Per-row "更多" overflow menu offering rename, GPX export, and delete for a saved track. */
 @Composable
 private fun TrackRowMenu(
     onRename: () -> Unit,
+    onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -274,6 +280,13 @@ private fun TrackRowMenu(
                 onClick = {
                     expanded = false
                     onRename()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("匯出 GPX") },
+                onClick = {
+                    expanded = false
+                    onExport()
                 },
             )
             DropdownMenuItem(

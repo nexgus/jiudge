@@ -309,13 +309,15 @@ private fun formatDistance(meters: Double): String =
 
 /**
  * Lists saved routes for loading; tapping a row displays it on the map. Each row's "更多" menu offers
- * rename and delete, delegated upward via [onRename]/[onDelete] (the caller confirms and persists).
+ * rename, export to GPX, and delete, delegated upward via [onRename]/[onExport]/[onDelete] (the
+ * caller confirms and persists).
  */
 @Composable
 fun LoadRouteDialog(
     summaries: List<io.github.nexgus.jiudge.data.route.RouteStore.Summary>,
     onPick: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
     onRename: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
+    onExport: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
     onDelete: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -345,7 +347,11 @@ fun LoadRouteDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                RouteRowMenu(onRename = { onRename(s) }, onDelete = { onDelete(s) })
+                                RouteRowMenu(
+                                    onRename = { onRename(s) },
+                                    onExport = { onExport(s) },
+                                    onDelete = { onDelete(s) },
+                                )
                             }
                             HorizontalDivider()
                         }
@@ -358,10 +364,11 @@ fun LoadRouteDialog(
     )
 }
 
-/** Per-row "更多" overflow menu offering rename and delete for a saved route. */
+/** Per-row "更多" overflow menu offering rename, GPX export, and delete for a saved route. */
 @Composable
 private fun RouteRowMenu(
     onRename: () -> Unit,
+    onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -373,6 +380,13 @@ private fun RouteRowMenu(
                 onClick = {
                     expanded = false
                     onRename()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("匯出 GPX") },
+                onClick = {
+                    expanded = false
+                    onExport()
                 },
             )
             DropdownMenuItem(

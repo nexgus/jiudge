@@ -1,6 +1,7 @@
 package io.github.nexgus.jiudge
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -8,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.MotionEvent
@@ -58,6 +60,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -104,11 +107,13 @@ import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
 import io.github.nexgus.jiudge.data.route.DuplicateTrackNameException
+import io.github.nexgus.jiudge.data.route.GpxExporter
 import io.github.nexgus.jiudge.data.route.GpxImporter
 import io.github.nexgus.jiudge.data.route.GpxParseException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RecordedTrack
 import io.github.nexgus.jiudge.data.route.RouteStore
+import io.github.nexgus.jiudge.data.route.Trace
 import io.github.nexgus.jiudge.data.route.TrackStore
 import io.github.nexgus.jiudge.feature.about.AboutDialog
 import io.github.nexgus.jiudge.feature.about.MainMenuButton
@@ -176,14 +181,35 @@ private data class PendingRecordingStart(
 )
 
 /**
- * A parsed-and-simplified GPX import awaiting its route name. [name] starts as the name found in
- * the file (or the file name) and is updated to the user's typed name when a save is rejected as a
- * duplicate, so the reopened dialog prefills it for editing.
+ * Fixed staging slot for a parsed-and-simplified GPX import awaiting its route name, written as a
+ * regular plan trace. The geometry (potentially thousands of points) must not ride in the
+ * saved-state Bundle (~1 MB binder limit), so only the prefilled name string is kept in
+ * `rememberSaveable` state and the draft body lives here - the naming dialog then survives
+ * activity recreation without losing the parsed import. The single fixed name doubles as cleanup:
+ * a remnant from an abandoned session is simply overwritten by the next import.
  */
-private data class ImportDraft(
+private fun importDraftFile(context: Context): File = File(context.cacheDir, "import_draft.jsonl")
+
+/**
+ * A saved route or track awaiting export to GPX, kept alive across the SAF "create document" picker
+ * (it returns asynchronously). [file] is the source trace under Documents/Jiudge, [name] is its
+ * display name (used for both the snackbar and the suggested file name), and [isTrack] selects which
+ * [io.github.nexgus.jiudge.data.route.GpxExporter.write] overload to call.
+ */
+private data class GpxExportTarget(
+    val file: File,
     val name: String,
-    val segments: List<List<LatLong>>,
-)
+    val isTrack: Boolean,
+) {
+    companion object {
+        /** Saves the pending export across activity recreation while the SAF picker is open. */
+        val Saver =
+            listSaver<GpxExportTarget?, String>(
+                save = { target -> target?.let { listOf(it.file.absolutePath, it.name, it.isTrack.toString()) } ?: emptyList() },
+                restore = { saved -> if (saved.isEmpty()) null else GpxExportTarget(File(saved[0]), saved[1], saved[2].toBoolean()) },
+            )
+    }
+}
 
 class MainActivity : ComponentActivity() {
     private var mapView: MapView? = null
@@ -501,12 +527,18 @@ private fun MapScreen(
     var isNewRoute by remember { mutableStateOf(false) }
     // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
     var saveNameDraft by remember { mutableStateOf<String?>(null) }
-    // A parsed GPX import awaiting its route name; non-null keeps the naming dialog open.
-    var importDraft by remember { mutableStateOf<ImportDraft?>(null) }
+    // Prefilled name of a parsed GPX import awaiting its route name; non-null keeps the naming
+    // dialog open. Saveable (the draft geometry itself is staged in [importDraftFile]) so the
+    // dialog survives rotation and process death instead of forcing a re-import.
+    var importDraftName by rememberSaveable { mutableStateOf<String?>(null) }
     // Save/load failures mean data was not written or cannot be read back - errors the user must
     // not miss - so they raise a blocking dialog instead of a timed snackbar (see CLAUDE.md,
     // "Message surfaces"). Null while no such error is showing.
     var storageErrorMessage by remember { mutableStateOf<String?>(null) }
+    // Route or track awaiting GPX export, held from the picker launch until the SAF callback fires.
+    // Saveable: the picker is a separate activity, so ours may be recreated (rotation, process
+    // death) before the callback delivers the destination URI.
+    var exportTarget by rememberSaveable(stateSaver = GpxExportTarget.Saver) { mutableStateOf<GpxExportTarget?>(null) }
 
     // Recording session - driven by [RecordingService] (foreground service + PARTIAL_WAKE_LOCK so
     // the track keeps being written with the screen off and the process in Doze). The activity
@@ -616,20 +648,24 @@ private fun MapScreen(
 
     // GPX import: the system document picker hands back a one-off content URI (reading it needs no
     // storage permission - only the later save into Documents/Jiudge does). Parsing and Douglas-
-    // Peucker simplification run off the main thread; the result parks in importDraft, whose naming
-    // dialog drives the save. Parse failures and empty files are data-level errors the user must
-    // not miss, so they raise the blocking error dialog (see CLAUDE.md "Message surfaces").
+    // Peucker simplification run off the main thread; the parsed geometry is staged on disk in
+    // [importDraftFile] and only the prefilled name parks in importDraftName, whose naming dialog
+    // drives the save - so an activity recreation under the dialog costs nothing. Parse failures
+    // and empty files are data-level errors the user must not miss, so they raise the blocking
+    // error dialog (see CLAUDE.md "Message surfaces").
     val gpxPickerLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@rememberLauncherForActivityResult
             scope.launch {
                 try {
-                    val draft =
+                    // Null signals a file with no usable segment - reported below as an error.
+                    val prefill =
                         withContext(Dispatchers.IO) {
                             val parsed =
                                 context.contentResolver.openInputStream(uri)?.use { GpxImporter.parse(it) }
                                     ?: throw GpxParseException("cannot open the selected file")
                             val segments = parsed.segments.map { simplifyPolyline(it, GPX_SIMPLIFY_TOLERANCE_M) }
+                            if (segments.isEmpty()) return@withContext null
                             // Prefer the name embedded in the file; fall back to the display name
                             // (file name without extension) the picker's provider reports. Purely
                             // best-effort: a provider that ignores the projection, omits the column,
@@ -645,22 +681,84 @@ private fun MapScreen(
                                 }.getOrNull()
                                     ?.substringBeforeLast('.')
                                     ?.trim()
-                            ImportDraft(
-                                name =
-                                    parsed.name
-                                        ?.trim()
-                                        .orEmpty()
-                                        .ifEmpty { fallbackName.orEmpty() },
-                                segments = segments,
-                            )
+                            val name =
+                                parsed.name
+                                    ?.trim()
+                                    .orEmpty()
+                                    .ifEmpty { fallbackName.orEmpty() }
+                            val draft = PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), segments)
+                            Trace.write(importDraftFile(context), draft.header(), draft.toRecords())
+                            name
                         }
-                    if (draft.segments.isEmpty()) {
+                    if (prefill == null) {
                         storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
                     } else {
-                        importDraft = draft
+                        importDraftName = prefill
                     }
                 } catch (e: Exception) {
                     storageErrorMessage = "匯入失敗: ${e.message}"
+                }
+            }
+        }
+
+    // GPX export: saves through the SAF "create document" picker rather than writing straight into
+    // Documents/Jiudge, since the export destination is the user's choice (Downloads, a synced
+    // folder, etc.), not our own fixed storage. The custom contract only adds an initial-location
+    // hint pointing the picker at Downloads - vendor pickers are free to ignore it.
+    val gpxExportLauncher =
+        rememberLauncherForActivityResult(
+            object : ActivityResultContracts.CreateDocument("application/gpx+xml") {
+                override fun createIntent(
+                    context: Context,
+                    input: String,
+                ): Intent =
+                    super.createIntent(context, input).putExtra(
+                        DocumentsContract.EXTRA_INITIAL_URI,
+                        Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload"),
+                    )
+            },
+        ) { uri ->
+            if (uri == null) {
+                // User cancelled the picker - drop the pending target silently.
+                exportTarget = null
+                return@rememberLauncherForActivityResult
+            }
+            val target = exportTarget
+            exportTarget = null
+            if (target == null) {
+                // Should be unreachable - the target is saveable across recreation. If it is gone
+                // anyway, the picker already created an empty file: remove it and tell the user
+                // instead of silently doing nothing after an explicit 儲存.
+                runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                storageErrorMessage = "匯出失敗: 匯出目標已遺失, 請重新操作"
+                return@rememberLauncherForActivityResult
+            }
+            // Reading the source trace lives under Documents/Jiudge, which needs storage access;
+            // writing to the picked SAF uri does not.
+            withStorageAccess {
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val lookup: ((Double, Double) -> Float?)? =
+                                demElevation?.let { dem -> { lat, lon -> dem.elevationAt(lat, lon) } }
+                            val stream =
+                                context.contentResolver.openOutputStream(uri)
+                                    ?: error("cannot open the destination file")
+                            stream.use { out ->
+                                if (target.isTrack) {
+                                    GpxExporter.write(trackStore.load(target.file), out, lookup)
+                                } else {
+                                    GpxExporter.write(routeStore.load(target.file), out, lookup)
+                                }
+                            }
+                        }
+                        snackbarHostState.showSnackbar("已匯出 \"${target.name}\"")
+                    } catch (e: Exception) {
+                        // Best-effort cleanup of a possibly-half-written file; failure here is not
+                        // itself an error worth surfacing.
+                        runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                        storageErrorMessage = "匯出失敗: ${e.message}"
+                    }
                 }
             }
         }
@@ -1717,16 +1815,32 @@ private fun MapScreen(
         )
     }
 
-    importDraft?.let { draft ->
+    importDraftName?.let { draftName ->
         ImportRouteDialog(
-            initialName = draft.name,
+            initialName = draftName,
             onConfirm = { name ->
-                importDraft = null
-                val route = PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), draft.segments)
+                importDraftName = null
                 withStorageAccess {
                     scope.launch {
+                        // The staged draft can only vanish if the OS cleared the cache dir while the
+                        // naming dialog was open - rare, but report it rather than silently dropping
+                        // an explicit 確認.
+                        val staged =
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    Trace.read(importDraftFile(context))?.let { PlannedRoute.fromTrace(it) }
+                                }.getOrNull()
+                            }
+                        if (staged == null) {
+                            storageErrorMessage = "匯入失敗: 草稿已遺失, 請重新匯入"
+                            return@launch
+                        }
+                        val route = staged.copy(name = name, createdAtEpochMs = System.currentTimeMillis())
                         try {
-                            withContext(Dispatchers.IO) { routeStore.save(route, checkDuplicate = true) }
+                            withContext(Dispatchers.IO) {
+                                routeStore.save(route, checkDuplicate = true)
+                                importDraftFile(context).delete()
+                            }
                             // Mirror the load-saved-route path: show the imported plan in view mode,
                             // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
                             planner?.clear()
@@ -1736,8 +1850,9 @@ private fun MapScreen(
                             mode = PlanMode.ROUTE_VIEW
                             snackbarHostState.showSnackbar("已匯入規劃路徑: $name")
                         } catch (e: DuplicateRouteNameException) {
-                            // Keep the typed name and reopen so the user can rename in place.
-                            importDraft = draft.copy(name = name)
+                            // Keep the typed name (and the staged file) and reopen so the user can
+                            // rename in place.
+                            importDraftName = name
                             snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
                         } catch (e: Exception) {
                             storageErrorMessage = "儲存失敗: ${e.message}"
@@ -1745,7 +1860,10 @@ private fun MapScreen(
                     }
                 }
             },
-            onDismiss = { importDraft = null },
+            onDismiss = {
+                importDraftName = null
+                scope.launch(Dispatchers.IO) { runCatching { importDraftFile(context).delete() } }
+            },
         )
     }
 
@@ -1838,6 +1956,10 @@ private fun MapScreen(
                 }
             },
             onRename = { renameTarget = it },
+            onExport = { summary ->
+                exportTarget = GpxExportTarget(summary.file, summary.name, isTrack = false)
+                gpxExportLauncher.launch("${summary.name.replace('/', '-')}.gpx")
+            },
             onDelete = { deleteTarget = it },
             onDismiss = { loadList = null },
         )
@@ -1935,6 +2057,10 @@ private fun MapScreen(
                 }
             },
             onRename = { renameTrackTarget = it },
+            onExport = { summary ->
+                exportTarget = GpxExportTarget(summary.file, summary.name, isTrack = true)
+                gpxExportLauncher.launch("${summary.name.replace('/', '-')}.gpx")
+            },
             onDelete = { deleteTrackTarget = it },
             onDismiss = { loadTrackList = null },
         )
