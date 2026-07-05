@@ -1,5 +1,6 @@
 package io.github.nexgus.jiudge.feature.recording
 
+import io.github.nexgus.jiudge.data.route.RecordedTrack
 import io.github.nexgus.jiudge.data.route.TrackStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +49,22 @@ class Recorder(
     /** The accumulated polyline so far. Layer renderers collect this to drive the overlay. */
     val points: StateFlow<List<LatLong>> = _points.asStateFlow()
 
+    /** The bootstrap's provisional first point (docs/gating.md §3.5), display-only. */
+    data class Provisional(
+        val latitude: Double,
+        val longitude: Double,
+        val accuracyMeters: Float?,
+    )
+
+    private val _provisional = MutableStateFlow<Provisional?>(null)
+
+    /**
+     * The best-accuracy first-point candidate while the session's first point is still converging
+     * (docs/gating.md §3.5), or null once it commits (or before any eligible fix). Drives the
+     * rubber-band anchor and the "定位收斂中" readout; never written to the file by itself.
+     */
+    val provisional: StateFlow<Provisional?> = _provisional.asStateFlow()
+
     private var session: Session? = null
 
     // Write-gating rules (docs/gating.md); re-armed per session, pending cleared on pause/stale.
@@ -79,6 +96,7 @@ class Recorder(
             )
         _points.value = emptyList()
         gate.reset()
+        _provisional.value = null
         _state.value = State.RECORDING
     }
 
@@ -107,6 +125,7 @@ class Recorder(
                     FixGate.Fix(it.latitude, it.longitude, it.timeMs, accuracyMeters = null, speedMps = null)
                 },
         )
+        _provisional.value = null
         _state.value = State.RECORDING
     }
 
@@ -114,8 +133,9 @@ class Recorder(
      * Push one fix in. When [State.RECORDING] the fix runs through the [FixGate] rules
      * (docs/gating.md §3); what the gate accepts is appended to the staging file and the in-memory
      * polyline (a corroborated pending fix arrives together with its successor, so a single call
-     * may append two points). Outside RECORDING the fix is dropped. Returns the IO error if an
-     * append failed, so the caller can surface it and stop the session.
+     * may append two points), with a network fix tagged `src:"net"` (trace_spec §5.3). Outside
+     * RECORDING the fix is dropped. Returns the IO error if an append failed, so the caller can
+     * surface it and stop the session.
      */
     fun onFix(
         latitude: Double,
@@ -123,13 +143,17 @@ class Recorder(
         timeMs: Long,
         accuracyMeters: Float?,
         speedMps: Float?,
+        fromGps: Boolean,
     ): IOException? {
         if (_state.value != State.RECORDING) return null
         val s = session ?: return null
-        val accepted = gate.offer(FixGate.Fix(latitude, longitude, timeMs, accuracyMeters, speedMps))
+        val accepted = gate.offer(FixGate.Fix(latitude, longitude, timeMs, accuracyMeters, speedMps, fromGps))
+        _provisional.value =
+            gate.provisional?.let { Provisional(it.latitude, it.longitude, it.accuracyMeters) }
         return try {
             for (fix in accepted) {
-                store.appendPoint(s.staging, fix.latitude, fix.longitude, fix.timeMs)
+                val src = if (fix.fromGps) null else RecordedTrack.SRC_NETWORK
+                store.appendPoint(s.staging, fix.latitude, fix.longitude, fix.timeMs, src)
                 // Update the polyline per append, so file and overlay stay in step even when the
                 // second of two appends fails.
                 _points.value = _points.value + LatLong(fix.latitude, fix.longitude)
@@ -178,6 +202,7 @@ class Recorder(
         _state.value = State.IDLE
         _points.value = emptyList()
         gate.reset()
+        _provisional.value = null
         return s
     }
 

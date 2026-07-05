@@ -83,12 +83,13 @@ class TrackStore(
         latitude: Double,
         longitude: Double,
         timeMs: Long,
+        src: String? = null,
     ) {
         if (!staging.exists()) throw IOException("staging file missing: ${staging.name}")
         // FileWriter(append = true) is the simplest reliable append; flushed on close so each call
         // flushes at most one short line. spec §3: append-only line layer.
         java.io.FileWriter(staging, true).use { writer ->
-            writer.append(RecordedTrack.pointRecord(latitude, longitude, timeMs)).append('\n')
+            writer.append(RecordedTrack.pointRecord(latitude, longitude, timeMs, src)).append('\n')
         }
     }
 

@@ -86,8 +86,8 @@ object GpsSource {
 
     /**
      * True when no fix has arrived within [STALE_FIX_TIMEOUT_MS] - every subscribed provider has
-     * gone quiet (GPS + network in Foreground mode, GPS alone in Recording mode), so [fix] says
-     * where the device was, not where it is. Starts true and stays true until the first live fix.
+     * gone quiet (GPS + network in both modes), so [fix] says where the device was, not where it
+     * is. Starts true and stays true until the first live fix.
      */
     val fixStale: StateFlow<Boolean> = _fixStale.asStateFlow()
 
@@ -154,9 +154,11 @@ object GpsSource {
     /**
      * Take the subscription lease. Throws [IllegalStateException] when a lease is already
      * outstanding. Foreground mode subscribes to `gps + network` (or just `network` under a
-     * coarse-only grant); Recording mode subscribes to `gps` only, so no network fix ever pollutes
-     * a recorded track. Without any location permission the returned [Ownership] is real but the
-     * underlying subscription is empty; the StateFlows stay at their last values.
+     * coarse-only grant); Recording mode also subscribes to `gps + network`, with GPS priority
+     * enforced here by [isBetter] and again, more strictly, by the recording gate (docs/gating.md
+     * rule 0) before a network fix may reach the track file. Without any location permission the
+     * returned [Ownership] is real but the underlying subscription is empty; the StateFlows stay
+     * at their last values.
      */
     fun acquire(
         context: Context,
@@ -247,10 +249,19 @@ object GpsSource {
                     // network provider as an indoor fallback.
                     if (fine) enabled else enabled.filter { it != LocationManager.GPS_PROVIDER }
                 }
-                // Recording refuses network fixes: the recorded track must be a real movement trace,
-                // and a coarse cell/WiFi position would poison the polyline with non-positions. If
-                // fine is missing here the caller is expected to have bailed out before acquiring.
-                Mode.Recording -> if (fine) listOf(LocationManager.GPS_PROVIDER) else emptyList()
+                // Recording subscribes gps + network: the network provider keeps the track (and the
+                // marker) alive underground / indoors where satellites are silent. GPS stays the
+                // authority - isBetter() holds network fixes back while GPS is alive, and the
+                // recording gate re-applies its own satellite-priority holdoff plus stricter
+                // accuracy rules before any network fix reaches the file (docs/gating.md rule 0).
+                // If fine is missing here the caller is expected to have bailed out before acquiring.
+                Mode.Recording ->
+                    if (fine) {
+                        listOf(LocationManager.GPS_PROVIDER) +
+                            lm.getProviders(true).filter { it == LocationManager.NETWORK_PROVIDER }
+                    } else {
+                        emptyList()
+                    }
             }
         if (providers.isEmpty()) return
         seedLastKnown(lm, providers)

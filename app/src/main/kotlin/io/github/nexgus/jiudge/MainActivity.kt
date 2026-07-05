@@ -150,6 +150,7 @@ import org.mapsforge.core.model.MapPosition
 import org.mapsforge.map.android.view.MapView
 import org.mapsforge.map.model.common.Observer
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
  * A held-over recording start request waiting for the permission flow to finish. A null
@@ -452,6 +453,11 @@ private fun MapScreen(
     val recordingState by RecordingController.state.collectAsState()
     val recordedPoints by RecordingController.points.collectAsState()
 
+    // Bootstrap provisional first point (docs/gating.md §3.5): non-null only while a fresh
+    // session's first point is still converging. Drives the rubber band's fixed end (so the
+    // overlay responds within seconds of recording starting) and the 定位收斂中 readout.
+    val recordingProvisional by RecordingController.provisional.collectAsState()
+
     // Dialog flags for the recording flow. saveTrackNameDraft mirrors saveNameDraft - preserved
     // across a rejected duplicate so the reopened dialog prefills the typed name for editing.
     var showRecordEntryChooser by remember { mutableStateOf(false) }
@@ -753,6 +759,17 @@ private fun MapScreen(
         combine(GpsSource.fix, RecordingController.state) { fix, state ->
             if (state == Recorder.State.RECORDING && fix != null) LatLong(fix.latitude, fix.longitude) else null
         }.collect { tip -> layer.updateLiveTip(tip) }
+    }
+
+    // Bootstrap provisional (docs/gating.md §3.5/§6): before any point is written, the rubber
+    // band's fixed end follows the best first-point candidate, so the overlay shows a dashed link
+    // to the marker within seconds of recording starting instead of staying blank until the first
+    // point commits. Display-only, like the band itself.
+    LaunchedEffect(recordedTrackLayer) {
+        val layer = recordedTrackLayer ?: return@LaunchedEffect
+        combine(RecordingController.provisional, RecordingController.state) { prov, state ->
+            if (state == Recorder.State.RECORDING && prov != null) LatLong(prov.latitude, prov.longitude) else null
+        }.collect { anchor -> layer.updateProvisionalAnchor(anchor) }
     }
 
     // Push the loaded history track into its layer whenever it changes; null clears the overlay.
@@ -1388,6 +1405,13 @@ private fun MapScreen(
                         RecordingService.pause(context)
                         showDiscardRecording = true
                     },
+                    // First-point convergence readout (docs/gating.md §3.5): tells the user why no
+                    // track has appeared yet. Provisional non-null implies zero committed points.
+                    statusText =
+                        recordingProvisional?.let { prov ->
+                            prov.accuracyMeters?.let { "定位收斂中 (目前精度 ${it.roundToInt()} m)" }
+                                ?: "定位收斂中"
+                        },
                 )
             } else if (!identifyMode && identifyResult == null && recordingState == Recorder.State.PAUSED) {
                 // 已停止 layer (spec A/F): 儲存 opens the save dialog, 放棄 opens the discard

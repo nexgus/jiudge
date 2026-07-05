@@ -1,7 +1,9 @@
 # 軌跡錄製的定位點 Gating 規則
 
-本文件規範軌跡錄製時, 一個 GPS fix 要通過哪些檢驗才能寫入軌跡檔 (下稱 **gating**).
-本文僅定義規則與設計理由, 不含程式實作. (定案於 2026-07-02 的討論)
+本文件規範軌跡錄製時, 一個定位 fix 要通過哪些檢驗才能寫入軌跡檔 (下稱 **gating**).
+本文僅定義規則與設計理由, 不含程式實作. (定案於 2026-07-02 的討論; 2026-07-05 修訂:
+納入網路定位的受限入檔 [§3 規則 0] 與首點 bootstrap [§3.5], 取代原 "網路定位不進軌跡"
+原則)
 
 ## 1. 背景與動機
 
@@ -47,22 +49,50 @@ accuracy 圈內隨機遊走, 產生俗稱 "鳥巢" 的原地亂線. 其後果不
    元素是橡皮筋段 (§6), 它是純視覺補綴, 不代表任何記錄內容.
 3. **不假設移動方式** - 規則不得內建 "使用者一定在步行" 的假設; 在火車, 接駁車,
    纜車上錄製都必須正確運作 (見 §5).
-4. **網路定位不進軌跡** - 錄製模式只訂閱 GPS provider, gating 的輸入永遠是衛星
-   fix. 濾波救不回 cell / WiFi fix 的系統性偏置, 這不是 gating 要解的問題.
+4. **衛星優先, 網路定位僅於衛星靜默時受限入檔** (2026-07-05 修訂; 原則原為 "網路定位
+   不進軌跡") - 錄製模式訂閱 gps + network 兩個 provider, 但衛星 fix 永遠優先: 只要
+   衛星訊號存在, 網路 fix 一律不入檔 (規則 0). 網路 fix 入檔時受更嚴格的 accuracy
+   門檻把關 (收 WiFi 級精度, 拒基地台級精度), 並在檔案中以 `src:"net"` 標記
+   (trace_spec §5.3). 動機是市區 / 室內 / 地下的使用情境 - 衛星完全收不到時, 有偏置
+   的網路位置仍勝過軌跡整段消失; 高山上沒有網路定位可用, 行為與純 GPS 完全相同.
+   注意此功能仰賴環境有基地台 / WiFi 可掃描, 這是環境條件而非功能的網路依賴 - 純
+   GPS 錄製在無網路下的行為不變, 不違反完全離線的硬約束.
 
 ## 3. 規則
 
 前置條件 (既有行為, 非本文新增): 只有 `RECORDING` 狀態評估以下規則; `PAUSED` 時
 fix 一律丟棄. "錨點" 指**最後一個已寫入軌跡的點** (續錄時為原軌跡的最後一點).
-Session 的第一個點沒有錨點, 只受規則 1 檢驗, 通過即寫入.
+Session 尚無錨點時 (全新錄製的開頭) 走 §3.5 的首點 bootstrap, 不套用規則 1-3.
 
 依序套用, 任一規則不通過即丟棄 (規則 2 為擱置待佐證):
 
+### 規則 0: 網路 fix 准入 (衛星優先)
+
+網路 fix 只有在**衛星靜默超過 `NET_HOLDOFF_MS`** 時才進入後續規則: 距 gate 最後一次
+收到衛星 fix (不論該 fix 是否通過規則 1-3) 不足 `NET_HOLDOFF_MS` 的網路 fix 一律
+丟棄, 且不消耗擱置位, 不更新任何狀態. 衛星 fix 不受本規則影響, 且一到就立即重新
+壓住網路 fix - 衛星恢復時的切回不需等待.
+
+Holdoff 的目的在防 ping-pong: 窗邊 / 淺室內衛星斷斷續續時, WiFi 位置與 GPS 位置常
+差 30-80 m, 兩者交替入檔會寫出鋸齒. 上游 `GpsSource.isBetter()` 已有 20 s 的 GPS
+優先窗 (顯示用), 錄製側的 holdoff 較之更長, 兩層獨立把關.
+
+已知限制: 衛星持續回報**低品質** fix (accuracy > 30 m, 例如密林) 時, holdoff 不會
+到期, 網路 fix 也不會入檔 - "衛星訊號存在" 以 fix 有無判定, 不以品質判定. 此時行為
+與純 GPS 錄製相同 (低品質衛星 fix 被規則 1 擋下, 軌跡暫停生長).
+
 ### 規則 1: Accuracy 門檻
 
-`accuracyMeters > ACCURACY_MAX_M` 的 fix 不寫入 - 定位系統自己都說不準的點, 不值得
-成為軌跡的一部分. `accuracyMeters` 為 null (罕見, 裝置未回報) 時視同通過, 交由後續
-規則把關; 全數拒收會讓少數裝置完全無法錄製.
+`accuracyMeters` 超過該 fix 來源的門檻者不寫入 - 定位系統自己都說不準的點, 不值得
+成為軌跡的一部分:
+
+- 衛星 fix: `ACCURACY_MAX_M` (30 m).
+- 網路 fix: `ACCURACY_MAX_NET_M` (100 m) - 意在收 WiFi 級精度 (20-50 m), 拒基地台
+  級精度 (數百 m 以上); 網路 fix 本就只在衛星靜默時入檔, 較寬的門檻換來的是地下 /
+  室內仍有軌跡, 而非公里級誤差的點污染.
+
+`accuracyMeters` 為 null (罕見, 裝置未回報) 時視同通過, 交由後續規則把關; 全數拒收
+會讓少數裝置完全無法錄製.
 
 ### 規則 2: 位移與 Doppler 速度的自洽檢驗 (跳點防護)
 
@@ -82,24 +112,62 @@ GNSS 晶片以 Doppler 頻移量得的瞬時速度 `vDop` (= `speedMps`) 與位�
 
 ### 規則 3: Adaptive 間距門檻
 
-`distance(錨點, fix) < clamp(K_ACC * accuracyMeters, SPACING_MIN_M, SPACING_MAX_M)`
-的 fix 不寫入 - 位移沒有真正走出量測不確定性的範圍, 就不視為移動. 這一條直接消滅
-靜止時的鳥巢, 也是距離統計灌水的主要解方. `accuracyMeters` 為 null 時門檻取
-`SPACING_MIN_M`.
+`distance(錨點, fix) < clamp(K_ACC * accuracyMeters, SPACING_MIN_M, 上限)` 的 fix
+不寫入 - 位移沒有真正走出量測不確定性的範圍, 就不視為移動. 這一條直接消滅靜止時的
+鳥巢, 也是距離統計灌水的主要解方. clamp 上限依 fix 來源:
+
+- 衛星 fix: `SPACING_MAX_M` (30 m).
+- 網路 fix: `SPACING_MAX_NET_M` (100 m, 與 `ACCURACY_MAX_NET_M` 一致) - 網路定位的
+  漂移尺度與其 accuracy 同級, 上限若仍取 30 m, accuracy 80 m 的網路 fix 靜止漂移
+  就足以連續入檔, 在網路尺度上寫出鳥巢.
+
+`accuracyMeters` 為 null 時門檻取 `SPACING_MIN_M`.
 
 取代自 GpsSource 訂閱移除的 OS 層 minDistance 過濾 (該值必須為 0, 否則靜止與訊號
 消失在過期偵測眼中無法區分, 見 GpsSource 的註解).
+
+### §3.5 首點 bootstrap: 最佳暫定點 (2026-07-05 新增)
+
+原規則 "session 第一個點只受規則 1 檢驗, 通過即寫入" 有一個體驗缺陷: 剛開錄時定位
+尚在收斂, accuracy 常在 30 m 門檻外徘徊數十秒, 這段期間一個點都寫不出來, 畫面全空.
+Bootstrap 以 "最佳暫定點" 取代乾等:
+
+Session 尚無錨點時, gate 維護至多一個**暫定首點** (provisional), 規則如下:
+
+1. **立即轉正**: 衛星 fix 且 accuracy <= `ACCURACY_MAX_M` (或 accuracy 為 null) 時,
+   直接寫入為首點 (即原規則的行為), 暫定點作廢. 網路 fix 不適用本條 - 即使
+   accuracy 很好也只能當暫定點, 避免衛星尚未收斂時, 網路位置搶先成為軌跡起點,
+   衛星一收斂就在起點旁寫出一段假位移.
+2. **暫定資格**: accuracy <= `BOOTSTRAP_ACC_MAX_M` (100 m) 的 fix (衛星或已通過
+   規則 0 的網路 fix) 可作暫定點; accuracy 更差或為 null 的網路 fix 丟棄.
+3. **汰換**: 新 fix 的 accuracy <= 現任暫定點的 accuracy 時取而代之 (同精度取較新
+   者) - 站著等收斂時, 暫定點的品質單調變好.
+4. **移動觸發轉正**: 新 fix 與暫定點的距離 >= `clamp(K_ACC * max(兩者 accuracy),
+   SPACING_MIN_M, BOOTSTRAP_ACC_MAX_M)`, 且通過規則 2 的自洽檢驗 (位移獲速度佐證)
+   時, 判定使用者已起步: 暫定點轉正寫入為軌跡起點並成為錨點, 新 fix 再走正常的
+   規則 1-3. 不自洽的大位移 (尖刺) 不觸發轉正, 也不汰換暫定點 (其 accuracy 較差時).
+
+暫定點**不因 fix 過期 (fixStale) 或暫停而清除** - 它仍是目前最好的起點估計. 若使用
+者於訊號消失 / 暫停期間實際移動了, 恢復後的移動觸發轉正會如實記下一段跳躍, 與隧道
+出口情境 (§5) 同一種行為. 暫定點僅於 session 結束或首點轉正時清除.
+
+顯示層配套: 暫定點未寫檔, 但即時推給 overlay 作橡皮筋段的固定端 (§6), 並於底欄顯示
+"定位收斂中 (目前精度 X m)", 讓開錄後幾秒內就有畫面回饋.
 
 ## 4. 參數
 
 | 參數 | 值 | 意義 |
 |---|---|---|
-| `ACCURACY_MAX_M` | 30 m | 規則 1: accuracy 超過此值的 fix 不寫入 |
+| `ACCURACY_MAX_M` | 30 m | 規則 1: 衛星 fix 的 accuracy 上限 |
+| `ACCURACY_MAX_NET_M` | 100 m | 規則 1: 網路 fix 的 accuracy 上限 (收 WiFi, 拒基地台) |
+| `NET_HOLDOFF_MS` | 30 s | 規則 0: 衛星靜默達此時長後網路 fix 才可入檔 |
 | `K_DOP` | 3 | 規則 2: 隱含速度容許為 Doppler 速度的倍數 |
 | `V_FLOOR` | 10 m/s | 規則 2: 自洽門檻下限 (低速時 Doppler 噪聲的保護墊) |
 | `K_ACC` | 1.0 | 規則 3: 間距門檻對 accuracy 的比例 |
 | `SPACING_MIN_M` | 5 m | 規則 3: 間距門檻下限 |
-| `SPACING_MAX_M` | 30 m | 規則 3: 間距門檻上限 (與 `ACCURACY_MAX_M` 一致) |
+| `SPACING_MAX_M` | 30 m | 規則 3: 衛星 fix 的間距門檻上限 (與 `ACCURACY_MAX_M` 一致) |
+| `SPACING_MAX_NET_M` | 100 m | 規則 3: 網路 fix 的間距門檻上限 (與 `ACCURACY_MAX_NET_M` 一致) |
+| `BOOTSTRAP_ACC_MAX_M` | 100 m | §3.5: 暫定首點的 accuracy 資格上限, 兼移動觸發門檻的 clamp 上限 |
 
 所有數值為保守預設, **待真實行程的錄製資料回來後校準**; 調整時同步更新本表.
 
@@ -119,6 +187,15 @@ GNSS 晶片以 Doppler 頻移量得的瞬時速度 `vDop` (= `speedMps`) 與位�
   與 GPS 誤差同數量級). 移動時幾秒內即追平; 靜止漂移時 "不跟上" 正是目的. 視覺
   連續性由顯示層配套解決 (§6). 畫面跟隨 / 歸位判斷不受影響 - 該邏輯只看
   `GpsSource.fix` (標記位置), 不看軌跡前端.
+- **捷運 / 地下街**: 衛星靜默 30 s 後網路 fix 開始入檔. 站內 / 商場有 WiFi 定位
+  (accuracy 20-50 m) 時逐段補點; 行進於站間僅剩基地台定位 (accuracy 數百 m) 時被
+  規則 1 擋下, 軌跡呈 "一站一點" 的粗線 - 這是該資料品質下誠實的結果.
+- **出捷運站 / 出隧道的衛星恢復**: 第一個衛星 fix 立即重新壓住網路 fix (規則 0
+  不需等待); 它相對網路錨點的位移若不自洽, 走規則 2 的擱置 / 佐證, 至多延遲一拍
+  接上.
+- **開錄時的收斂期**: 站在登山口等衛星收斂時, 暫定首點隨 accuracy 改善逐步汰換
+  (§3.5), 起步的那一刻以當下最佳的量測轉正為起點 - 起點品質與畫面回饋兩者兼得.
+  室內開錄時暫定點可能由網路 fix 擔任, 衛星收斂後自然被立即轉正規則取代.
 
 ## 6. 顯示層配套: 橡皮筋段 (前端補接線段)
 
@@ -142,16 +219,24 @@ fix** 走, 於是靜止漂移時兩者之間會出現一段空隙 (最大為間�
   幾乎看不見 - 與沒有 gating 時的畫面無異.
 - **靜止漂移時**: 紅線前端停在原地 (這正是 gating 的目的), 橡皮筋段跟著標記輕微
   擺動, 畫面上紅線始終連到標記, 不會出現斷頭.
+- **首點尚未轉正時** (§3.5): 尚無任何寫入點, 橡皮筋段改以**暫定首點**為固定端 -
+  開錄後第一個可用 fix 一到, 畫面就有一段虛線連著標記, 不再空白數十秒. 暫定點被
+  汰換時固定端跟著微移, 這是誠實的即時視圖.
 
 效果: 檔案裡是 gate 過的乾淨軌跡, 畫面上軌跡與標記永不斷開.
 
 ## 7. 實作位置
 
-- Gating 全部位於 `Recorder.onFix()` - 它持有錨點 (最後寫入點) 與錄製狀態, 是純
-  Kotlin, 三條規則可用合成漂移資料寫單元測試. `onFix()` 簽名需擴充
-  `accuracyMeters: Float?` 與 `speedMps: Float?`, `RecordingService` 呼叫端跟著多傳.
+- Gating 全部位於 `Recorder.onFix()` 呼叫的 `FixGate` - 它持有錨點 (最後寫入點),
+  暫定首點與衛星靜默時鐘, 是純 Kotlin, 所有規則可用合成漂移資料寫單元測試.
+  `onFix()` 簽名含 `accuracyMeters: Float?`, `speedMps: Float?`, `fromGps: Boolean`,
+  `RecordingService` 呼叫端照傳.
 - 即時 polyline (`Recorder.points`) 與檔案寫入同步受 gate, 畫面紅線與檔案內容一致.
-- **不得**放在 `GpsSource` 或 `CurrentLocationLayer`: gating 的判斷依據是錄製 session
-  的狀態 (錨點), 且顯示端不該被 gate (§2 原則 2); 放上游會讓被拒的 fix 連標記,
-  過期偵測, 跟隨判斷一起消失, 依賴方向也反了.
-- 橡皮筋段位於 `RecordedTrackLayer` (顯示層).
+  網路 fix 入檔時由 `Recorder` 以 `src:"net"` 寫入 (trace_spec §5.3).
+- 錄製模式的 provider 訂閱 (gps + network) 在 `GpsSource.Mode.Recording`; 其
+  `isBetter()` 的 20 s GPS 優先窗與本文規則 0 的 holdoff 是獨立的兩層.
+- **不得**把 gating 放在 `GpsSource` 或 `CurrentLocationLayer`: gating 的判斷依據是
+  錄製 session 的狀態 (錨點), 且顯示端不該被 gate (§2 原則 2); 放上游會讓被拒的
+  fix 連標記, 過期偵測, 跟隨判斷一起消失, 依賴方向也反了.
+- 橡皮筋段位於 `RecordedTrackLayer` (顯示層); 暫定首點經 `Recorder` 的 StateFlow
+  曝露給 overlay 與底欄的收斂文字.

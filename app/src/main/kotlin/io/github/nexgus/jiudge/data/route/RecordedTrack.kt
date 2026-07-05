@@ -20,11 +20,13 @@ data class RecordedTrack(
     val createdAtEpochMs: Long,
     val points: List<Point>,
 ) {
-    /** A single recorded GPS sample. */
+    /** A single recorded location sample. */
     data class Point(
         val latitude: Double,
         val longitude: Double,
         val timeMs: Long,
+        /** Location source (spec §5.3): [SRC_NETWORK] for a network fix, null for a satellite fix. */
+        val src: String? = null,
     )
 
     /** The geometry as a [LatLong] list, for layer rendering and bounds calculations. */
@@ -46,10 +48,14 @@ data class RecordedTrack(
                 put("lat", Trace.coord(p.latitude))
                 put("lon", Trace.coord(p.longitude))
                 put("t", p.timeMs)
+                if (p.src != null) put("src", p.src)
             }
         }
 
     companion object {
+        /** `src` value for a network (cell/WiFi) fix; absent `src` means a satellite fix (spec §5.3). */
+        const val SRC_NETWORK = "net"
+
         /** Reconstructs a track from a parsed trace, ordering points by their `t`. */
         fun fromTrace(parsed: Trace.Parsed): RecordedTrack =
             RecordedTrack(
@@ -63,6 +69,8 @@ data class RecordedTrack(
                                 latitude = it.getDouble("lat"),
                                 longitude = it.getDouble("lon"),
                                 timeMs = it.getLong("t"),
+                                // Preserved verbatim (even unknown values) so a rewrite round-trips.
+                                src = it.optString("src").ifEmpty { null },
                             )
                         }.sortedBy { it.timeMs },
             )
@@ -72,6 +80,7 @@ data class RecordedTrack(
             latitude: Double,
             longitude: Double,
             timeMs: Long,
+            src: String? = null,
         ): String =
             JSONObject()
                 .apply {
@@ -79,6 +88,7 @@ data class RecordedTrack(
                     put("lat", Trace.coord(latitude))
                     put("lon", Trace.coord(longitude))
                     put("t", timeMs)
+                    if (src != null) put("src", src)
                 }.toString()
     }
 }

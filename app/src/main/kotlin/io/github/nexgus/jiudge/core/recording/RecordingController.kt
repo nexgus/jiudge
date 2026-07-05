@@ -34,6 +34,12 @@ object RecordingController {
     /** The accumulated polyline so far - drives the red-chevron overlay. */
     val points: StateFlow<List<LatLong>> = recorder.points
 
+    /**
+     * The bootstrap's provisional first point while the session's first point is still converging
+     * (docs/gating.md §3.5) - drives the rubber-band anchor and the "定位收斂中" readout.
+     */
+    val provisional: StateFlow<Recorder.Provisional?> = recorder.provisional
+
     /** True iff a recording session is currently live ([Recorder.State.RECORDING] or [Recorder.State.PAUSED]). */
     val active: Boolean get() = recorder.active
 
@@ -76,7 +82,8 @@ object RecordingController {
         timeMs: Long,
         accuracyMeters: Float?,
         speedMps: Float?,
-    ): IOException? = recorder.onFix(latitude, longitude, timeMs, accuracyMeters, speedMps)
+        fromGps: Boolean,
+    ): IOException? = recorder.onFix(latitude, longitude, timeMs, accuracyMeters, speedMps, fromGps)
 
     /** Service-only: the fix stream went stale; drops the gate's pending fix (docs/gating.md rule 2). */
     internal fun handleFixStale() {

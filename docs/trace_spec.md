@@ -98,9 +98,10 @@ polyline 由讀取端按需衍生.
 | `i` | int | 是 | 段序號, 對應 `wpt[i]` 到 `wpt[i+1]` |
 | `pts` | array | 是 | `[[lat,lon], ...]` 座標序列 |
 
-### 5.3 `pt` - GPS 定位點 (實際軌跡)
+### 5.3 `pt` - 定位點 (實際軌跡)
 
-錄製時每一筆通過 gating (docs/gating.md) 的 GPS 取樣. 這是 append 的主要對象.
+錄製時每一筆通過 gating (docs/gating.md) 的定位取樣. 這是 append 的主要對象. 來源以衛星
+(GPS) 定位為主; 衛星靜默時可由網路定位補點 (規則見 docs/gating.md), 此時以 `src` 標記.
 
 ```json
 {"k":"pt","t":1687123460000,"lat":24.5123456,"lon":121.2345678,"ele":1820.4,"acc":4.0,"spd":1.1,"brg":135.0}
@@ -115,6 +116,7 @@ polyline 由讀取端按需衍生.
 | `acc` | number | 否 | 水平精度, 公尺 |
 | `spd` | number | 否 | 速度, 公尺/秒 |
 | `brg` | number | 否 | 方位角, 0-360 度 |
+| `src` | string | 否 | 定位來源. `"net"` = 網路定位 (cell/WiFi); 省略 = 衛星定位. 讀取端對未知值一律視同省略 |
 
 ### 5.4 未來型別 (預留, 暫不實作)
 

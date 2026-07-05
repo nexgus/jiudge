@@ -56,6 +56,12 @@ class RecordedTrackLayer(
     @Volatile
     private var liveTip: LatLong? = null
 
+    // Bootstrap provisional first point (docs/gating.md §3.5/§6): the rubber band's fixed end while
+    // no point has been written yet, so the display responds within seconds of recording starting.
+    // Display-only; ignored once the polyline has a real last point.
+    @Volatile
+    private var provisionalAnchor: LatLong? = null
+
     private val factory = AndroidGraphicFactory.INSTANCE
     private val chevronHalo = strokeRound(chevronHaloColor, 1f)
     private val chevronPaint = strokeRound(chevronColor, 1f)
@@ -76,10 +82,17 @@ class RecordedTrackLayer(
         requestRedraw()
     }
 
+    /** Moves (or with null, drops) the rubber band's provisional fixed end, used while the polyline is empty. */
+    fun updateProvisionalAnchor(anchor: LatLong?) {
+        provisionalAnchor = anchor
+        requestRedraw()
+    }
+
     /** Removes the rendered polyline; the layer stays mounted, ready for the next update. */
     fun clear() {
         snapshot = emptyList()
         liveTip = null
+        provisionalAnchor = null
         requestRedraw()
     }
 
@@ -92,8 +105,11 @@ class RecordedTrackLayer(
     ) {
         val polyline = snapshot
         val tip = liveTip
+        // The band's fixed end: the last written point, or - before anything is written - the
+        // bootstrap's provisional first point (docs/gating.md §3.5).
+        val bandAnchor = polyline.lastOrNull() ?: provisionalAnchor
         val hasTrack = polyline.size >= 2
-        val hasBand = tip != null && polyline.isNotEmpty()
+        val hasBand = tip != null && bandAnchor != null
         if (!hasTrack && !hasBand) return
         val mapSize = MercatorProjection.getMapSize(zoomLevel, displayModel.tileSize)
         val visualZoom = visualZoom(mapSize)
@@ -104,8 +120,8 @@ class RecordedTrackLayer(
 
         val lineWidth = (LINE_WIDTH_DP * density * lineScaleForZoom(visualZoom)).coerceAtLeast(2f)
         if (hasTrack) drawDirectionChevrons(canvas, polyline, lineWidth, ::screenX, ::screenY)
-        if (tip != null && polyline.isNotEmpty()) {
-            drawRubberBand(canvas, polyline.last(), tip, lineWidth, ::screenX, ::screenY)
+        if (tip != null && bandAnchor != null) {
+            drawRubberBand(canvas, bandAnchor, tip, lineWidth, ::screenX, ::screenY)
         }
     }
 

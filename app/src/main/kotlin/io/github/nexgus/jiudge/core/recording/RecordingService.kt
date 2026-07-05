@@ -242,6 +242,7 @@ class RecordingService : Service() {
                                 fix.timeMs,
                                 fix.accuracyMeters,
                                 fix.speedMps,
+                                fix.fromGps,
                             )
                         if (err != null) pauseSessionOnFixError()
                     }

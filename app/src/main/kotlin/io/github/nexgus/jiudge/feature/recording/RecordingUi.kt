@@ -40,18 +40,25 @@ import java.util.Locale
  * (staging file and points are kept - see [Recorder.pause]) and "放棄" pauses the same way and then
  * opens the discard confirmation on top of the 已停止 layer, per spec B - so the confirmation always
  * faces a paused session and cancelling it leaves the user paused, one 繼續錄製 away from resuming.
+ *
+ * [statusText] is the first-point convergence readout (docs/gating.md §3.5): shown while the
+ * session's first point is still a provisional, so the user knows why no track has appeared yet.
  */
 @Composable
 fun RecordingBottomBar(
     onStop: () -> Unit,
     onDiscard: () -> Unit,
     modifier: Modifier = Modifier,
+    statusText: String? = null,
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (statusText != null) {
+            Text(statusText, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(end = 4.dp))
+        }
         MapPill(text = "停止", onClick = onStop, primary = true)
         MapPill(text = "放棄", onClick = onDiscard)
     }
