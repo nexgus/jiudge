@@ -59,9 +59,11 @@ object RudyMapView {
             categories
         }
 
+    /** [initialPosition] overrides the default start view - e.g. restoring the camera when the map is rebuilt after a data update. */
     fun create(
         context: Context,
         mapDir: File,
+        initialPosition: MapPosition? = null,
     ): MapView {
         // Continuous (fractional) zoom: by default mapsforge snaps the pinch gesture back to an
         // integer zoom level when the fingers lift. This global flag keeps the intermediate scale,
@@ -114,7 +116,7 @@ object RudyMapView {
         mapView.layerManager.layers.add(tileRendererLayer)
 
         mapView.model.mapViewPosition.mapPosition =
-            MapPosition(LatLong(INITIAL_LAT, INITIAL_LNG), INITIAL_ZOOM)
+            initialPosition ?: MapPosition(LatLong(INITIAL_LAT, INITIAL_LNG), INITIAL_ZOOM)
         return mapView
     }
 

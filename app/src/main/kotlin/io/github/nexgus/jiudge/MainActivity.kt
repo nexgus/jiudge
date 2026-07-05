@@ -52,9 +52,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +68,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -82,8 +86,13 @@ import io.github.nexgus.jiudge.core.location.HeadingProvider
 import io.github.nexgus.jiudge.core.location.LocationFix
 import io.github.nexgus.jiudge.core.mapdata.DownloadService
 import io.github.nexgus.jiudge.core.mapdata.DownloadState
+import io.github.nexgus.jiudge.core.mapdata.InstallPhase
 import io.github.nexgus.jiudge.core.mapdata.MapDataCatalog
 import io.github.nexgus.jiudge.core.mapdata.MapDataDownload
+import io.github.nexgus.jiudge.core.mapdata.MapDataVersionStore
+import io.github.nexgus.jiudge.core.mapdata.MapUpdate
+import io.github.nexgus.jiudge.core.mapdata.MapUpdateChecker
+import io.github.nexgus.jiudge.core.mapdata.MapUpdateState
 import io.github.nexgus.jiudge.core.mapdata.MapVersion
 import io.github.nexgus.jiudge.core.recording.RecordingController
 import io.github.nexgus.jiudge.core.recording.RecordingService
@@ -112,6 +121,7 @@ import io.github.nexgus.jiudge.feature.map.MapFollow
 import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.map.SearchPeakMarkerLayer
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
+import io.github.nexgus.jiudge.feature.mapdata.MapUpdateDialog
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
 import io.github.nexgus.jiudge.feature.planning.LoadRouteDialog
@@ -216,18 +226,40 @@ class MainActivity : ComponentActivity() {
                                         .padding(padding),
                             )
                         } else {
-                            MapScreen(
-                                mapDir = paths.mapDir,
-                                engine = remember { BRouterEngine(paths.brouterDir) },
-                                routeStore = remember { RouteStore() },
-                                trackStore = remember { TrackStore() },
-                                snackbarHostState = snackbarHostState,
-                                onMapCreated = { mapView = it },
-                                modifier =
-                                    Modifier
-                                        .fillMaxSize()
-                                        .padding(padding),
-                            )
+                            // mapEpoch forces a full MapScreen rebuild when the user applies a map
+                            // data update: the old MapFile/theme/DEM handles and tile cache go away
+                            // with the old subtree (AndroidView onRelease) and the new files are
+                            // opened fresh. The camera is carried over explicitly; everything else
+                            // (edit state, overlays) intentionally resets to a plain map view.
+                            var mapEpoch by remember { mutableIntStateOf(0) }
+                            var restoreCamera by remember { mutableStateOf<MapPosition?>(null) }
+                            LaunchedEffect(mapEpoch) {
+                                if (mapEpoch > 0) snackbarHostState.showSnackbar("已套用新版圖資")
+                            }
+                            key(mapEpoch) {
+                                MapScreen(
+                                    mapDir = paths.mapDir,
+                                    engine = remember { BRouterEngine(paths.brouterDir) },
+                                    routeStore = remember { RouteStore() },
+                                    trackStore = remember { TrackStore() },
+                                    snackbarHostState = snackbarHostState,
+                                    onMapCreated = { mapView = it },
+                                    // Identity-guarded: on a mapEpoch rebuild the new screen's
+                                    // onMapCreated may run before the old subtree's onRelease, and
+                                    // an unconditional null-out would drop the fresh reference.
+                                    onMapReleased = { released -> if (mapView === released) mapView = null },
+                                    initialCamera = restoreCamera,
+                                    onApplyUpdate = {
+                                        restoreCamera = mapView?.model?.mapViewPosition?.mapPosition
+                                        MapUpdate.reset()
+                                        mapEpoch++
+                                    },
+                                    modifier =
+                                        Modifier
+                                            .fillMaxSize()
+                                            .padding(padding),
+                                )
+                            }
                         }
                     }
 
@@ -270,11 +302,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        mapView?.destroyAll()
-        mapView = null
-        super.onDestroy()
-    }
+    // MapView teardown lives in MapScreen's AndroidView onRelease (it also covers the mapEpoch
+    // rebuild); disposing the composition on activity destroy runs the same path, so there is no
+    // onDestroy cleanup here - a second destroyAll() on an already-destroyed view is not safe.
 
     companion object {
         /** Sent by the recording notification's "停止" action - see [handleRecordingIntent]. */
@@ -308,6 +338,9 @@ private fun MapScreen(
     trackStore: TrackStore,
     snackbarHostState: SnackbarHostState,
     onMapCreated: (MapView) -> Unit,
+    onMapReleased: (MapView) -> Unit,
+    initialCamera: MapPosition?,
+    onApplyUpdate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -340,6 +373,13 @@ private fun MapScreen(
     LaunchedEffect(mapDir) {
         mapVersion = withContext(Dispatchers.IO) { MapVersion.installed(mapDir) }
     }
+
+    // Map-data update: the dialog checks the mirrors and starts DownloadService in update mode;
+    // progress/completion arrive through the MapUpdate flow (banner + apply, wired further down).
+    // rememberSaveable so a rotation mid-check reopens the dialog (the cheap HEADs simply rerun).
+    val mapUpdateState by MapUpdate.state.collectAsState()
+    var mapUpdateDialogOpen by rememberSaveable { mutableStateOf(false) }
+    val launchMapUpdate = startMapUpdate()
 
     // Peak-position index backing the (future) name search. Checked on every entry to the map and
     // rebuilt off the main thread when missing or stale (basemap re-installed/updated); the progress
@@ -663,7 +703,13 @@ private fun MapScreen(
     var locationGranted by remember { mutableStateOf(GpsSource.hasPermission(context)) }
     // Center the map on the first fix: true at launch when permission is already held (so a returning
     // user opens straight onto their location), and re-armed when the recenter FAB is tapped.
-    var recenterOnFix by remember { mutableStateOf(GpsSource.hasPermission(context)) }
+    // Suppressed when this screen was rebuilt with a restored camera (map-data update apply): the
+    // next fix must not yank the view away from where the user had it.
+    var recenterOnFix by remember { mutableStateOf(initialCamera == null && GpsSource.hasPermission(context)) }
+    // Rebuilding this screen while the activity is RESUMED (map-data update apply) replays a
+    // synthetic ON_RESUME into the freshly registered lifecycle observer, whose refocus would
+    // override the restored camera. Suppress that one refocus; later (real) resumes refocus as usual.
+    var suppressResumeRefocus by remember { mutableStateOf(initialCamera != null) }
     // Persistent marker-follow toggle. While true, the map keeps the marker in sight on every fix -
     // safe-zone push while it is inside the viewport, hard recenter once it drifts out (typical of
     // GPS jumps out of a tunnel or on public transport). Decided by each map gesture's end state:
@@ -671,8 +717,9 @@ private fun MapScreen(
     // the follow, one that ends with it outside stops it (that is the user's signal they want to
     // look elsewhere). Also re-armed on ON_RESUME (recording or not, a return to the app is a
     // "refocus") and on the recenter FAB. Sits alongside the one-shot [recenterOnFix] which still
-    // owns first-fix / FAB "jump to me" behaviour.
-    var followUser by remember { mutableStateOf(true) }
+    // owns first-fix / FAB "jump to me" behaviour. Starts off after a restored-camera rebuild for
+    // the same reason as recenterOnFix; the next gesture or the FAB re-arms it as usual.
+    var followUser by remember { mutableStateOf(initialCamera == null) }
 
     // True while at least one finger is on the map. Pauses the safe-zone follow so an incoming GPS
     // update does not fight the user's pan/pinch mid-gesture.
@@ -833,7 +880,7 @@ private fun MapScreen(
                     // in progress). Inside ROUTE_VIEW / ROUTE_EDIT, or with a pending search peak
                     // / open search dialog, the user is deliberately looking at something else -
                     // keep the map where they left it and let followUser retain its prior value.
-                    if (mode == PlanMode.MAP_VIEW && pendingPeak == null && !searchDialogOpen) {
+                    if (mode == PlanMode.MAP_VIEW && pendingPeak == null && !searchDialogOpen && !suppressResumeRefocus) {
                         followUser = true
                         // Snap the map onto the last known position now if it is fresh; a stale
                         // fix (typically inside a long tunnel where GPS has been silent) would
@@ -852,6 +899,7 @@ private fun MapScreen(
                             recenterOnFix = true
                         }
                     }
+                    suppressResumeRefocus = false
                 } else {
                     gpsOwnership?.release()
                     gpsOwnership = null
@@ -1091,8 +1139,16 @@ private fun MapScreen(
     Box(modifier = modifier.onSizeChanged { mapContainerWidthPx = it.width }) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
+            onRelease = { mv ->
+                // Fires when this subtree leaves the composition for good: the mapEpoch rebuild
+                // after a map-data update, and the composition disposal on activity destroy. This
+                // is the only owner of MapView teardown - it closes the MapFile and clears the tile
+                // cache, releasing the old (already replaced) files' disk space.
+                mv.destroyAll()
+                onMapReleased(mv)
+            },
             factory = { ctx ->
-                RudyMapView.create(ctx, mapDir).also { mv ->
+                RudyMapView.create(ctx, mapDir, initialCamera).also { mv ->
                     // Observe touches for two things: (1) userTouching pauses the safe-zone follow
                     // while a finger (or two) is down, so an incoming fix does not fight the user's
                     // pan/pinch mid-gesture; (2) at gesture end, decide followUser purely from the
@@ -1146,7 +1202,7 @@ private fun MapScreen(
         // controls sit flush at the top and drop only while a banner is up.
         val controlsTopOffset = with(LocalDensity.current) { topBannersHeightPx.toDp() }
 
-        // Top-start controls, opposite the zoom column: the overflow ("⋮") menu on top, then the
+        // Top-start controls, opposite the zoom column: the main menu (hamburger) on top, then the
         // identify ("?") toggle, then the peak search ("🔍"). All persist across all modes.
         Column(
             modifier =
@@ -1158,11 +1214,11 @@ private fun MapScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             MainMenuButton(
-                onAbout = { aboutOpen = true },
-                onCheckUpdate = {
-                    // TODO(spec Phase 3): wire to the map-data update check/download mechanism.
-                    scope.launch { snackbarHostState.showSnackbar("地圖更新功能尚未推出 (Phase 3)") }
+                onSettings = {
+                    scope.launch { snackbarHostState.showSnackbar("設定功能尚未完成") }
                 },
+                onMapUpdate = { mapUpdateDialogOpen = true },
+                onAbout = { aboutOpen = true },
             )
             // Identify toggle: highlighted when on, with a centre crosshair for aiming.
             SmallFloatingActionButton(
@@ -1277,6 +1333,21 @@ private fun MapScreen(
                     PeakIndexBanner(fraction = state.fraction, failed = false, modifier = Modifier.fillMaxWidth())
                 PeakIndexState.Failed ->
                     PeakIndexBanner(fraction = null, failed = true, modifier = Modifier.fillMaxWidth())
+                else -> Unit
+            }
+            // Map-data update: progress while the service runs, then a tap-to-apply prompt once the
+            // new data is on disk (both persistent states, hence banners; failure is an AlertDialog).
+            when (val update = mapUpdateState) {
+                is MapUpdateState.Running ->
+                    MapUpdateBanner(
+                        fraction = update.fraction,
+                        currentName = update.currentName,
+                        phase = update.phase,
+                        onCancel = { DownloadService.cancel(appContext) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                MapUpdateState.Done ->
+                    MapUpdateApplyBanner(onClick = onApplyUpdate, modifier = Modifier.fillMaxWidth())
                 else -> Unit
             }
             // Persistent warning whenever precise location is not granted. Tapping reissues the same
@@ -1953,6 +2024,34 @@ private fun MapScreen(
         AboutDialog(mapVersion = mapVersion, onDismiss = { aboutOpen = false })
     }
 
+    if (mapUpdateDialogOpen) {
+        val paths = remember(appContext) { AppPaths(appContext) }
+        MapUpdateDialog(
+            installedVersion = mapVersion,
+            checker = remember(mapDir) { MapUpdateChecker(MapDataCatalog(paths), MapDataVersionStore(mapDir)) },
+            stagingDir = paths.stagingDir,
+            updateState = mapUpdateState,
+            onStartUpdate = { ids ->
+                mapUpdateDialogOpen = false
+                launchMapUpdate(ids)
+            },
+            onDismiss = { mapUpdateDialogOpen = false },
+        )
+    }
+
+    // An interrupted update means the new data is not (fully) on disk - that must be acknowledged,
+    // not left to a timed snackbar. Partial downloads stay in staging, so a retry resumes.
+    (mapUpdateState as? MapUpdateState.Failed)?.let { failed ->
+        AlertDialog(
+            onDismissRequest = { MapUpdate.reset() },
+            title = { Text("地圖更新失敗") },
+            text = { Text("${failed.message}\n\n已下載的部分會保留, 重試時將從中斷處續傳.") },
+            confirmButton = {
+                TextButton(onClick = { MapUpdate.reset() }) { Text("確定") }
+            },
+        )
+    }
+
     if (searchDialogOpen) {
         peakIndex?.let { peaks ->
             PeakSearchDialog(
@@ -2085,6 +2184,87 @@ private fun FineLocationMissingBanner(
 }
 
 /**
+ * Progress banner while a map-data update run is in flight. Mirrors [PeakIndexBanner]'s layout;
+ * its own colour so the two never read as one when stacked. The inline "取消" stops the service
+ * (partial downloads stay in staging for a later resume).
+ */
+@Composable
+private fun MapUpdateBanner(
+    fraction: Float,
+    currentName: String,
+    phase: InstallPhase,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = Color(0xFFD1C4E9), // light purple, distinct from the index banner's blue
+        contentColor = Color(0xFF311B92),
+        shape = RectangleShape,
+        shadowElevation = 6.dp,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val verb = if (phase == InstallPhase.DOWNLOADING) "下載" else "安裝"
+                Text(
+                    text = "更新圖資: $verb $currentName (${(fraction * 100).toInt()}%)",
+                    fontSize = 14.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "取消",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier =
+                        Modifier
+                            .clickable(onClick = onCancel)
+                            .padding(start = 12.dp),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/**
+ * Persistent prompt once an update has fully landed on disk: the map still renders the old files
+ * until the user taps here to rebuild it (deliberately user-triggered - a rebuild wipes in-progress
+ * route editing / viewing state, so it must not happen at an unpredictable moment). If never
+ * tapped, the next launch simply opens on the new data.
+ */
+@Composable
+private fun MapUpdateApplyBanner(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        color = Color(0xFFC8E6C9), // light green: positive, action available
+        contentColor = Color(0xFF1B5E20),
+        shape = RectangleShape,
+        shadowElevation = 6.dp,
+    ) {
+        Text(
+            text = "地圖更新完成, 點此套用新圖資",
+            fontSize = 14.sp,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+    }
+}
+
+/**
  * Builds the "start download" action: on Android 13+ it first requests POST_NOTIFICATIONS (so the
  * progress notification is visible) and starts the service from the result callback; otherwise it
  * starts immediately. The download proceeds whether or not the permission is granted.
@@ -2105,6 +2285,33 @@ private fun startDownload(): () -> Unit {
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             DownloadService.start(context)
+        }
+    }
+}
+
+/**
+ * Builds the "start map update" action, mirroring [startDownload]'s POST_NOTIFICATIONS handling
+ * (the update runs either way; the permission only makes the progress notification visible). The
+ * asset ids are parked in state because the permission launcher's callback cannot take arguments.
+ */
+@Composable
+private fun startMapUpdate(): (List<String>) -> Unit {
+    val context = LocalContext.current
+    var pendingIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    val launcher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { DownloadService.startUpdate(context, pendingIds) }
+    return { ids ->
+        pendingIds = ids
+        val needsNotifPermission =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        if (needsNotifPermission) {
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            DownloadService.startUpdate(context, ids)
         }
     }
 }

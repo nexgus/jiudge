@@ -79,6 +79,15 @@ class MapDataCatalog(
     val required: List<MapDataAsset> get() = assets.filterNot { it.optional }
     val optional: List<MapDataAsset> get() = assets.filter { it.optional }
 
+    /**
+     * The assets served from the RudyMap mirrors (the update-check scope; BRouter data comes from
+     * elsewhere), in update install order. The theme goes last on purpose: [MapVersion] reads the
+     * installed version from the theme, so a finished theme is the commit marker of a whole update
+     * run - an update interrupted earlier keeps reporting the old version as still current.
+     */
+    val rudyMapAssets: List<MapDataAsset> =
+        listOf("basemap", "dem", "theme").map { id -> assets.first { it.id == id } }
+
     /** Approximate total download size of every asset, for the first-run UI estimate. */
     val totalDownloadBytes: Long get() = assets.sumOf { it.approxSizeBytes }
 

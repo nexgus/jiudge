@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -35,9 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import io.github.nexgus.jiudge.BuildConfig
 
-// The map screen's overflow ("⋮") menu and its "關於" dialog. The button mirrors the other floating
-// map controls (a SmallFloatingActionButton with a Material icon). The "檢查地圖更新" entry is a
-// placeholder until the Phase 3 update mechanism lands.
+// The map screen's main menu (hamburger) button and its "關於" dialog. The button mirrors the other
+// floating map controls (a SmallFloatingActionButton with a Material icon). The "設定" and "地圖更新"
+// entries are placeholders until those features land.
 
 /** App version as `<versionName>+<gitHash>` (semver build metadata), suffixed `-dirty` if built from an unclean tree. */
 private fun appVersionLabel(): String {
@@ -47,8 +47,9 @@ private fun appVersionLabel(): String {
 
 @Composable
 fun MainMenuButton(
+    onSettings: () -> Unit,
+    onMapUpdate: () -> Unit,
     onAbout: () -> Unit,
-    onCheckUpdate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -58,21 +59,28 @@ fun MainMenuButton(
         SmallFloatingActionButton(
             onClick = { expanded = true },
         ) {
-            Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "主選單")
+            Icon(imageVector = Icons.Filled.Menu, contentDescription = "主選單")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("設定") },
+                onClick = {
+                    expanded = false
+                    onSettings()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("地圖更新") },
+                onClick = {
+                    expanded = false
+                    onMapUpdate()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("關於") },
                 onClick = {
                     expanded = false
                     onAbout()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("檢查地圖更新") },
-                onClick = {
-                    expanded = false
-                    onCheckUpdate()
                 },
             )
         }

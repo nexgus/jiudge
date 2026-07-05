@@ -63,6 +63,12 @@ class MapDataCatalogTest {
     }
 
     @Test
+    fun `rudymap assets keep update install order with theme last`() {
+        val (_, cat) = catalog()
+        assertEquals(listOf("basemap", "dem", "theme"), cat.rudyMapAssets.map { it.id })
+    }
+
+    @Test
     fun `missing reflects markers present on disk`() {
         val (paths, cat) = catalog()
         assertEquals(cat.assets.size, cat.missing().size)

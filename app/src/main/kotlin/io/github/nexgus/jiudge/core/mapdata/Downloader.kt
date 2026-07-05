@@ -47,51 +47,64 @@ class Downloader(
         message: String,
     ) : IOException(message)
 
+    /**
+     * Metadata of the server response that produced the completed [target]. `Last-Modified` is
+     * identical across the RudyMap mirrors (rsync preserves mtime), so callers can persist it as a
+     * mirror-independent version identifier for a later update check; null when the server omitted
+     * the header. [sizeBytes] is the final on-disk length of the target.
+     */
+    data class Completed(
+        val lastModified: String?,
+        val sizeBytes: Long,
+    )
+
     suspend fun download(
         urls: List<String>,
         target: File,
         progress: Progress,
         verifier: Verifier = Verifier {},
-    ) = withContext(Dispatchers.IO) {
-        require(urls.isNotEmpty()) { "no URLs for ${target.name}" }
-        val part = File(target.parentFile, target.name + ".part")
-        val meta = File(target.parentFile, target.name + ".part.meta")
-        target.parentFile?.mkdirs()
-        // A .part left by an older app version (or one whose sidecar is gone) carries no validator
-        // we could send as If-Range, so we cannot prove the server's bytes still match its prefix.
-        // Restart cleanly rather than blindly appending to bytes of unknown lineage.
-        if (part.exists() && readValidator(meta) == null) {
-            part.delete()
-            meta.delete()
-        }
-        var lastError: IOException? = null
-        for (url in urls) {
-            try {
-                fetch(url, part, meta, progress)
-                verifier.verify(part)
-                if (target.exists()) target.delete()
-                if (!part.renameTo(target)) throw IOException("cannot move ${part.name} into place")
-                meta.delete()
-                return@withContext
-            } catch (e: VerifyException) {
-                // The bytes we got do not survive the integrity check. Throwing them away (rather
-                // than keeping them for the next mirror to resume into) is the whole point.
+    ): Completed =
+        withContext(Dispatchers.IO) {
+            require(urls.isNotEmpty()) { "no URLs for ${target.name}" }
+            val part = File(target.parentFile, target.name + ".part")
+            val meta = File(target.parentFile, target.name + ".part.meta")
+            target.parentFile?.mkdirs()
+            // A .part left by an older app version (or one whose sidecar is gone) carries no validator
+            // we could send as If-Range, so we cannot prove the server's bytes still match its prefix.
+            // Restart cleanly rather than blindly appending to bytes of unknown lineage.
+            if (part.exists() && readValidator(meta) == null) {
                 part.delete()
                 meta.delete()
-                lastError = e
-            } catch (e: IOException) {
-                lastError = e // try the next mirror; keep .part so the next attempt resumes
             }
+            var lastError: IOException? = null
+            for (url in urls) {
+                try {
+                    val lastModified = fetch(url, part, meta, progress)
+                    verifier.verify(part)
+                    if (target.exists()) target.delete()
+                    if (!part.renameTo(target)) throw IOException("cannot move ${part.name} into place")
+                    meta.delete()
+                    return@withContext Completed(lastModified, target.length())
+                } catch (e: VerifyException) {
+                    // The bytes we got do not survive the integrity check. Throwing them away (rather
+                    // than keeping them for the next mirror to resume into) is the whole point.
+                    part.delete()
+                    meta.delete()
+                    lastError = e
+                } catch (e: IOException) {
+                    lastError = e // try the next mirror; keep .part so the next attempt resumes
+                }
+            }
+            throw lastError ?: IOException("no URL succeeded for ${target.name}")
         }
-        throw lastError ?: IOException("no URL succeeded for ${target.name}")
-    }
 
+    /** Downloads into [part]; returns the response's `Last-Modified` header (null if omitted). */
     private suspend fun fetch(
         url: String,
         part: File,
         meta: File,
         progress: Progress,
-    ) {
+    ): String? {
         val have = if (part.exists()) part.length() else 0L
         val ifRange = if (have > 0) readValidator(meta) else null
         val conn = open(url, have, ifRange)
@@ -102,12 +115,15 @@ class Downloader(
                     // the new full file. Restart cleanly and refresh the validator.
                     writeValidator(meta, conn)
                     stream(conn, part, resuming = false, startAt = 0L, progress = progress)
+                    return conn.getHeaderField("Last-Modified")
                 }
 
-                HttpURLConnection.HTTP_PARTIAL ->
+                HttpURLConnection.HTTP_PARTIAL -> {
                     // If-Range matched (or absent on first fetch with no .part). Resume; the stored
                     // validator stays valid because the server confirmed the underlying file did.
                     stream(conn, part, resuming = have > 0, startAt = have, progress = progress)
+                    return conn.getHeaderField("Last-Modified")
+                }
 
                 416 -> {
                     // Range no longer valid (resource changed, or .part already complete): start over.
@@ -120,6 +136,7 @@ class Downloader(
                         }
                         writeValidator(meta, fresh)
                         stream(fresh, part, resuming = false, startAt = 0L, progress = progress)
+                        return fresh.getHeaderField("Last-Modified")
                     } finally {
                         fresh.disconnect()
                     }

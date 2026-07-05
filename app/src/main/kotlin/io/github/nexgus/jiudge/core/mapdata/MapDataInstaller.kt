@@ -27,13 +27,20 @@ class MapDataInstaller(
     private val paths: AppPaths,
     private val downloader: Downloader = Downloader(),
 ) {
+    /**
+     * Returns the [Downloader.Completed] metadata of the download that produced this install, or
+     * null when the asset was already installed and skipped. [force] reinstalls over an existing
+     * asset (the map-update path); the staged download and atomic publish make the overwrite safe
+     * even while the old file is open in the renderer.
+     */
     suspend fun install(
         asset: MapDataAsset,
+        force: Boolean = false,
         onProgress: (InstallProgress) -> Unit,
-    ) {
-        if (asset.isInstalled) return
+    ): Downloader.Completed? {
+        if (asset.isInstalled && !force) return null
         paths.stagingDir.mkdirs()
-        when (val plan = asset.install) {
+        return when (val plan = asset.install) {
             is InstallPlan.Raw -> installRaw(asset, plan, onProgress)
             is InstallPlan.Unzip -> installZip(asset, plan, onProgress)
         }
@@ -43,11 +50,11 @@ class MapDataInstaller(
         asset: MapDataAsset,
         plan: InstallPlan.Raw,
         onProgress: (InstallProgress) -> Unit,
-    ) {
+    ): Downloader.Completed {
         // Downloader writes a sibling .part and renames into place, so the file is atomic by itself.
         // A plan-supplied verifier (e.g. a `.rd5` sanity check) runs against the .part before the
         // rename, so a corrupt download never becomes the marker file the catalog treats as installed.
-        downloader.download(
+        return downloader.download(
             urls = asset.urls,
             target = plan.destFile,
             progress = { done, total ->
@@ -61,17 +68,18 @@ class MapDataInstaller(
         asset: MapDataAsset,
         plan: InstallPlan.Unzip,
         onProgress: (InstallProgress) -> Unit,
-    ) {
+    ): Downloader.Completed {
         val zip = File(paths.stagingDir, "${asset.id}.zip")
         val stage = File(paths.stagingDir, "${asset.id}.tmp")
         try {
-            downloader.download(
-                urls = asset.urls,
-                target = zip,
-                progress = { done, total ->
-                    onProgress(InstallProgress(InstallPhase.DOWNLOADING, done, total))
-                },
-            )
+            val completed =
+                downloader.download(
+                    urls = asset.urls,
+                    target = zip,
+                    progress = { done, total ->
+                        onProgress(InstallProgress(InstallPhase.DOWNLOADING, done, total))
+                    },
+                )
             if (stage.exists()) stage.deleteRecursively()
             ZipExtractor.extract(zip, stage, plan.keepEntry) { written ->
                 onProgress(InstallProgress(InstallPhase.EXTRACTING, written, -1L))
@@ -85,6 +93,7 @@ class MapDataInstaller(
             onProgress(InstallProgress(InstallPhase.PUBLISHING, 0L, -1L))
             publish(stage, plan)
             verifyPublished(asset, plan)
+            return completed
         } finally {
             zip.delete()
             stage.deleteRecursively()
