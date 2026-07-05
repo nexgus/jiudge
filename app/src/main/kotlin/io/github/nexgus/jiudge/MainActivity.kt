@@ -190,6 +190,9 @@ private data class PendingRecordingStart(
  */
 private fun importDraftFile(context: Context): File = File(context.cacheDir, "import_draft.jsonl")
 
+/** Suggested file name handed to the SAF create-document picker ('/' would read as a path). */
+private fun gpxSuggestedName(name: String): String = "${name.replace('/', '-')}.gpx"
+
 /**
  * A saved route or track awaiting export to GPX, kept alive across the SAF "create document" picker
  * (it returns asynchronously). [file] is the source trace under Documents/Jiudge, [name] is its
@@ -520,6 +523,9 @@ private fun MapScreen(
     var deleteTarget by remember { mutableStateOf<RouteStore.Summary?>(null) }
     // Route currently drawn by the viewer: shown in ROUTE_VIEW, and kept in MAP_VIEW after 離開.
     var displayedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
+    // Backing file of displayedRoute (the file it was loaded from or last saved to); null when no
+    // file backs it (e.g. it was deleted from the picker). Drives the 匯出 GPX pill in route view.
+    var displayedRouteFile by remember { mutableStateOf<File?>(null) }
     // What ROUTE_EDIT "取消" reverts to: set when entering edit, refreshed on save.
     var editBaseline by remember { mutableStateOf<PlannedRoute?>(null) }
     // Raised on 新增, lowered after the first save: a brand-new route must not reuse an existing
@@ -1692,6 +1698,15 @@ private fun MapScreen(
                                         requestStartRecording(continuationSource = file)
                                     }
                                 },
+                                onExport =
+                                    historyTrackFile?.let { file ->
+                                        historyTrack?.let { track ->
+                                            {
+                                                exportTarget = GpxExportTarget(file, track.name, isTrack = true)
+                                                gpxExportLauncher.launch(gpxSuggestedName(track.name))
+                                            }
+                                        }
+                                    },
                                 onLeave = { viewingHistory = false },
                             )
                         } else {
@@ -1705,6 +1720,7 @@ private fun MapScreen(
                                 onClear = {
                                     viewer?.clear()
                                     displayedRoute = null
+                                    displayedRouteFile = null
                                     historyTrack = null
                                     historyTrackFile = null
                                 },
@@ -1736,6 +1752,7 @@ private fun MapScreen(
                                     mode = PlanMode.ROUTE_VIEW
                                 } else {
                                     displayedRoute = null
+                                    displayedRouteFile = null
                                     mode = PlanMode.MAP_VIEW
                                 }
                             },
@@ -1757,6 +1774,15 @@ private fun MapScreen(
                                     mode = PlanMode.ROUTE_EDIT
                                 }
                             },
+                            onExport =
+                                displayedRouteFile?.let { file ->
+                                    displayedRoute?.let { route ->
+                                        {
+                                            exportTarget = GpxExportTarget(file, route.name, isTrack = false)
+                                            gpxExportLauncher.launch(gpxSuggestedName(route.name))
+                                        }
+                                    }
+                                },
                             onLeave = { mode = PlanMode.MAP_VIEW },
                         )
                 }
@@ -1784,6 +1810,7 @@ private fun MapScreen(
                     viewer?.clear()
                     planner?.clear()
                     displayedRoute = null
+                    displayedRouteFile = null
                     editBaseline = null
                     isNewRoute = true
                     mode = PlanMode.ROUTE_EDIT
@@ -1837,16 +1864,19 @@ private fun MapScreen(
                         }
                         val route = staged.copy(name = name, createdAtEpochMs = System.currentTimeMillis())
                         try {
-                            withContext(Dispatchers.IO) {
-                                routeStore.save(route, checkDuplicate = true)
-                                importDraftFile(context).delete()
-                            }
+                            val savedFile =
+                                withContext(Dispatchers.IO) {
+                                    val file = routeStore.save(route, checkDuplicate = true)
+                                    importDraftFile(context).delete()
+                                    file
+                                }
                             // Mirror the load-saved-route path: show the imported plan in view mode,
                             // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
                             planner?.clear()
                             viewer?.show(route)
                             map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints })
                             displayedRoute = route
+                            displayedRouteFile = savedFile
                             mode = PlanMode.ROUTE_VIEW
                             snackbarHostState.showSnackbar("已匯入規劃路徑: $name")
                         } catch (e: DuplicateRouteNameException) {
@@ -1875,14 +1905,22 @@ private fun MapScreen(
                 showSave = false
                 if (p != null) {
                     val saved = p.toPlannedRoute(name, System.currentTimeMillis())
+                    // Re-saving an edited route writes a fresh file (the name is stamped with the
+                    // new createdAt), so hand the edit source over for deletion or the picker would
+                    // list both copies.
+                    val replacing = if (isNewRoute) null else displayedRouteFile
                     withStorageAccess {
                         scope.launch {
                             try {
-                                withContext(Dispatchers.IO) { routeStore.save(saved, checkDuplicate = isNewRoute) }
+                                val savedFile =
+                                    withContext(Dispatchers.IO) {
+                                        routeStore.save(saved, checkDuplicate = isNewRoute, replacing = replacing)
+                                    }
                                 // Keep the route on screen: leave editing for view mode, not cleared.
                                 p.clear()
                                 viewer?.show(saved)
                                 displayedRoute = saved
+                                displayedRouteFile = savedFile
                                 editBaseline = saved
                                 isNewRoute = false
                                 saveNameDraft = null
@@ -1949,6 +1987,7 @@ private fun MapScreen(
                         // Frame the whole trace on file load (only here - not on save/cancel).
                         map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints })
                         displayedRoute = route
+                        displayedRouteFile = summary.file
                         mode = PlanMode.ROUTE_VIEW
                     } catch (e: Exception) {
                         storageErrorMessage = "載入失敗: ${e.message}"
@@ -1958,7 +1997,7 @@ private fun MapScreen(
             onRename = { renameTarget = it },
             onExport = { summary ->
                 exportTarget = GpxExportTarget(summary.file, summary.name, isTrack = false)
-                gpxExportLauncher.launch("${summary.name.replace('/', '-')}.gpx")
+                gpxExportLauncher.launch(gpxSuggestedName(summary.name))
             },
             onDelete = { deleteTarget = it },
             onDismiss = { loadList = null },
@@ -1976,9 +2015,13 @@ private fun MapScreen(
                             val renamed = withContext(Dispatchers.IO) { routeStore.rename(target.file, newName) }
                             loadList = withContext(Dispatchers.IO) { routeStore.list() }
                             // Keep the on-screen route's name in sync if it was the one renamed.
+                            // Renaming may shift the file path (the slug follows the name), so the
+                            // backing-file reference must follow too or a later export/edit would
+                            // point at the deleted old path.
                             if (displayedRoute?.createdAtEpochMs == target.createdAtEpochMs) {
                                 displayedRoute = displayedRoute?.copy(name = renamed.name)
                                 editBaseline = editBaseline?.copy(name = renamed.name)
+                                displayedRouteFile = renamed.file
                             }
                             snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
                         } catch (e: DuplicateRouteNameException) {
@@ -2004,6 +2047,9 @@ private fun MapScreen(
                         try {
                             withContext(Dispatchers.IO) { routeStore.delete(target.file) }
                             loadList = withContext(Dispatchers.IO) { routeStore.list() }
+                            // The on-screen route may keep showing, but it no longer has a backing
+                            // file - drop the reference so the 匯出 GPX pill disappears with it.
+                            if (displayedRouteFile == target.file) displayedRouteFile = null
                             snackbarHostState.showSnackbar("已刪除 \"${target.name}\"")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("刪除失敗: ${e.message}")
@@ -2059,7 +2105,7 @@ private fun MapScreen(
             onRename = { renameTrackTarget = it },
             onExport = { summary ->
                 exportTarget = GpxExportTarget(summary.file, summary.name, isTrack = true)
-                gpxExportLauncher.launch("${summary.name.replace('/', '-')}.gpx")
+                gpxExportLauncher.launch(gpxSuggestedName(summary.name))
             },
             onDelete = { deleteTrackTarget = it },
             onDismiss = { loadTrackList = null },
@@ -2076,6 +2122,13 @@ private fun MapScreen(
                         try {
                             val renamed = withContext(Dispatchers.IO) { trackStore.rename(target.file, newName) }
                             loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                            // Keep the viewed track's name and backing file in sync if it was the
+                            // one renamed - renaming may shift the file path (the slug follows the
+                            // name), and 匯出 GPX / 繼續錄製 both act on that file.
+                            if (historyTrackFile == target.file) {
+                                historyTrack = historyTrack?.copy(name = renamed.name)
+                                historyTrackFile = renamed.file
+                            }
                             snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
                         } catch (e: DuplicateTrackNameException) {
                             renameTrackTarget = target
@@ -2100,6 +2153,9 @@ private fun MapScreen(
                         try {
                             withContext(Dispatchers.IO) { trackStore.delete(target.file) }
                             loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                            // The viewed track may keep showing, but it no longer has a backing
+                            // file - drop the reference so 匯出 GPX / 繼續錄製 cannot act on it.
+                            if (historyTrackFile == target.file) historyTrackFile = null
                             snackbarHostState.showSnackbar("已刪除 \"${target.name}\"")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("刪除失敗: ${e.message}")

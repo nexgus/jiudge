@@ -194,17 +194,23 @@ fun SearchTargetControls(
 }
 
 /**
- * Route-view mode controls: re-enter editing, or leave to map-view (the route stays on the map).
- * Editing is where "+"/"-"/儲存 live.
+ * Route-view mode controls: re-enter editing, export the viewed route as GPX, or leave to map-view
+ * (the route stays on the map). Editing is where "+"/"-"/儲存 live. [onExport] is null when the
+ * viewed route has no backing file (e.g. it was just deleted from the load picker) - the pill is
+ * omitted rather than disabled.
  */
 @Composable
 fun RouteViewControls(
     onEdit: () -> Unit,
+    onExport: (() -> Unit)?,
     onLeave: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         MapPill("編輯", onEdit, primary = true)
+        if (onExport != null) {
+            MapPill("匯出 GPX", onExport)
+        }
         MapPill("離開", onLeave)
     }
 }

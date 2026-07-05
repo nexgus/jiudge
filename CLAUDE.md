@@ -86,8 +86,9 @@
   規劃路徑; 匯入段標記 `origin:"import"`, 編輯時 "-" 對其停用 (見 docs/trace_spec.md §5.2,
   docs/ui.md)
 - GPX 匯出 (`data/route/GpxExporter` 串流輸出 GPX 1.1): 已存規劃路徑與軌跡的清單列 "更多"
-  選單提供 "匯出 GPX", 經 SAF `ACTION_CREATE_DOCUMENT` 存檔 (預設下載目錄, 使用者可另選);
-  `<ele>` 一律由 DEM 取得 (見 docs/trace_spec.md §8/§11/§14)
+  選單, 以及路徑檢視 / 軌跡檢視模式的動作列, 皆提供 "匯出 GPX", 經 SAF
+  `ACTION_CREATE_DOCUMENT` 存檔 (預設下載目錄, 使用者可另選); `<ele>` 一律由 DEM 取得
+  (見 docs/trace_spec.md §8/§11/§14, docs/ui.md)
 
 **尚未建置 (已知待辦):**
 - 獨立航點的 GPX 匯出; KML 匯出與匯入; "GPX 匯入為軌跡" 與獨立航點匯入

@@ -93,13 +93,16 @@ fun PausedBottomBar(
 
 /**
  * Bottom action bar for the history-track viewing sub-mode: continue recording on top of the loaded
- * track, or leave the sub-mode (the track stays on the map until the user explicitly clears it).
- * Both pills share a min-width so they read as a symmetric pair regardless of CJK character count -
- * width is set to comfortably fit "繼續錄製" (the wider label), and "離開" stretches up to match.
+ * track, export it as GPX, or leave the sub-mode (the track stays on the map until the user
+ * explicitly clears it). The pills share a min-width so they read as a symmetric row regardless of
+ * CJK character count - width is set to comfortably fit "繼續錄製" (the widest label), and the
+ * others stretch up to match. [onExport] is null when the viewed track has no backing file (e.g. it
+ * was just deleted from the load picker) - the pill is omitted rather than disabled.
  */
 @Composable
 fun HistoryTrackViewControls(
     onContinue: () -> Unit,
+    onExport: (() -> Unit)?,
     onLeave: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -110,6 +113,9 @@ fun HistoryTrackViewControls(
     ) {
         val pillModifier = Modifier.widthIn(min = 110.dp)
         MapPill(text = "繼續錄製", onClick = onContinue, primary = true, modifier = pillModifier)
+        if (onExport != null) {
+            MapPill(text = "匯出 GPX", onClick = onExport, modifier = pillModifier)
+        }
         MapPill(text = "離開", onClick = onLeave, modifier = pillModifier)
     }
 }

@@ -17,7 +17,9 @@ class DuplicateRouteNameException(
  * `MANAGE_EXTERNAL_STORAGE` (Android 11+) or `WRITE_EXTERNAL_STORAGE` (Android 10 and below);
  * callers must hold it before saving/loading, otherwise the I/O fails.
  */
-class RouteStore {
+class RouteStore(
+    private val plansDir: () -> File = { RoutePaths.plansDir() },
+) {
     /** Lightweight listing entry - identifies a saved route file and its summary fields. */
     data class Summary(
         val file: File,
@@ -27,29 +29,38 @@ class RouteStore {
     )
 
     /**
-     * Persists [route] as a new uniquely-named JSONL trace file under `plans/`.
+     * Persists [route] as a new uniquely-named JSONL trace file under `plans/`, returning the
+     * written file (callers keep it as the reference for later export/rename bookkeeping).
      *
      * When [checkDuplicate] is true (a brand-new route's first save), this rejects a name that
      * already exists - trimmed exact match against existing plans - by throwing
      * [DuplicateRouteNameException], so the picker never lists two indistinguishable entries.
      * Re-saving an edited route passes false, since its name intentionally matches its origin.
+     *
+     * [replacing] is the file the edited route was loaded from; it is deleted once the new file is
+     * written, so an edit-then-save never leaves both copies behind. The new file is written before
+     * the old one is deleted (matching [rename]), so a crash mid-save leaves a duplicate rather
+     * than losing the route. Pass null for a brand-new route.
      */
     fun save(
         route: PlannedRoute,
         checkDuplicate: Boolean,
-    ) {
-        val plans = RoutePaths.plansDir()
+        replacing: File? = null,
+    ): File {
+        val plans = plansDir()
         if (checkDuplicate) {
             val target = route.name.trim()
             if (list().any { it.name.trim() == target }) throw DuplicateRouteNameException(route.name)
         }
         val file = File(plans, "${slug(route.name)}-${route.createdAtEpochMs}${Trace.FILE_SUFFIX}")
         Trace.write(file, route.header(), route.toRecords())
+        if (replacing != null && replacing != file) replacing.delete()
+        return file
     }
 
     /** Lists saved routes newest-first; files that fail to parse are skipped, not thrown. */
     fun list(): List<Summary> =
-        (RoutePaths.plansDir().listFiles() ?: emptyArray())
+        (plansDir().listFiles() ?: emptyArray())
             .filter { it.isFile && it.name.endsWith(Trace.FILE_SUFFIX) }
             .mapNotNull { file ->
                 runCatching {
@@ -91,7 +102,7 @@ class RouteStore {
             throw DuplicateRouteNameException(target)
         }
         val route = load(file).copy(name = target)
-        val newFile = File(RoutePaths.plansDir(), "${slug(target)}-${route.createdAtEpochMs}${Trace.FILE_SUFFIX}")
+        val newFile = File(plansDir(), "${slug(target)}-${route.createdAtEpochMs}${Trace.FILE_SUFFIX}")
         Trace.write(newFile, route.header(), route.toRecords())
         if (newFile != file) file.delete()
         return Summary(
