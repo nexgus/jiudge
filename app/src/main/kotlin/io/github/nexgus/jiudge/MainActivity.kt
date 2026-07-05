@@ -441,6 +441,10 @@ private fun MapScreen(
     var isNewRoute by remember { mutableStateOf(false) }
     // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
     var saveNameDraft by remember { mutableStateOf<String?>(null) }
+    // Save/load failures mean data was not written or cannot be read back - errors the user must
+    // not miss - so they raise a blocking dialog instead of a timed snackbar (see CLAUDE.md,
+    // "Message surfaces"). Null while no such error is showing.
+    var storageErrorMessage by remember { mutableStateOf<String?>(null) }
 
     // Recording session - driven by [RecordingService] (foreground service + PARTIAL_WAKE_LOCK so
     // the track keeps being written with the screen off and the process in Doze). The activity
@@ -789,11 +793,12 @@ private fun MapScreen(
             val granted =
                 result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                     result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            // A denial needs no snackbar: the missing grant is a persistent state already covered
+            // by FineLocationMissingBanner ("尚未授予定位權限, 點此授予"), which stays up and keeps
+            // offering the retry tap.
             if (granted) {
                 locationGranted = true
                 recenterOnFix = true
-            } else {
-                scope.launch { snackbarHostState.showSnackbar("未授予定位權限, 無法顯示目前位置") }
             }
         }
 
@@ -1552,7 +1557,7 @@ private fun MapScreen(
                         try {
                             loadList = withContext(Dispatchers.IO) { routeStore.list() }
                         } catch (e: Exception) {
-                            snackbarHostState.showSnackbar("讀取清單失敗: ${e.message}")
+                            storageErrorMessage = "讀取清單失敗: ${e.message}"
                         }
                     }
                 }
@@ -1588,7 +1593,7 @@ private fun MapScreen(
                                 showSave = true
                                 snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
                             } catch (e: Exception) {
-                                snackbarHostState.showSnackbar("儲存失敗: ${e.message}")
+                                storageErrorMessage = "儲存失敗: ${e.message}"
                             }
                         }
                     }
@@ -1645,7 +1650,7 @@ private fun MapScreen(
                         displayedRoute = route
                         mode = PlanMode.ROUTE_VIEW
                     } catch (e: Exception) {
-                        snackbarHostState.showSnackbar("載入失敗: ${e.message}")
+                        storageErrorMessage = "載入失敗: ${e.message}"
                     }
                 }
             },
@@ -1718,7 +1723,7 @@ private fun MapScreen(
                         try {
                             loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
                         } catch (e: Exception) {
-                            snackbarHostState.showSnackbar("讀取軌跡清單失敗: ${e.message}")
+                            storageErrorMessage = "讀取軌跡清單失敗: ${e.message}"
                         }
                     }
                 }
@@ -1742,7 +1747,7 @@ private fun MapScreen(
                             map.value?.fitToRoute(loaded.polyline)
                         }
                     } catch (e: Exception) {
-                        snackbarHostState.showSnackbar("載入軌跡失敗: ${e.message}")
+                        storageErrorMessage = "載入軌跡失敗: ${e.message}"
                     }
                 }
             },
@@ -1833,7 +1838,7 @@ private fun MapScreen(
                                 showSaveTrack = true
                                 snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
                             } catch (e: Exception) {
-                                snackbarHostState.showSnackbar("儲存失敗: ${e.message}")
+                                storageErrorMessage = "儲存失敗: ${e.message}"
                             }
                         }
                     }
@@ -1876,7 +1881,7 @@ private fun MapScreen(
                                 historyTrack = null
                                 historyTrackFile = null
                                 viewingHistory = false
-                                snackbarHostState.showSnackbar("回復原始軌跡失敗: ${e.message}")
+                                storageErrorMessage = "回復原始軌跡失敗: ${e.message}"
                             }
                         } else {
                             historyTrack = null
@@ -1892,6 +1897,19 @@ private fun MapScreen(
                 // recording layer pauses before opening this dialog, so the session is always PAUSED
                 // here); the user resumes explicitly via 繼續錄製.
                 showDiscardRecording = false
+            },
+        )
+    }
+
+    // Blocking surface for save/load failures - a timed snackbar can vanish unseen, but these
+    // errors mean the data is not on disk (or cannot be read back), so they must be acknowledged.
+    storageErrorMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { storageErrorMessage = null },
+            title = { Text("操作失敗") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { storageErrorMessage = null }) { Text("確定") }
             },
         )
     }

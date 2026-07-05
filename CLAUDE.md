@@ -115,6 +115,12 @@ repo 根目錄有兩支輔助腳本封裝了常見流程 (兩者都會先 `cd` �
 - Kotlin: ktlint 預設規則.
 - 不可有未附追蹤參照的 `// TODO` (GitHub issue 編號, 或如 `// TODO(spec §4.2)` 的 spec 章節).
 
+### Message surfaces
+使用者訊息依性質選用載體, 不混用:
+- **持續性狀態** (存在一段生命週期, 條件解除才消失: 索引建置中, 權限缺失, 模式開啟中): 地圖上方常駐 banner.
+- **使用者動作的一次性回饋** (成功回報, 或 "暫時做不到" 的即時回應): 下方限時 snackbar.
+- **不可錯過的錯誤** (儲存 / 載入失敗等資料未落地或讀不回來的情況): `AlertDialog`, 不得使用限時訊息.
+
 ### Directory layout (native Android)
 ```
 app/src/main/kotlin/io/github/nexgus/jiudge/
