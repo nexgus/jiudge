@@ -94,6 +94,34 @@ class RouteStoreTest {
     }
 
     @Test
+    fun `re-save renamed onto another route's name is rejected`() {
+        setUpStore()
+        val original = store.save(route("縱走", 1L), checkDuplicate = true)
+        val other = store.save(route("橫斷", 2L), checkDuplicate = true)
+        val renamed = store.load(original).copy(name = "橫斷", createdAtEpochMs = 3L)
+
+        assertThrows(DuplicateRouteNameException::class.java) {
+            store.save(renamed, checkDuplicate = false, replacing = original)
+        }
+        // The guard runs before anything is written: both routes must survive untouched.
+        assertTrue(original.exists())
+        assertTrue(other.exists())
+        assertEquals(2, dir.listFiles()!!.size)
+    }
+
+    @Test
+    fun `re-save renamed onto another route's padded name is rejected`() {
+        setUpStore()
+        val original = store.save(route("縱走", 1L), checkDuplicate = true)
+        store.save(route("橫斷", 2L), checkDuplicate = true)
+        val renamed = store.load(original).copy(name = " 橫斷 ", createdAtEpochMs = 3L)
+
+        assertThrows(DuplicateRouteNameException::class.java) {
+            store.save(renamed, checkDuplicate = false, replacing = original)
+        }
+    }
+
+    @Test
     fun `first save rejects a duplicate name`() {
         setUpStore()
         store.save(route("縱走", 1L), checkDuplicate = true)

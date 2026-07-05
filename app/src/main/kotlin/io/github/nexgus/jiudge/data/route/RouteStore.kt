@@ -35,7 +35,9 @@ class RouteStore(
      * When [checkDuplicate] is true (a brand-new route's first save), this rejects a name that
      * already exists - trimmed exact match against existing plans - by throwing
      * [DuplicateRouteNameException], so the picker never lists two indistinguishable entries.
-     * Re-saving an edited route passes false, since its name intentionally matches its origin.
+     * Re-saving an edited route passes false with [replacing] set instead: the same guard runs but
+     * excludes the edit source itself, so keeping the origin's name is fine while renaming onto a
+     * different existing route is rejected (matching [rename]).
      *
      * [replacing] is the file the edited route was loaded from; it is deleted once the new file is
      * written, so an edit-then-save never leaves both copies behind. The new file is written before
@@ -48,9 +50,11 @@ class RouteStore(
         replacing: File? = null,
     ): File {
         val plans = plansDir()
-        if (checkDuplicate) {
+        if (checkDuplicate || replacing != null) {
             val target = route.name.trim()
-            if (list().any { it.name.trim() == target }) throw DuplicateRouteNameException(route.name)
+            if (list().any { it.file != replacing && it.name.trim() == target }) {
+                throw DuplicateRouteNameException(route.name)
+            }
         }
         val file = File(plans, "${slug(route.name)}-${route.createdAtEpochMs}${Trace.FILE_SUFFIX}")
         Trace.write(file, route.header(), route.toRecords())
