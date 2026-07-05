@@ -1571,11 +1571,11 @@ private fun MapScreen(
             val stackAboveGapDp = 12.dp
             // True only when we have measurements for both groups AND they would overlap. The
             // measured pillRowWidthPx / fabColumnWidthPx already include each group's own 16 dp
-            // padding (onSizeChanged sits after padding in the modifier chain), so the sum touching
-            // the container width means the two padded edges already meet - no further gap is
-            // available. While any measurement is still 0 (first frame, or the pill row has not laid
-            // out yet) we keep the default BottomEnd placement so the FAB does not flash to an
-            // above-pills position.
+            // padding (onSizeChanged sits before padding in the modifier chain, so it wraps the
+            // padded node), so the sum touching the container width means the two padded edges
+            // already meet - no further gap is available. While any measurement is still 0 (first
+            // frame, or the pill row has not laid out yet) we keep the default BottomEnd placement
+            // so the FAB does not flash to an above-pills position.
             val stackAbovePills =
                 pillRowWidthPx > 0 &&
                     fabColumnWidthPx > 0 &&
@@ -1596,8 +1596,8 @@ private fun MapScreen(
                 modifier =
                     Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 16.dp, bottom = bottomPadding)
-                        .onSizeChanged { fabColumnWidthPx = it.width },
+                        .onSizeChanged { fabColumnWidthPx = it.width }
+                        .padding(end = 16.dp, bottom = bottomPadding),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -1621,11 +1621,10 @@ private fun MapScreen(
             modifier =
                 Modifier
                     .align(Alignment.BottomStart)
-                    .padding(16.dp)
                     .onSizeChanged {
                         pillRowWidthPx = it.width
                         pillRowHeightPx = it.height
-                    },
+                    }.padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
