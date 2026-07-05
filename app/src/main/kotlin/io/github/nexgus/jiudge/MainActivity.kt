@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -78,6 +79,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import io.github.nexgus.jiudge.core.elevation.DemElevation
+import io.github.nexgus.jiudge.core.geo.simplifyPolyline
 import io.github.nexgus.jiudge.core.index.Peak
 import io.github.nexgus.jiudge.core.index.PeakIndex
 import io.github.nexgus.jiudge.core.index.PeakIndexState
@@ -102,6 +104,8 @@ import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
 import io.github.nexgus.jiudge.data.route.DuplicateTrackNameException
+import io.github.nexgus.jiudge.data.route.GpxImporter
+import io.github.nexgus.jiudge.data.route.GpxParseException
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RecordedTrack
 import io.github.nexgus.jiudge.data.route.RouteStore
@@ -124,6 +128,7 @@ import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.mapdata.MapUpdateDialog
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
+import io.github.nexgus.jiudge.feature.planning.ImportRouteDialog
 import io.github.nexgus.jiudge.feature.planning.LoadRouteDialog
 import io.github.nexgus.jiudge.feature.planning.MapViewControls
 import io.github.nexgus.jiudge.feature.planning.PlanEntryChooser
@@ -168,6 +173,16 @@ import kotlin.math.roundToInt
  */
 private data class PendingRecordingStart(
     val continuationSource: File?,
+)
+
+/**
+ * A parsed-and-simplified GPX import awaiting its route name. [name] starts as the name found in
+ * the file (or the file name) and is updated to the user's typed name when a save is rejected as a
+ * duplicate, so the reopened dialog prefills it for editing.
+ */
+private data class ImportDraft(
+    val name: String,
+    val segments: List<List<LatLong>>,
 )
 
 class MainActivity : ComponentActivity() {
@@ -323,6 +338,11 @@ private const val SHOW_ACCURACY_CIRCLE = true
 // summit), in which case it pulls in to PEAK_VIEW.
 private const val PEAK_VIEW_MIN_ZOOM: Byte = 14
 private const val PEAK_VIEW_ZOOM: Byte = 15
+
+// Douglas-Peucker tolerance applied to every imported GPX segment. 3 m is visually lossless at the
+// deepest zoom yet cuts a 1 Hz-recorded track's point count by an order of magnitude, keeping the
+// saved file small and the per-frame overlay drawing fast.
+private const val GPX_SIMPLIFY_TOLERANCE_M = 3.0
 
 // On ON_RESUME, a fix older than this is treated as too stale to snap the map to (e.g. mid-tunnel
 // where GPS has been silent for a while - centring on the pre-tunnel spot would mislead). Short
@@ -481,6 +501,8 @@ private fun MapScreen(
     var isNewRoute by remember { mutableStateOf(false) }
     // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
     var saveNameDraft by remember { mutableStateOf<String?>(null) }
+    // A parsed GPX import awaiting its route name; non-null keeps the naming dialog open.
+    var importDraft by remember { mutableStateOf<ImportDraft?>(null) }
     // Save/load failures mean data was not written or cannot be read back - errors the user must
     // not miss - so they raise a blocking dialog instead of a timed snackbar (see CLAUDE.md,
     // "Message surfaces"). Null while no such error is showing.
@@ -591,6 +613,57 @@ private fun MapScreen(
             showStorageRationale = true
         }
     }
+
+    // GPX import: the system document picker hands back a one-off content URI (reading it needs no
+    // storage permission - only the later save into Documents/Jiudge does). Parsing and Douglas-
+    // Peucker simplification run off the main thread; the result parks in importDraft, whose naming
+    // dialog drives the save. Parse failures and empty files are data-level errors the user must
+    // not miss, so they raise the blocking error dialog (see CLAUDE.md "Message surfaces").
+    val gpxPickerLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            scope.launch {
+                try {
+                    val draft =
+                        withContext(Dispatchers.IO) {
+                            val parsed =
+                                context.contentResolver.openInputStream(uri)?.use { GpxImporter.parse(it) }
+                                    ?: throw GpxParseException("cannot open the selected file")
+                            val segments = parsed.segments.map { simplifyPolyline(it, GPX_SIMPLIFY_TOLERANCE_M) }
+                            // Prefer the name embedded in the file; fall back to the display name
+                            // (file name without extension) the picker's provider reports. Purely
+                            // best-effort: a provider that ignores the projection, omits the column,
+                            // or throws must only cost the prefill, never fail the import.
+                            val fallbackName =
+                                runCatching {
+                                    context.contentResolver
+                                        .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                                        ?.use { cursor ->
+                                            val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                            if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                                        }
+                                }.getOrNull()
+                                    ?.substringBeforeLast('.')
+                                    ?.trim()
+                            ImportDraft(
+                                name =
+                                    parsed.name
+                                        ?.trim()
+                                        .orEmpty()
+                                        .ifEmpty { fallbackName.orEmpty() },
+                                segments = segments,
+                            )
+                        }
+                    if (draft.segments.isEmpty()) {
+                        storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
+                    } else {
+                        importDraft = draft
+                    }
+                } catch (e: Exception) {
+                    storageErrorMessage = "匯入失敗: ${e.message}"
+                }
+            }
+        }
 
     // Recording-start permission flow: POST_NOTIFICATIONS on Android 13+ (asked inline; the service
     // still works without it, the notification is just hidden), then ACCESS_BACKGROUND_LOCATION on
@@ -1543,6 +1616,7 @@ private fun MapScreen(
                     PlanMode.ROUTE_EDIT ->
                         PlanningBottomBar(
                             waypointCount = planner?.waypoints?.size ?: 0,
+                            canRemove = planner?.canRemoveLast ?: false,
                             busy = busy,
                             onAdd = {
                                 val p = planner ?: return@PlanningBottomBar
@@ -1633,7 +1707,45 @@ private fun MapScreen(
                     }
                 }
             },
+            onImport = {
+                showChooser = false
+                // GPX has no reliably registered MIME type (providers commonly report
+                // application/octet-stream), so do not filter - the parser rejects non-GPX content.
+                gpxPickerLauncher.launch(arrayOf("*/*"))
+            },
             onCancel = { showChooser = false },
+        )
+    }
+
+    importDraft?.let { draft ->
+        ImportRouteDialog(
+            initialName = draft.name,
+            onConfirm = { name ->
+                importDraft = null
+                val route = PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), draft.segments)
+                withStorageAccess {
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { routeStore.save(route, checkDuplicate = true) }
+                            // Mirror the load-saved-route path: show the imported plan in view mode,
+                            // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
+                            planner?.clear()
+                            viewer?.show(route)
+                            map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints })
+                            displayedRoute = route
+                            mode = PlanMode.ROUTE_VIEW
+                            snackbarHostState.showSnackbar("已匯入規劃路徑: $name")
+                        } catch (e: DuplicateRouteNameException) {
+                            // Keep the typed name and reopen so the user can rename in place.
+                            importDraft = draft.copy(name = name)
+                            snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
+                        } catch (e: Exception) {
+                            storageErrorMessage = "儲存失敗: ${e.message}"
+                        }
+                    }
+                }
+            },
+            onDismiss = { importDraft = null },
         )
     }
 

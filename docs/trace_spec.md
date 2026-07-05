@@ -97,6 +97,11 @@ polyline 由讀取端按需衍生.
 | `k` | string | 是 | 固定 `"seg"` |
 | `i` | int | 是 | 段序號, 對應 `wpt[i]` 到 `wpt[i+1]` |
 | `pts` | array | 是 | `[[lat,lon], ...]` 座標序列 |
+| `origin` | string | 否 | 幾何來源. `"import"` = 自外部 GPX 匯入; 省略 = 本 App 由 BRouter 算出 |
+
+`origin` 決定編輯器的刪除保護: 匯入的幾何一經刪除即無法重算 (BRouter 只能算路網上的路徑),
+因此編輯模式對 `origin:"import"` 的段停用 "-". 讀取端對未知的 `origin` 值一律視同
+`"import"` - 寧可多保護, 不可把來源不明的幾何誤認為可重算而放行刪除.
 
 ### 5.3 `pt` - 定位點 (實際軌跡)
 
@@ -258,4 +263,7 @@ KML, GeoJSON 透過同一中介結構轉出. 本文件不展開細節, 僅確認
   存取經 `RouteStore`) 與 `RecordedTrack` (存取經 `TrackStore`; 錄製時的逐點 append 與
   staging 檔生命週期亦由 `TrackStore` 提供).
 - 背景軌跡錄製的 foreground service (`core/recording`) 為獨立工作項目, 不在本格式設計範圍內.
+- GPX 匯入: `GpxImporter` (`data/route/`) 以 SAX 串流解析外部 GPX, 每個 `<trkseg>` / `<rte>`
+  對應一個 `seg` (`origin:"import"`), 段邊界點成為 `wpt`; 匯入時以 Douglas-Peucker
+  (`core/geo/PolylineSimplify`) 抽稀. 匯入的 GPX `<ele>` 依 §8 丟棄.
 - `GpxExporter` (及未來其他匯出器) **尚未實作**, 為已知待辦 (見 CLAUDE.md Development Status).

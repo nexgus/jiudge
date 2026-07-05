@@ -81,9 +81,14 @@
   docs/permissions.md) + 錄製中螢幕恆亮; fix gating 規則 (`FixGate`, 定義於 docs/gating.md);
   staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`TrackStore`, 格式見 docs/trace_spec.md);
   已存軌跡的列表 / 載入檢視 / 改名 / 刪除
+- GPX 軌跡匯入為規劃路徑 (`data/route/GpxImporter` SAX 解析, `core/geo/PolylineSimplify`
+  Douglas-Peucker 抽稀): 規劃入口對話框的 "匯入 GPX 軌跡" 經系統檔案挑選器匯入, 存為一般
+  規劃路徑; 匯入段標記 `origin:"import"`, 編輯時 "-" 對其停用 (見 docs/trace_spec.md §5.2,
+  docs/ui.md)
 
 **尚未建置 (已知待辦):**
-- GPX / KML 匯入 / 匯出 (tracks + routes + waypoints)
+- GPX / KML 匯出 (tracks + routes + waypoints); KML 匯入; "GPX 匯入為軌跡" 與獨立航點匯入
+  (匯入為規劃路徑已完成, 見上)
 - 錄製中的即時統計 (距離, 爬升, 時間, 均速) 與即時海拔剖面
 - 規劃時的高程剖面
 - 更新檢查機制

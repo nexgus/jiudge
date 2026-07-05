@@ -117,13 +117,16 @@ internal fun MapPill(
 
 /**
  * Bottom action bar for planning mode: add a waypoint at the crosshair, drop the last one, save,
- * or cancel. Save is disabled until there is a routed path (>= 2 waypoints); while a route is
- * computing the add/remove/save actions are disabled and a spinner shows. The buttons disable in
- * place (rather than hide) so the row keeps a stable width as the waypoint count changes.
+ * or cancel. Save is disabled until there is a routed path (>= 2 waypoints); "-" is disabled when
+ * there is nothing to remove or the leg it would delete is imported GPX geometry ([canRemove], see
+ * [RoutePlanner.canRemoveLast]); while a route is computing the add/remove/save actions are disabled
+ * and a spinner shows. The buttons disable in place (rather than hide) so the row keeps a stable
+ * width as the waypoint count changes.
  */
 @Composable
 fun PlanningBottomBar(
     waypointCount: Int,
+    canRemove: Boolean,
     busy: Boolean,
     onAdd: () -> Unit,
     onRemove: () -> Unit,
@@ -137,7 +140,7 @@ fun PlanningBottomBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         MapPill("+", onAdd, primary = true, enabled = !busy, fontSize = 20.sp)
-        MapPill("−", onRemove, primary = true, enabled = !busy && waypointCount > 0, fontSize = 20.sp)
+        MapPill("−", onRemove, primary = true, enabled = !busy && canRemove, fontSize = 20.sp)
         if (busy) {
             CircularProgressIndicator(modifier = Modifier.padding(horizontal = 8.dp))
         }
@@ -206,11 +209,12 @@ fun RouteViewControls(
     }
 }
 
-/** Planning entry: start a fresh plan, load a saved one, or cancel. */
+/** Planning entry: start a fresh plan, load a saved one, import an external GPX track, or cancel. */
 @Composable
 fun PlanEntryChooser(
     onNew: () -> Unit,
     onLoad: () -> Unit,
+    onImport: () -> Unit,
     onCancel: () -> Unit,
 ) {
     AlertDialog(
@@ -220,10 +224,62 @@ fun PlanEntryChooser(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("新規劃") }
                 OutlinedButton(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("載入已存路徑") }
+                OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("匯入 GPX 軌跡") }
             }
         },
         confirmButton = {},
         dismissButton = { TextButton(onClick = onCancel) { Text("取消") } },
+    )
+}
+
+/**
+ * Prompts for the route name an imported GPX track is saved under (prefilled with the name found in
+ * the file, or the file name). Blank falls back to a default, like [SaveRouteDialog].
+ */
+@Composable
+fun ImportRouteDialog(
+    initialName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    RouteNameDialog(
+        title = "匯入 GPX 軌跡",
+        confirmLabel = "匯入",
+        initialName = initialName,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
+}
+
+/**
+ * Shared single-field naming dialog behind [SaveRouteDialog], [RenameRouteDialog] and
+ * [ImportRouteDialog]: one text field prefilled with [initialName]; confirming trims the input and
+ * falls back to a default name when blank.
+ */
+@Composable
+private fun RouteNameDialog(
+    title: String,
+    confirmLabel: String,
+    initialName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("路線名稱") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name.trim().ifEmpty { "未命名路線" }) }) { Text(confirmLabel) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 
@@ -234,22 +290,12 @@ fun SaveRouteDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var name by remember { mutableStateOf(initialName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("儲存規劃路徑") },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("路線名稱") },
-                singleLine = true,
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim().ifEmpty { "未命名路線" }) }) { Text("儲存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    RouteNameDialog(
+        title = "儲存規劃路徑",
+        confirmLabel = "儲存",
+        initialName = initialName,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
     )
 }
 
@@ -347,22 +393,12 @@ fun RenameRouteDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var name by remember { mutableStateOf(initialName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("路線改名") },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("路線名稱") },
-                singleLine = true,
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim().ifEmpty { "未命名路線" }) }) { Text("確定") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    RouteNameDialog(
+        title = "路線改名",
+        confirmLabel = "確定",
+        initialName = initialName,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
     )
 }
 

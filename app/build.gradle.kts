@@ -95,6 +95,9 @@ dependencies {
     ktlint(libs.ktlint.cli)
 
     testImplementation(libs.junit)
+    // Real org.json for unit tests: the android.jar on the test classpath stubs it with throwing
+    // methods, which would fail any test that touches trace serialisation.
+    testImplementation(libs.org.json)
 }
 
 // Lint/format Kotlin sources with the ktlint CLI. `ktlintCheck` is wired into `check`.

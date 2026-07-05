@@ -32,10 +32,24 @@ class RoutePlanner(
     private val _waypoints = mutableStateListOf<LatLong>()
     val waypoints: List<LatLong> get() = _waypoints
 
-    // segments[i] is the routed geometry from waypoint[i] to waypoint[i+1]. The whole overlay is
-    // re-pushed to the layer on every change; rebuilding the marker set is cheap.
-    private val segments = mutableListOf<List<LatLong>>()
+    // segments[i] is the geometry from waypoint[i] to waypoint[i+1]. Snapshot state (like the
+    // waypoints) so the bottom bar's "-" enablement recomposes off canRemoveLast. The whole overlay
+    // is re-pushed to the layer on every change; rebuilding the marker set is cheap.
+    private val segments = mutableStateListOf<PlannedRoute.Segment>()
     private var layer: PlannedRouteLayer? = null
+
+    // The single spelling of the imported-geometry protection: an imported segment cannot be
+    // recomputed once dropped or re-snapped, so both "-" and the endpoint re-snap key off this.
+    private val lastSegmentImported: Boolean
+        get() = segments.lastOrNull()?.imported == true
+
+    /**
+     * Whether "-" may act: false when the leg it would delete is imported GPX geometry, which cannot
+     * be recomputed once dropped (a routed leg can always be re-added via "+"). Also false with
+     * nothing to remove at all.
+     */
+    val canRemoveLast: Boolean
+        get() = _waypoints.isNotEmpty() && !lastSegmentImported
 
     /**
      * Adds the map-center point as the next waypoint. From the second on, routes from the previous
@@ -70,17 +84,25 @@ class RoutePlanner(
             } catch (e: RoutingException) {
                 return e.message ?: "routing failed"
             }
-        segments.add(path)
-        // Move both endpoints onto BRouter's snapped positions (the track is never empty on success).
-        _waypoints[_waypoints.lastIndex] = path.first()
+        // Move both endpoints onto BRouter's snapped positions (the track is never empty on success)
+        // - except a waypoint that ends an imported segment: that one must stay on the imported
+        // geometry, so only the new endpoint snaps (the tiny gap to the snapped route start is
+        // bridged by the flattened polyline).
+        if (!lastSegmentImported) {
+            _waypoints[_waypoints.lastIndex] = path.first()
+        }
+        segments.add(PlannedRoute.Segment(path))
         _waypoints.add(path.last())
         pushOverlay()
         return null
     }
 
-    /** Removes the most recently added waypoint and the segment leading into it. */
+    /**
+     * Removes the most recently added waypoint and the segment leading into it. No-op when that
+     * segment is imported GPX geometry (see [canRemoveLast]; the UI disables "-" then).
+     */
     fun removeLastWaypoint() {
-        if (_waypoints.isEmpty()) return
+        if (!canRemoveLast) return
         _waypoints.removeAt(_waypoints.lastIndex)
         if (segments.isNotEmpty()) segments.removeAt(segments.lastIndex)
         pushOverlay()
@@ -89,7 +111,7 @@ class RoutePlanner(
     fun toPlannedRoute(
         name: String,
         createdAtEpochMs: Long,
-    ): PlannedRoute = PlannedRoute(name, createdAtEpochMs, _waypoints.toList(), segments.map { it.toList() })
+    ): PlannedRoute = PlannedRoute(name, createdAtEpochMs, _waypoints.toList(), segments.toList())
 
     /**
      * Replaces the current plan with a saved [route] and draws it, leaving it fully editable
@@ -120,7 +142,7 @@ class RoutePlanner(
                 layer = it
                 mapView.layerManager.layers.add(it)
             }
-        overlay.update(_waypoints.toList(), segments.map { it.toList() })
+        overlay.update(_waypoints.toList(), segments.map { it.points })
         mapView.layerManager.redrawLayers()
     }
 }
