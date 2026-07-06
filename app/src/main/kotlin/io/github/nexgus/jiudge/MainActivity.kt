@@ -104,6 +104,8 @@ import io.github.nexgus.jiudge.core.recording.RecordingService
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.routing.BRouterProfile
 import io.github.nexgus.jiudge.core.routing.ToughPathDetector
+import io.github.nexgus.jiudge.core.stats.TraceStats
+import io.github.nexgus.jiudge.core.stats.TraceStatsCalculator
 import io.github.nexgus.jiudge.core.storage.AppPaths
 import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
 import io.github.nexgus.jiudge.data.route.DuplicateTrackNameException
@@ -161,6 +163,7 @@ import io.github.nexgus.jiudge.feature.recording.RecordingBottomBar
 import io.github.nexgus.jiudge.feature.recording.RenameTrackDialog
 import io.github.nexgus.jiudge.feature.recording.SaveTrackDialog
 import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
+import io.github.nexgus.jiudge.feature.stats.StatsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -192,6 +195,12 @@ private fun importDraftFile(context: Context): File = File(context.cacheDir, "im
 
 /** Suggested file name handed to the SAF create-document picker ('/' would read as a path). */
 private fun gpxSuggestedName(name: String): String = "${name.replace('/', '-')}.gpx"
+
+/** The trace whose stats screen is open: display name plus whether it is a recorded track. */
+private data class StatsTarget(
+    val name: String,
+    val isTrack: Boolean,
+)
 
 /**
  * A saved route or track awaiting export to GPX, kept alive across the SAF "create document" picker
@@ -649,6 +658,48 @@ private fun MapScreen(
         } else {
             pendingStorageAction = action
             showStorageRationale = true
+        }
+    }
+
+    // Stats screen: statsTarget is non-null while the stats overlay is up; statsData stays null
+    // while the numbers are still being computed off the main thread (the screen shows a spinner
+    // meanwhile). The request id keeps a stale computation from landing after the user has
+    // switched to another trace or closed the screen.
+    var statsTarget by remember { mutableStateOf<StatsTarget?>(null) }
+    var statsData by remember { mutableStateOf<TraceStats?>(null) }
+    var statsRequestId by remember { mutableIntStateOf(0) }
+
+    // Opens the stats overlay for one trace. [load] runs on the IO dispatcher and returns the
+    // flattened points plus the per-point timestamps (null for plans, which have none); a load or
+    // computation failure is a data-read error the user must not miss, so it raises the blocking
+    // error dialog (see CLAUDE.md "Message surfaces") instead of a snackbar.
+    fun openStats(
+        name: String,
+        isTrack: Boolean,
+        load: suspend () -> Pair<List<LatLong>, List<Long>?>,
+    ) {
+        statsRequestId += 1
+        val requestId = statsRequestId
+        statsTarget = StatsTarget(name, isTrack)
+        statsData = null
+        scope.launch {
+            try {
+                val stats =
+                    withContext(Dispatchers.IO) {
+                        val (points, timesMs) = load()
+                        // DEM lookups run inside compute; absent DEM leaves the elevation-derived
+                        // fields null and the screen shows "-" / a no-data profile placeholder.
+                        val lookup: ((Double, Double) -> Float?)? =
+                            demElevation?.let { dem -> { lat, lon -> dem.elevationAt(lat, lon) } }
+                        TraceStatsCalculator.compute(points, timesMs, lookup)
+                    }
+                if (statsRequestId == requestId && statsTarget != null) statsData = stats
+            } catch (e: Exception) {
+                if (statsRequestId == requestId) {
+                    statsTarget = null
+                    storageErrorMessage = "統計計算失敗: ${e.message}"
+                }
+            }
         }
     }
 
@@ -1697,6 +1748,13 @@ private fun MapScreen(
                                         requestStartRecording(continuationSource = file)
                                     }
                                 },
+                                onStats = {
+                                    historyTrack?.let { track ->
+                                        openStats(track.name, isTrack = true) {
+                                            track.polyline to track.points.map { it.timeMs }
+                                        }
+                                    }
+                                },
                                 onExport =
                                     historyTrackFile?.let { file ->
                                         historyTrack?.let { track ->
@@ -1773,6 +1831,11 @@ private fun MapScreen(
                                     mode = PlanMode.ROUTE_EDIT
                                 }
                             },
+                            onStats = {
+                                displayedRoute?.let { route ->
+                                    openStats(route.name, isTrack = false) { route.polyline to null }
+                                }
+                            },
                             onExport =
                                 displayedRouteFile?.let { file ->
                                     displayedRoute?.let { route ->
@@ -1786,6 +1849,23 @@ private fun MapScreen(
                         )
                 }
             }
+        }
+
+        // Stats overlay: drawn last inside the map Box so it covers the map, banners, and controls
+        // (its opaque Surface also swallows touches). Back and 關閉 both just clear the state; the
+        // underlying mode (route view / history view) is untouched, so closing lands back where the
+        // user came from.
+        statsTarget?.let { target ->
+            StatsScreen(
+                name = target.name,
+                isTrack = target.isTrack,
+                stats = statsData,
+                onClose = {
+                    statsTarget = null
+                    statsData = null
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 
@@ -1993,6 +2073,14 @@ private fun MapScreen(
                     }
                 }
             },
+            onStats = { summary ->
+                // The stats overlay cannot show above this dialog window, so close the list first;
+                // reading the trace file needs the same storage access as loading it.
+                loadList = null
+                withStorageAccess {
+                    openStats(summary.name, isTrack = false) { routeStore.load(summary.file).polyline to null }
+                }
+            },
             onRename = { renameTarget = it },
             onExport = { summary ->
                 exportTarget = GpxExportTarget(summary.file, summary.name, isTrack = false)
@@ -2098,6 +2186,17 @@ private fun MapScreen(
                         }
                     } catch (e: Exception) {
                         storageErrorMessage = "載入軌跡失敗: ${e.message}"
+                    }
+                }
+            },
+            onStats = { summary ->
+                // Same shape as the route list: close the dialog (the overlay cannot cover it) and
+                // read the trace under storage access.
+                loadTrackList = null
+                withStorageAccess {
+                    openStats(summary.name, isTrack = true) {
+                        val track = trackStore.load(summary.file)
+                        track.polyline to track.points.map { it.timeMs }
                     }
                 }
             },

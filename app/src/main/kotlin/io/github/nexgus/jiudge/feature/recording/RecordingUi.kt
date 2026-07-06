@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -93,15 +92,16 @@ fun PausedBottomBar(
 
 /**
  * Bottom action bar for the history-track viewing sub-mode: continue recording on top of the loaded
- * track, export it as GPX, or leave the sub-mode (the track stays on the map until the user
- * explicitly clears it). The pills share a min-width so they read as a symmetric row regardless of
- * CJK character count - width is set to comfortably fit "繼續錄製" (the widest label), and the
- * others stretch up to match. [onExport] is null when the viewed track has no backing file (e.g. it
- * was just deleted from the load picker) - the pill is omitted rather than disabled.
+ * track, open the stats screen, export it as GPX, or leave the sub-mode (the track stays on the map
+ * until the user explicitly clears it). The pills size naturally (the earlier shared 110 dp
+ * min-width no longer fits four pills on narrow screens). [onExport] is null when the viewed track
+ * has no backing file (e.g. it was just deleted from the load picker) - the pill is omitted rather
+ * than disabled. 統計 works on the in-memory track, so it needs no backing file and always shows.
  */
 @Composable
 fun HistoryTrackViewControls(
     onContinue: () -> Unit,
+    onStats: () -> Unit,
     onExport: (() -> Unit)?,
     onLeave: () -> Unit,
     modifier: Modifier = Modifier,
@@ -111,12 +111,12 @@ fun HistoryTrackViewControls(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val pillModifier = Modifier.widthIn(min = 110.dp)
-        MapPill(text = "繼續錄製", onClick = onContinue, primary = true, modifier = pillModifier)
+        MapPill(text = "繼續錄製", onClick = onContinue, primary = true)
+        MapPill(text = "統計", onClick = onStats)
         if (onExport != null) {
-            MapPill(text = "匯出 GPX", onClick = onExport, modifier = pillModifier)
+            MapPill(text = "匯出 GPX", onClick = onExport)
         }
-        MapPill(text = "離開", onClick = onLeave, modifier = pillModifier)
+        MapPill(text = "離開", onClick = onLeave)
     }
 }
 
@@ -222,6 +222,7 @@ private fun formatDistance(meters: Double): String =
 fun LoadTrackDialog(
     summaries: List<TrackStore.Summary>,
     onPick: (TrackStore.Summary) -> Unit,
+    onStats: (TrackStore.Summary) -> Unit,
     onRename: (TrackStore.Summary) -> Unit,
     onExport: (TrackStore.Summary) -> Unit,
     onDelete: (TrackStore.Summary) -> Unit,
@@ -254,6 +255,7 @@ fun LoadTrackDialog(
                                     )
                                 }
                                 TrackRowMenu(
+                                    onStats = { onStats(s) },
                                     onRename = { onRename(s) },
                                     onExport = { onExport(s) },
                                     onDelete = { onDelete(s) },
@@ -270,9 +272,10 @@ fun LoadTrackDialog(
     )
 }
 
-/** Per-row "更多" overflow menu offering rename, GPX export, and delete for a saved track. */
+/** Per-row "更多" overflow menu offering stats, rename, GPX export, and delete for a saved track. */
 @Composable
 private fun TrackRowMenu(
+    onStats: () -> Unit,
     onRename: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
@@ -281,6 +284,13 @@ private fun TrackRowMenu(
     Box {
         TextButton(onClick = { expanded = true }) { Text("更多") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("統計") },
+                onClick = {
+                    expanded = false
+                    onStats()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("改名") },
                 onClick = {

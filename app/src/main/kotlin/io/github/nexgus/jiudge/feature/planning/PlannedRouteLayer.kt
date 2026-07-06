@@ -1,6 +1,7 @@
 package io.github.nexgus.jiudge.feature.planning
 
 import io.github.nexgus.jiudge.core.elevation.DemElevation
+import io.github.nexgus.jiudge.core.elevation.SlopeScale
 import io.github.nexgus.jiudge.data.route.joinRouteSegments
 import org.mapsforge.core.graphics.Align
 import org.mapsforge.core.graphics.Canvas
@@ -557,16 +558,9 @@ class PlannedRouteLayer(
         slopeDeg: FloatArray?,
         meters: Double,
     ): Int {
-        if (slopeDeg == null || slopeDeg.isEmpty()) return GENTLE_COLOR
+        if (slopeDeg == null || slopeDeg.isEmpty()) return SlopeScale.GENTLE_COLOR
         val idx = (meters / SAMPLE_SPACING_M).roundToInt().coerceIn(0, slopeDeg.size - 1)
-        val s = slopeDeg[idx]
-        return when {
-            s >= STEEP_DEG -> STEEP_UP_COLOR
-            s >= MODERATE_DEG -> MODERATE_UP_COLOR
-            s > -MODERATE_DEG -> GENTLE_COLOR
-            s > -STEEP_DEG -> MODERATE_DOWN_COLOR
-            else -> STEEP_DOWN_COLOR
-        }
+        return SlopeScale.colorFor(slopeDeg[idx])
     }
 
     /** Per-vertex cumulative ground distance in metres. */
@@ -727,12 +721,8 @@ class PlannedRouteLayer(
         }
 
     private companion object {
-        // Five slope classes (signed grade along travel): warm uphill, cool downhill, grey gentle.
-        val STEEP_UP_COLOR = 0xFFC62828.toInt() // red, >= STEEP_DEG up
-        val MODERATE_UP_COLOR = 0xFFF57C00.toInt() // orange
-        val GENTLE_COLOR = 0xFF9CCC65.toInt() // light green, |slope| < MODERATE_DEG (also the no-DEM fallback)
-        val MODERATE_DOWN_COLOR = 0xFF29B6F6.toInt() // cyan
-        val STEEP_DOWN_COLOR = 0xFF1565C0.toInt() // blue, >= STEEP_DEG down
+        // Slope classes and colours are the shared SlopeScale (also used by the stats profile chart).
+        val GENTLE_COLOR = SlopeScale.GENTLE_COLOR // the no-DEM fallback line colour
 
         val HALO_COLOR = 0xFFFFFFFF.toInt() // white outline for waypoints (legibility over varied terrain)
 
@@ -747,11 +737,8 @@ class PlannedRouteLayer(
         val END_COLOR = 0xFFD32F2F.toInt() // red
         val MID_COLOR = 0xFFFB8C00.toInt() // orange via-points
 
-        const val MODERATE_DEG = 4f // >= moderate grade (gentle/green band is -4..+4 deg)
-        const val STEEP_DEG = 16f // >= steep grade (hiking convention; user's "feels steep" 30 deg sits deep in here)
-
-        // DEM sampling step for slope: ~30 m matches the 30 m DEM and smooths per-point noise.
-        const val SAMPLE_SPACING_M = 30.0
+        // DEM sampling step for slope, from the shared scale (~30 m matches the 30 m DEM).
+        const val SAMPLE_SPACING_M = SlopeScale.SAMPLE_SPACING_M
 
         // Continuous slope-coloured track line. Width = LINE_WIDTH_DP * density * lineScaleForZoom.
         const val LINE_WIDTH_DP = 5f

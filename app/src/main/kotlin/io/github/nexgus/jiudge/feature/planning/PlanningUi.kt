@@ -194,20 +194,23 @@ fun SearchTargetControls(
 }
 
 /**
- * Route-view mode controls: re-enter editing, export the viewed route as GPX, or leave to map-view
- * (the route stays on the map). Editing is where "+"/"-"/儲存 live. [onExport] is null when the
- * viewed route has no backing file (e.g. it was just deleted from the load picker) - the pill is
- * omitted rather than disabled.
+ * Route-view mode controls: re-enter editing, open the stats screen, export the viewed route as
+ * GPX, or leave to map-view (the route stays on the map). Editing is where "+"/"-"/儲存 live.
+ * [onExport] is null when the viewed route has no backing file (e.g. it was just deleted from the
+ * load picker) - the pill is omitted rather than disabled. 統計 works on the in-memory route, so it
+ * needs no backing file and always shows.
  */
 @Composable
 fun RouteViewControls(
     onEdit: () -> Unit,
+    onStats: () -> Unit,
     onExport: (() -> Unit)?,
     onLeave: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         MapPill("編輯", onEdit, primary = true)
+        MapPill("統計", onStats)
         if (onExport != null) {
             MapPill("匯出 GPX", onExport)
         }
@@ -322,6 +325,7 @@ private fun formatDistance(meters: Double): String =
 fun LoadRouteDialog(
     summaries: List<io.github.nexgus.jiudge.data.route.RouteStore.Summary>,
     onPick: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
+    onStats: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
     onRename: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
     onExport: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
     onDelete: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
@@ -354,6 +358,7 @@ fun LoadRouteDialog(
                                     )
                                 }
                                 RouteRowMenu(
+                                    onStats = { onStats(s) },
                                     onRename = { onRename(s) },
                                     onExport = { onExport(s) },
                                     onDelete = { onDelete(s) },
@@ -370,9 +375,10 @@ fun LoadRouteDialog(
     )
 }
 
-/** Per-row "更多" overflow menu offering rename, GPX export, and delete for a saved route. */
+/** Per-row "更多" overflow menu offering stats, rename, GPX export, and delete for a saved route. */
 @Composable
 private fun RouteRowMenu(
+    onStats: () -> Unit,
     onRename: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
@@ -381,6 +387,13 @@ private fun RouteRowMenu(
     Box {
         TextButton(onClick = { expanded = true }) { Text("更多") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("統計") },
+                onClick = {
+                    expanded = false
+                    onStats()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("改名") },
                 onClick = {
