@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +43,11 @@ import java.util.concurrent.TimeUnit
  *
  * `stats == null` renders only a loading spinner under the top bar (docs contract: stats are
  * computed off the UI thread and may not be ready yet when the screen first appears).
+ *
+ * [onExportPng], when non-null, drives the "匯出 PNG" top-bar action (D4, docs/stats.md): the caller
+ * (MainActivity) owns the SAF picker flow and does the actual render+write off the main thread, this
+ * screen only shows the button and defers to the callback. The button itself is only shown when the
+ * profile has drawable data, mirroring [ElevationProfileChart]'s own no-data fallback.
  */
 @Composable
 fun StatsScreen(
@@ -49,9 +55,12 @@ fun StatsScreen(
     isTrack: Boolean,
     stats: TraceStats?,
     onClose: () -> Unit,
+    onExportPng: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onClose)
+
+    val hasChartData = stats != null && stats.profile.any { it.elevationM != null }
 
     // Opaque surface: this screen is shown on top of the map and must not let map content or
     // touches bleed through.
@@ -74,6 +83,11 @@ fun StatsScreen(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (onExportPng != null && hasChartData) {
+                    IconButton(onClick = onExportPng) {
+                        Icon(imageVector = Icons.Filled.SaveAlt, contentDescription = "匯出 PNG")
+                    }
+                }
                 IconButton(onClick = onClose) {
                     Icon(imageVector = Icons.Filled.Close, contentDescription = "關閉統計")
                 }

@@ -38,7 +38,8 @@ object TraceStatsCalculator {
     ): TraceStats {
         val cumulative = cumulativeMeters(points)
         val total = cumulative.lastOrNull() ?: 0.0
-        val profile = buildProfile(points, cumulative, total, elevationAt)
+        val validTimes = if (timesMs != null && timesMs.size == points.size) timesMs else null
+        val profile = buildProfile(points, cumulative, total, elevationAt, validTimes)
         val (ascent, descent) = ascentDescent(profile)
         val (minEle, maxEle) = minMaxElevation(profile)
         val time = computeTime(points, timesMs, total)
@@ -74,6 +75,7 @@ object TraceStatsCalculator {
         cumulative: DoubleArray,
         total: Double,
         elevationAt: ((Double, Double) -> Float?)?,
+        timesMs: List<Long>?,
     ): List<TraceStats.ProfileSample> {
         if (points.size < 2 || total < SlopeScale.SAMPLE_SPACING_M || elevationAt == null) return emptyList()
 
@@ -82,17 +84,20 @@ object TraceStatsCalculator {
         val sampleCount = n + 1 + if (hasExtraEnd) 1 else 0
         val distances = DoubleArray(sampleCount)
         val rawElevations = arrayOfNulls<Float>(sampleCount)
+        val epochs = arrayOfNulls<Long>(sampleCount)
 
         for (k in 0..n) {
             val d = k * SlopeScale.SAMPLE_SPACING_M
             val point = interpolateAlong(points, cumulative, d)
             distances[k] = d
             rawElevations[k] = elevationAt(point.latitude, point.longitude)
+            epochs[k] = timesMs?.let { interpolateEpoch(cumulative, it, d) }
         }
         if (hasExtraEnd) {
             val point = interpolateAlong(points, cumulative, total)
             distances[n + 1] = total
             rawElevations[n + 1] = elevationAt(point.latitude, point.longitude)
+            epochs[n + 1] = timesMs?.let { interpolateEpoch(cumulative, it, total) }
         }
 
         // Hold gaps forward then backward, matching PlannedRouteLayer.sampleSlopes, so every sample
@@ -124,6 +129,7 @@ object TraceStatsCalculator {
                 distanceM = distances[k],
                 elevationM = rawElevations[k],
                 slopeDeg = slopes[k],
+                epochMs = epochs[k],
             )
         }
     }
@@ -144,6 +150,29 @@ object TraceStatsCalculator {
         val a = points[i - 1]
         val b = points[i]
         return LatLong(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t)
+    }
+
+    /**
+     * Wall-clock time at cumulative ground distance [meters] along the track, linearly interpolated
+     * against [timesMs] using the same segment lookup as [interpolateAlong] (find the segment where
+     * `cumulative[i-1] <= meters <= cumulative[i]`, interpolate the two timestamps by the same
+     * fraction). [timesMs] must already be validated as same-length as the source points.
+     */
+    private fun interpolateEpoch(
+        cumulative: DoubleArray,
+        timesMs: List<Long>,
+        meters: Double,
+    ): Long {
+        if (meters <= 0.0) return timesMs.first()
+        if (meters >= cumulative.last()) return timesMs.last()
+        var i = 1
+        while (i < cumulative.size && cumulative[i] < meters) i++
+        val segStart = cumulative[i - 1]
+        val segLen = cumulative[i] - segStart
+        val t = if (segLen > 0.0) (meters - segStart) / segLen else 0.0
+        val a = timesMs[i - 1]
+        val b = timesMs[i]
+        return a + ((b - a) * t).toLong()
     }
 
     /**

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -68,11 +69,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -164,6 +167,8 @@ import io.github.nexgus.jiudge.feature.recording.RenameTrackDialog
 import io.github.nexgus.jiudge.feature.recording.SaveTrackDialog
 import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
 import io.github.nexgus.jiudge.feature.stats.StatsScreen
+import io.github.nexgus.jiudge.feature.stats.rememberChartColors
+import io.github.nexgus.jiudge.feature.stats.renderProfileChartBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -195,6 +200,9 @@ private fun importDraftFile(context: Context): File = File(context.cacheDir, "im
 
 /** Suggested file name handed to the SAF create-document picker ('/' would read as a path). */
 private fun gpxSuggestedName(name: String): String = "${name.replace('/', '-')}.gpx"
+
+/** Suggested file name for the stats-chart PNG export (D4, docs/stats.md), same sanitisation as GPX. */
+private fun pngSuggestedName(name: String): String = "${name.replace('/', '-')}.png"
 
 /** The trace whose stats screen is open: display name plus whether it is a recorded track. */
 private data class StatsTarget(
@@ -407,6 +415,13 @@ private fun MapScreen(
     // Screen pixels per dp; fed to the zoom-aware route/location overlays so their markers stay a
     // constant physical size across screens.
     val density = LocalDensity.current.density
+
+    // Resolved once on the main thread (needs a composition-bound FontFamily.Resolver) and reused
+    // by the stats-chart PNG export (D4): the actual render + PNG compression still happens off the
+    // main thread in pngExportLauncher, only these lightweight lookups need to run here.
+    val chartTextMeasurer = rememberTextMeasurer()
+    val chartColors = rememberChartColors()
+    val chartDensity = LocalDensity.current
 
     // DEM elevation source for route slope colouring (trace_spec.md §8). Null when the DEM folder is
     // absent, in which case the route renders without slope colour (grey) rather than failing.
@@ -702,6 +717,60 @@ private fun MapScreen(
             }
         }
     }
+
+    // Stats-chart PNG export (D4, docs/stats.md): the trace name awaiting export, held from the
+    // picker launch until the SAF callback fires. Not saveable - unlike GPX export this never
+    // touches Documents/Jiudge (the profile is already in memory), so there is nothing worth
+    // recovering across an activity recreation; a lost target after rotation simply requires
+    // re-tapping 匯出 PNG.
+    var pngExportName by remember { mutableStateOf<String?>(null) }
+    val pngExportLauncher =
+        rememberLauncherForActivityResult(
+            object : ActivityResultContracts.CreateDocument("image/png") {
+                override fun createIntent(
+                    context: Context,
+                    input: String,
+                ): Intent =
+                    super.createIntent(context, input).putExtra(
+                        DocumentsContract.EXTRA_INITIAL_URI,
+                        Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload"),
+                    )
+            },
+        ) { uri ->
+            val name = pngExportName
+            pngExportName = null
+            val profile = statsData?.profile
+            if (uri == null) {
+                // User cancelled the picker - silent (D4).
+                return@rememberLauncherForActivityResult
+            }
+            if (name == null || profile == null) {
+                runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                storageErrorMessage = "匯出失敗: 匯出目標已遺失, 請重新操作"
+                return@rememberLauncherForActivityResult
+            }
+            scope.launch {
+                try {
+                    withContext(Dispatchers.Default) {
+                        val bitmap =
+                            renderProfileChartBitmap(
+                                profile = profile,
+                                colors = chartColors,
+                                textMeasurer = chartTextMeasurer,
+                                title = name,
+                                density = chartDensity,
+                            )
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            bitmap.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, out)
+                        } ?: error("cannot open the destination file")
+                    }
+                    snackbarHostState.showSnackbar("已匯出 \"$name\"")
+                } catch (e: Exception) {
+                    runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                    storageErrorMessage = "匯出失敗: ${e.message}"
+                }
+            }
+        }
 
     // GPX import: the system document picker hands back a one-off content URI (reading it needs no
     // storage permission - only the later save into Documents/Jiudge does). Parsing and Douglas-
@@ -1863,6 +1932,10 @@ private fun MapScreen(
                 onClose = {
                     statsTarget = null
                     statsData = null
+                },
+                onExportPng = {
+                    pngExportName = target.name
+                    pngExportLauncher.launch(pngSuggestedName(target.name))
                 },
                 modifier = Modifier.fillMaxSize(),
             )

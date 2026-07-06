@@ -35,6 +35,13 @@ data class TraceStats(
         val elevationM: Float?,
         /** Signed slope (deg, + uphill) around this sample, 0 where elevation is unavailable. */
         val slopeDeg: Float,
+        /**
+         * Wall-clock time at this sample, linearly interpolated from the source points' timestamps
+         * against cumulative distance (same segment lookup as the geometry interpolation). Null for
+         * planned routes (no timestamps) or whenever the source timestamps are absent/mismatched in
+         * length - same validity condition as [TraceStats.TimeStats].
+         */
+        val epochMs: Long?,
     )
 
     /** Time-derived statistics for a recorded track. Speeds are in metres per second. */

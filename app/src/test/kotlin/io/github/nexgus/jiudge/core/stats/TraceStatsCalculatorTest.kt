@@ -136,6 +136,54 @@ class TraceStatsCalculatorTest {
     }
 
     @Test
+    fun `profile samples interpolate epochMs from point timestamps by cumulative distance`() {
+        // 3km line, elevation irrelevant here (constant so profile is non-empty); 2 points 100s apart.
+        val start = 24.0
+        val end = 24.027
+        val points = listOf(LatLong(start, 121.0), LatLong(end, 121.0))
+        val t0 = 1_000_000L
+        val t1 = t0 + 100_000L
+        val timesMs = listOf(t0, t1)
+
+        val stats = TraceStatsCalculator.compute(points, timesMs) { _, _ -> 1000f }
+
+        assertTrue(stats.profile.size >= 2)
+        // Exact ends.
+        assertEquals(t0, stats.profile.first().epochMs)
+        assertEquals(t1, stats.profile.last().epochMs)
+        // A mid-segment sample's epoch should land strictly between the two endpoints and track its
+        // fractional distance along the line.
+        val mid = stats.profile[stats.profile.size / 2]
+        val expectedFraction = mid.distanceM / stats.distanceM
+        val expectedEpoch = t0 + (expectedFraction * (t1 - t0)).toLong()
+        assertTrue(
+            "epoch ${mid.epochMs} not close to expected $expectedEpoch",
+            kotlin.math.abs((mid.epochMs ?: 0L) - expectedEpoch) <= 1000L,
+        )
+        assertTrue((mid.epochMs ?: 0L) in t0..t1)
+    }
+
+    @Test
+    fun `profile samples have null epochMs when timesMs absent`() {
+        val points = listOf(LatLong(24.0, 121.0), LatLong(24.027, 121.0))
+
+        val stats = TraceStatsCalculator.compute(points, timesMs = null) { _, _ -> 1000f }
+
+        assertTrue(stats.profile.isNotEmpty())
+        assertTrue(stats.profile.all { it.epochMs == null })
+    }
+
+    @Test
+    fun `profile samples have null epochMs when timesMs length mismatches points`() {
+        val points = listOf(LatLong(24.0, 121.0), LatLong(24.027, 121.0))
+
+        val stats = TraceStatsCalculator.compute(points, timesMs = listOf(1L, 2L, 3L)) { _, _ -> 1000f }
+
+        assertTrue(stats.profile.isNotEmpty())
+        assertTrue(stats.profile.all { it.epochMs == null })
+    }
+
+    @Test
     fun `fewer than 2 points yields zeroed empty stats`() {
         val empty = TraceStatsCalculator.compute(emptyList(), timesMs = null, elevationAt = null)
         val one = TraceStatsCalculator.compute(listOf(LatLong(24.0, 121.0)), timesMs = null, elevationAt = null)
