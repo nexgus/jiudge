@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
@@ -359,47 +360,52 @@ fun drawProfileChart(
             yM += yStepM
         }
 
-        // Filled area under the curve, drawn per contiguous (non-null) run so gaps stay unfilled.
-        var runStart = -1
-        for (i in profile.indices) {
-            val has = profile[i].elevationM != null
-            if (has && runStart == -1) {
-                runStart = i
-            }
-            val runEnds = !has || i == profile.lastIndex
-            if (runEnds && runStart != -1) {
-                val end = if (has) i else i - 1
-                if (end > runStart) {
-                    val path =
-                        Path().apply {
-                            moveTo(layout.xForDistance(profile[runStart].distanceM), layout.plotBottom)
-                            for (j in runStart..end) {
-                                lineTo(layout.xForDistance(profile[j].distanceM), layout.yForElevation(profile[j].elevationM!!))
-                            }
-                            lineTo(layout.xForDistance(profile[end].distanceM), layout.plotBottom)
-                            close()
-                        }
-                    drawPath(path, color = colors.fill)
+        // The curve always iterates the FULL profile while the layout maps only the visible range:
+        // when zoomed in, off-range samples extrapolate past the plot rectangle on both axes (Y
+        // auto-fits visible samples only), so the curve must be clipped to the plot area.
+        clipRect(layout.plotLeft, layout.plotTop, layout.plotRight, layout.plotBottom) {
+            // Filled area under the curve, drawn per contiguous (non-null) run so gaps stay unfilled.
+            var runStart = -1
+            for (i in profile.indices) {
+                val has = profile[i].elevationM != null
+                if (has && runStart == -1) {
+                    runStart = i
                 }
-                runStart = -1
+                val runEnds = !has || i == profile.lastIndex
+                if (runEnds && runStart != -1) {
+                    val end = if (has) i else i - 1
+                    if (end > runStart) {
+                        val path =
+                            Path().apply {
+                                moveTo(layout.xForDistance(profile[runStart].distanceM), layout.plotBottom)
+                                for (j in runStart..end) {
+                                    lineTo(layout.xForDistance(profile[j].distanceM), layout.yForElevation(profile[j].elevationM!!))
+                                }
+                                lineTo(layout.xForDistance(profile[end].distanceM), layout.plotBottom)
+                                close()
+                            }
+                        drawPath(path, color = colors.fill)
+                    }
+                    runStart = -1
+                }
             }
-        }
 
-        // Slope-coloured polyline, one segment per consecutive sample pair (gap on null elevation).
-        val strokeWidth = 2.dp.toPx()
-        for (i in 0 until profile.lastIndex) {
-            val a = profile[i]
-            val b = profile[i + 1]
-            val ae = a.elevationM
-            val be = b.elevationM
-            if (ae == null || be == null) continue
-            drawLine(
-                color = Color(SlopeScale.colorFor(b.slopeDeg)),
-                start = Offset(layout.xForDistance(a.distanceM), layout.yForElevation(ae)),
-                end = Offset(layout.xForDistance(b.distanceM), layout.yForElevation(be)),
-                strokeWidth = strokeWidth,
-                cap = StrokeCap.Round,
-            )
+            // Slope-coloured polyline, one segment per consecutive sample pair (gap on null elevation).
+            val strokeWidth = 2.dp.toPx()
+            for (i in 0 until profile.lastIndex) {
+                val a = profile[i]
+                val b = profile[i + 1]
+                val ae = a.elevationM
+                val be = b.elevationM
+                if (ae == null || be == null) continue
+                drawLine(
+                    color = Color(SlopeScale.colorFor(b.slopeDeg)),
+                    start = Offset(layout.xForDistance(a.distanceM), layout.yForElevation(ae)),
+                    end = Offset(layout.xForDistance(b.distanceM), layout.yForElevation(be)),
+                    strokeWidth = strokeWidth,
+                    cap = StrokeCap.Round,
+                )
+            }
         }
     }
 }

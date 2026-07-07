@@ -234,11 +234,21 @@ private data class GpxExportTarget(
 class MainActivity : ComponentActivity() {
     private var mapView: MapView? = null
 
+    // A .gpx handed over by another app (the manifest's ACTION_VIEW filters), parked here until the
+    // map screen is composed and runs the import-as-plan flow on it. Compose state so a URI that
+    // arrives while the download screen is still up is picked up as soon as the map appears.
+    private var pendingGpxUri by mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Only on a genuinely fresh launch: a recreation (process death restore) redelivers the same
         // intent, and replaying the pause then would be wrong - the user may have resumed since.
-        if (savedInstanceState == null) handleRecordingIntent(intent)
+        // Same for a .gpx hand-over: the import dialog state is itself saveable, so replaying the
+        // parse would stomp the staged draft the restored dialog still points at.
+        if (savedInstanceState == null) {
+            handleRecordingIntent(intent)
+            handleGpxViewIntent(intent)
+        }
         // Keep the screen from timing out while actively recording (RECORDING only - PAUSED and
         // IDLE restore the normal timeout). The flag freezes the idle countdown; the power button
         // still turns the screen off, after which the foreground service + PARTIAL_WAKE_LOCK keep
@@ -276,6 +286,13 @@ class MainActivity : ComponentActivity() {
                                 downloadState is DownloadState.Failed ||
                                 !requiredReady
                         if (showDownload) {
+                            // A .gpx arriving before the map data is ready stays parked; tell the
+                            // user once why nothing visibly happened to their tap.
+                            LaunchedEffect(pendingGpxUri) {
+                                if (pendingGpxUri != null) {
+                                    snackbarHostState.showSnackbar("圖資就緒後將開始匯入 GPX")
+                                }
+                            }
                             DownloadScreen(
                                 state = downloadState,
                                 totalBytes = catalog.totalDownloadBytes,
@@ -315,6 +332,8 @@ class MainActivity : ComponentActivity() {
                                         MapUpdate.reset()
                                         mapEpoch++
                                     },
+                                    externalGpxUri = pendingGpxUri,
+                                    onExternalGpxConsumed = { pendingGpxUri = null },
                                     modifier =
                                         Modifier
                                             .fillMaxSize()
@@ -345,6 +364,18 @@ class MainActivity : ComponentActivity() {
         // launch intent's (possibly stale) action.
         setIntent(intent)
         handleRecordingIntent(intent)
+        handleGpxViewIntent(intent)
+    }
+
+    /**
+     * A VIEW intent from the manifest's .gpx filters. Only the URI is parked; parsing waits for the
+     * map screen (the import flow's dialogs and error surfaces all live there). The read grant on a
+     * VIEW content URI lasts until this task finishes, so deferring the open is safe.
+     */
+    private fun handleGpxViewIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW) {
+            intent.data?.let { pendingGpxUri = it }
+        }
     }
 
     /**
@@ -407,6 +438,8 @@ private fun MapScreen(
     onMapReleased: (MapView) -> Unit,
     initialCamera: MapPosition?,
     onApplyUpdate: () -> Unit,
+    externalGpxUri: Uri?,
+    onExternalGpxConsumed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -772,60 +805,77 @@ private fun MapScreen(
             }
         }
 
-    // GPX import: the system document picker hands back a one-off content URI (reading it needs no
-    // storage permission - only the later save into Documents/Jiudge does). Parsing and Douglas-
-    // Peucker simplification run off the main thread; the parsed geometry is staged on disk in
-    // [importDraftFile] and only the prefilled name parks in importDraftName, whose naming dialog
-    // drives the save - so an activity recreation under the dialog costs nothing. Parse failures
-    // and empty files are data-level errors the user must not miss, so they raise the blocking
-    // error dialog (see CLAUDE.md "Message surfaces").
-    val gpxPickerLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri == null) return@rememberLauncherForActivityResult
-            scope.launch {
-                try {
-                    // Null signals a file with no usable segment - reported below as an error.
-                    val prefill =
-                        withContext(Dispatchers.IO) {
-                            val parsed =
-                                context.contentResolver.openInputStream(uri)?.use { GpxImporter.parse(it) }
-                                    ?: throw GpxParseException("cannot open the selected file")
-                            val segments = parsed.segments.map { simplifyPolyline(it, GPX_SIMPLIFY_TOLERANCE_M) }
-                            if (segments.isEmpty()) return@withContext null
-                            // Prefer the name embedded in the file; fall back to the display name
-                            // (file name without extension) the picker's provider reports. Purely
-                            // best-effort: a provider that ignores the projection, omits the column,
-                            // or throws must only cost the prefill, never fail the import.
-                            val fallbackName =
-                                runCatching {
-                                    context.contentResolver
-                                        .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-                                        ?.use { cursor ->
-                                            val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                            if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
-                                        }
-                                }.getOrNull()
-                                    ?.substringBeforeLast('.')
-                                    ?.trim()
-                            val name =
-                                parsed.name
-                                    ?.trim()
-                                    .orEmpty()
-                                    .ifEmpty { fallbackName.orEmpty() }
-                            val draft = PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), segments)
-                            Trace.write(importDraftFile(context), draft.header(), draft.toRecords())
-                            name
-                        }
-                    if (prefill == null) {
-                        storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
-                    } else {
-                        importDraftName = prefill
+    // GPX import: a one-off content URI from the system document picker or from another app's
+    // ACTION_VIEW hand-over (reading it needs no storage permission - only the later save into
+    // Documents/Jiudge does). Parsing and Douglas-Peucker simplification run off the main thread;
+    // the parsed geometry is staged on disk in [importDraftFile] and only the prefilled name parks
+    // in importDraftName, whose naming dialog drives the save - so an activity recreation under
+    // the dialog costs nothing. Parse failures and empty files are data-level errors the user must
+    // not miss, so they raise the blocking error dialog (see CLAUDE.md "Message surfaces").
+    fun importGpxAsPlan(uri: Uri) {
+        scope.launch {
+            try {
+                // Null signals a file with no usable segment - reported below as an error.
+                val prefill =
+                    withContext(Dispatchers.IO) {
+                        val parsed =
+                            context.contentResolver.openInputStream(uri)?.use { GpxImporter.parse(it) }
+                                ?: throw GpxParseException("cannot open the selected file")
+                        val segments = parsed.segments.map { simplifyPolyline(it, GPX_SIMPLIFY_TOLERANCE_M) }
+                        if (segments.isEmpty()) return@withContext null
+                        // Prefer the name embedded in the file; fall back to the display name
+                        // (file name without extension) the provider reports. Purely best-effort:
+                        // a provider that ignores the projection, omits the column, or throws must
+                        // only cost the prefill, never fail the import.
+                        val fallbackName =
+                            runCatching {
+                                context.contentResolver
+                                    .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                                    ?.use { cursor ->
+                                        val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                        if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                                    }
+                            }.getOrNull()
+                                ?.substringBeforeLast('.')
+                                ?.trim()
+                        val name =
+                            parsed.name
+                                ?.trim()
+                                .orEmpty()
+                                .ifEmpty { fallbackName.orEmpty() }
+                        val draft = PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), segments)
+                        Trace.write(importDraftFile(context), draft.header(), draft.toRecords())
+                        name
                     }
-                } catch (e: Exception) {
-                    storageErrorMessage = "匯入失敗: ${e.message}"
+                if (prefill == null) {
+                    storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
+                } else {
+                    importDraftName = prefill
                 }
+            } catch (e: Exception) {
+                storageErrorMessage = "匯入失敗: ${e.message}"
             }
         }
+    }
+
+    val gpxPickerLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) importGpxAsPlan(uri)
+        }
+
+    // A .gpx opened from another app: same import flow as the in-app picker. Refused while a route
+    // edit is in progress - the naming dialog's confirm clears the planner and switches to
+    // ROUTE_VIEW, which would discard the unsaved edit. Consumed (cleared) up front so a
+    // recomposition cannot replay the parse.
+    LaunchedEffect(externalGpxUri) {
+        val uri = externalGpxUri ?: return@LaunchedEffect
+        onExternalGpxConsumed()
+        if (mode == PlanMode.ROUTE_EDIT) {
+            snackbarHostState.showSnackbar("路徑編輯中, 無法匯入 GPX; 請先儲存或離開編輯")
+        } else {
+            importGpxAsPlan(uri)
+        }
+    }
 
     // GPX export: saves through the SAF "create document" picker rather than writing straight into
     // Documents/Jiudge, since the export destination is the user's choice (Downloads, a synced

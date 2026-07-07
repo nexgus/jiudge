@@ -84,7 +84,8 @@
 - GPX 軌跡匯入為規劃路徑 (`data/route/GpxImporter` SAX 解析, `core/geo/PolylineSimplify`
   Douglas-Peucker 抽稀): 規劃入口對話框的 "匯入 GPX 軌跡" 經系統檔案挑選器匯入, 存為一般
   規劃路徑; 匯入段標記 `origin:"import"`, 編輯時 "-" 對其停用 (見 docs/trace_spec.md §5.2,
-  docs/ui.md)
+  docs/ui.md); `.gpx` 已在 manifest 註冊 `ACTION_VIEW` (MainActivity 為 `singleTask`),
+  自其他 App 點開 `.gpx` 亦走同一匯入流程
 - GPX 匯出 (`data/route/GpxExporter` 串流輸出 GPX 1.1): 已存規劃路徑與軌跡的清單列 "更多"
   選單, 以及路徑檢視 / 軌跡檢視模式的動作列, 皆提供 "匯出 GPX", 經 SAF
   `ACTION_CREATE_DOCUMENT` 存檔 (預設下載目錄, 使用者可另選); `<ele>` 一律由 DEM 取得

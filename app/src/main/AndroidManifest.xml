@@ -48,14 +48,50 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Jiudge">
+        <!-- singleTask: opening a .gpx from another app (the VIEW filters below) must route into
+             the already-running instance via onNewIntent. The default standard mode would spawn a
+             second MainActivity inside the caller's task - a second MapView plus a second claim on
+             the process-wide GpsSource lease. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:theme="@style/Theme.Jiudge">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Opening a .gpx from a file manager / mail / chat app lands here and runs the
+                 import-as-plan flow (see MainActivity.handleGpxViewIntent). GPX has no reliably
+                 reported MIME type in the wild - providers commonly hand out
+                 application/octet-stream or a generic XML type - so two filters: this one matches
+                 the proper GPX MIME types regardless of file name... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/gpx+xml" />
+                <data android:mimeType="application/gpx" />
+            </intent-filter>
+            <!-- ...and this one matches any MIME type whose URI path ends in .gpx. Best-effort by
+                 nature: pathPattern's ".*" will not cross a later literal, so multi-dot names need
+                 their own patterns, and some providers expose opaque document ids with no file name
+                 in the path at all - those are only caught by the MIME filter above. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.gpx" />
+                <data android:pathPattern=".*\\..*\\.gpx" />
+                <data android:pathPattern=".*\\..*\\..*\\.gpx" />
+                <data android:pathPattern=".*\\.GPX" />
+                <data android:pathPattern=".*\\..*\\.GPX" />
+                <data android:pathPattern=".*\\..*\\..*\\.GPX" />
             </intent-filter>
         </activity>
 
