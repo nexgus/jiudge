@@ -236,7 +236,9 @@ fun rememberChartColors(): ChartColors {
  * Pixel-space layout for one chart draw: the visible distance/elevation range and the plot
  * rectangle within the canvas. Y auto-fits the elevation of the samples visible in
  * `[minDistanceM, maxDistanceM]` (docs/stats.md), expanding a degenerate range below 50 m so the
- * chart keeps a visible vertical extent.
+ * chart keeps a visible vertical extent, and expanding it further (upward) whenever the vertical
+ * exaggeration would exceed [MAX_VERTICAL_EXAGGERATION] - long flat traces would otherwise be
+ * drawn as walls.
  */
 data class ChartLayout(
     val minDistanceM: Double,
@@ -251,6 +253,14 @@ data class ChartLayout(
     val plotWidth: Float get() = (plotRight - plotLeft).coerceAtLeast(1f)
     val plotHeight: Float get() = (plotBottom - plotTop).coerceAtLeast(1f)
 
+    /** Vertical exaggeration of this layout: vertical px-per-metre over horizontal px-per-metre. */
+    val verticalExaggeration: Float
+        get() {
+            val yPxPerM = plotHeight / (maxEle - minEle).coerceAtLeast(1e-6f)
+            val xPxPerM = plotWidth / (maxDistanceM - minDistanceM).coerceAtLeast(1e-6).toFloat()
+            return yPxPerM / xPxPerM
+        }
+
     fun xForDistance(distanceM: Double): Float {
         val span = (maxDistanceM - minDistanceM).coerceAtLeast(1e-6)
         return plotLeft + ((distanceM - minDistanceM) / span).toFloat() * plotWidth
@@ -262,6 +272,14 @@ data class ChartLayout(
     }
 
     companion object {
+        /**
+         * Upper bound on [verticalExaggeration]. Profile charts are inherently exaggerated (a
+         * true-scale hiking profile is a near-horizontal line), but without a bound a long flat
+         * trace stretched over a tall plot reads as a row of spikes. Typical mountain routes stay
+         * well below this bound and are unaffected; only long low-relief traces get flattened.
+         */
+        const val MAX_VERTICAL_EXAGGERATION = 25f
+
         fun compute(
             canvasSize: Size,
             minDistanceM: Double,
@@ -286,6 +304,15 @@ data class ChartLayout(
             val rightPad = with(density) { rightPadDp.dp.toPx() }
             val bottomPad = with(density) { bottomPadDp.dp.toPx() }
             val topPad = with(density) { topPadDp.dp.toPx() }
+            // Enforce the exaggeration cap by growing the elevation range upward only: the curve
+            // stays seated on the X axis and gains headroom, instead of floating mid-plot.
+            val plotW = (canvasSize.width - leftPad - rightPad).coerceAtLeast(1f)
+            val plotH = (canvasSize.height - topPad - bottomPad).coerceAtLeast(1f)
+            val distSpanM = (maxDistanceM - minDistanceM).coerceAtLeast(1e-6)
+            val minEleRange = (plotH * distSpanM / (plotW * MAX_VERTICAL_EXAGGERATION)).toFloat()
+            if (maxEle - minEle < minEleRange) {
+                maxEle = minEle + minEleRange
+            }
             return ChartLayout(
                 minDistanceM = minDistanceM,
                 maxDistanceM = max(maxDistanceM, minDistanceM + 1e-6),
@@ -391,7 +418,7 @@ fun drawProfileChart(
             }
 
             // Slope-coloured polyline, one segment per consecutive sample pair (gap on null elevation).
-            val strokeWidth = 2.dp.toPx()
+            val strokeWidth = 3.dp.toPx()
             for (i in 0 until profile.lastIndex) {
                 val a = profile[i]
                 val b = profile[i + 1]

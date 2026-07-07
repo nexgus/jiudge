@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -115,18 +115,19 @@ fun StatsScreen(
                         )
                     }
                 } else {
-                    // The grid wraps its content up to half the screen (scrolling past that), and
-                    // the chart takes all remaining height - a planned route's short grid must not
-                    // squeeze the chart to a fixed fraction.
-                    val gridMaxHeight = (configuration.screenHeightDp * 0.5f).dp
+                    // The chart keeps a wide-short aspect ratio instead of filling the remaining
+                    // height: a tall portrait plot pushes the vertical exaggeration of long flat
+                    // traces to absurd levels (docs/stats.md §7). The grid takes the rest,
+                    // scrolling when the track item set does not fit.
+                    val chartHeight = (configuration.screenWidthDp * 0.6f).coerceAtMost(configuration.screenHeightDp * 0.5f).dp
                     Column(modifier = Modifier.fillMaxSize()) {
                         ElevationProfileChart(
                             profile = stats.profile,
-                            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
+                            modifier = Modifier.fillMaxWidth().height(chartHeight).padding(8.dp),
                         )
                         StatsDataGrid(
                             items = items,
-                            modifier = Modifier.fillMaxWidth().heightIn(max = gridMaxHeight),
+                            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                         )
                     }
                 }
