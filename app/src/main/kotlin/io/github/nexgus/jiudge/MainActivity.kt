@@ -881,9 +881,16 @@ private fun MapScreen(
     // Documents/Jiudge, since the export destination is the user's choice (Downloads, a synced
     // folder, etc.), not our own fixed storage. The custom contract only adds an initial-location
     // hint pointing the picker at Downloads - vendor pickers are free to ignore it.
+    //
+    // The MIME is octet-stream, not the semantically correct application/gpx+xml, because a
+    // DocumentsProvider resolving a name clash calls FileUtils.splitFileName(), which only treats
+    // ".gpx" as an extension when the MIME it maps to matches the declared one. MimeTypeMap knows
+    // no gpx entry, so it maps to octet-stream: declaring gpx+xml makes the two disagree, the whole
+    // "name.gpx" is taken as the base name, and the copy lands as "name.gpx (1)" - which no other
+    // app then recognises as GPX. Agreeing on octet-stream yields "name (1).gpx".
     val gpxExportLauncher =
         rememberLauncherForActivityResult(
-            object : ActivityResultContracts.CreateDocument("application/gpx+xml") {
+            object : ActivityResultContracts.CreateDocument("application/octet-stream") {
                 override fun createIntent(
                     context: Context,
                     input: String,
@@ -2076,7 +2083,7 @@ private fun MapScreen(
                             // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
                             planner?.clear()
                             viewer?.show(route)
-                            map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints })
+                            map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
                             displayedRoute = route
                             displayedRouteFile = savedFile
                             mode = PlanMode.ROUTE_VIEW
@@ -2187,7 +2194,7 @@ private fun MapScreen(
                         planner?.clear()
                         viewer?.show(route)
                         // Frame the whole trace on file load (only here - not on save/cancel).
-                        map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints })
+                        map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
                         displayedRoute = route
                         displayedRouteFile = summary.file
                         mode = PlanMode.ROUTE_VIEW

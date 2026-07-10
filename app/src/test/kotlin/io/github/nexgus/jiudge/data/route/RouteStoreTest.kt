@@ -32,7 +32,7 @@ class RouteStoreTest {
         return PlannedRoute(
             name = name,
             createdAtEpochMs = createdAtEpochMs,
-            waypoints = listOf(a, b),
+            waypoints = listOf(PlannedRoute.Waypoint(a), PlannedRoute.Waypoint(b)),
             segments = listOf(PlannedRoute.Segment(points = listOf(a, b))),
         )
     }

@@ -12,6 +12,11 @@ class PlannedRouteTest {
     private val b = LatLong(24.2, 121.2)
     private val c = LatLong(24.3, 121.3)
 
+    private fun wpt(
+        point: LatLong,
+        name: String? = null,
+    ): PlannedRoute.Waypoint = PlannedRoute.Waypoint(point, name)
+
     private fun roundTrip(route: PlannedRoute): PlannedRoute = PlannedRoute.fromTrace(Trace.Parsed(route.header(), route.toRecords()))
 
     @Test
@@ -20,7 +25,7 @@ class PlannedRouteTest {
             PlannedRoute(
                 name = "mixed",
                 createdAtEpochMs = 123L,
-                waypoints = listOf(a, b, c),
+                waypoints = listOf(wpt(a), wpt(b), wpt(c)),
                 segments =
                     listOf(
                         PlannedRoute.Segment(points = listOf(a, b), imported = true),
@@ -41,7 +46,7 @@ class PlannedRouteTest {
             PlannedRoute(
                 name = "r",
                 createdAtEpochMs = 1L,
-                waypoints = listOf(a, b, c),
+                waypoints = listOf(wpt(a), wpt(b), wpt(c)),
                 segments =
                     listOf(
                         PlannedRoute.Segment(points = listOf(a, b), imported = true),
@@ -87,9 +92,44 @@ class PlannedRouteTest {
                 createdAtEpochMs = 9L,
                 segments = listOf(listOf(a, b), listOf(b, c)),
             )
-        assertEquals(listOf(a, b, c), route.waypoints)
+        assertEquals(listOf(wpt(a), wpt(b), wpt(c)), route.waypoints)
         assertTrue(route.segments.all { it.imported })
         assertEquals(listOf(a, b, c), route.polyline)
+    }
+
+    @Test
+    fun `waypoint name round-trips and is omitted from the record when absent`() {
+        val route =
+            PlannedRoute(
+                name = "named",
+                createdAtEpochMs = 1L,
+                waypoints = listOf(wpt(a, "登山口"), wpt(b)),
+                segments = listOf(PlannedRoute.Segment(points = listOf(a, b))),
+            )
+        val wptRecords = route.toRecords().filter { it.optString("k") == "wpt" }
+        assertEquals("登山口", wptRecords[0].getString("name"))
+        assertFalse(wptRecords[1].has("name"))
+
+        val loaded = roundTrip(route)
+        assertEquals(listOf(wpt(a, "登山口"), wpt(b)), loaded.waypoints)
+    }
+
+    @Test
+    fun `blank waypoint name reads back as null`() {
+        val header = TraceHeader(type = Trace.TYPE_PLAN, name = "r", createdAtEpochMs = 1L)
+        val records =
+            listOf(
+                JSONObject("""{"k":"wpt","i":0,"lat":24.1,"lon":121.1,"name":"   "}"""),
+                JSONObject("""{"k":"wpt","i":1,"lat":24.2,"lon":121.2}"""),
+            )
+        val loaded = PlannedRoute.fromTrace(Trace.Parsed(header, records))
+        assertTrue(loaded.waypoints.all { it.name == null })
+    }
+
+    @Test
+    fun `fromImportedSegments leaves boundary waypoints unnamed`() {
+        val route = PlannedRoute.fromImportedSegments("gpx", 9L, listOf(listOf(a, b)))
+        assertTrue(route.waypoints.all { it.name == null })
     }
 
     @Test

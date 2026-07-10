@@ -32,12 +32,17 @@ class GpxExporterTest {
     }
 
     @Test
-    fun `plan export yields correct wpt count, single rte, and rtept sequence equal to polyline`() {
+    fun `plan export yields only named wpt, single rte, and rtept sequence equal to polyline`() {
         val route =
             PlannedRoute(
                 name = "Test Route",
                 createdAtEpochMs = 1687123456789,
-                waypoints = listOf(LatLong(24.0, 121.0), LatLong(24.2, 121.2), LatLong(24.4, 121.4)),
+                waypoints =
+                    listOf(
+                        PlannedRoute.Waypoint(LatLong(24.0, 121.0)),
+                        PlannedRoute.Waypoint(LatLong(24.2, 121.2), name = "三角點"),
+                        PlannedRoute.Waypoint(LatLong(24.4, 121.4)),
+                    ),
                 segments =
                     listOf(
                         PlannedRoute.Segment(points = listOf(LatLong(24.0, 121.0), LatLong(24.1, 121.1), LatLong(24.2, 121.2))),
@@ -47,8 +52,9 @@ class GpxExporterTest {
 
         val xml = exportRoute(route)
 
-        // 3 waypoints.
-        assertEquals(3, Regex("<wpt ").findAll(xml).count())
+        // Only the one named waypoint becomes a <wpt>; the two unnamed routing control points do not.
+        assertEquals(1, Regex("<wpt ").findAll(xml).count())
+        assertTrue(xml.contains("<name>三角點</name>"))
         // Single <rte>.
         assertEquals(1, Regex("<rte>").findAll(xml).count())
         // rtept sequence equals the joined polyline (junction point de-duplicated): 5 points.
@@ -78,6 +84,64 @@ class GpxExporterTest {
 
         assertTrue(!xml.contains("<rte>"))
         assertTrue(!xml.contains("<wpt "))
+    }
+
+    @Test
+    fun `plan export omits wpt entirely when no waypoint is named`() {
+        val route =
+            PlannedRoute(
+                name = "Unnamed",
+                createdAtEpochMs = 1687123456789,
+                waypoints =
+                    listOf(
+                        PlannedRoute.Waypoint(LatLong(24.0, 121.0)),
+                        PlannedRoute.Waypoint(LatLong(24.2, 121.2)),
+                    ),
+                segments =
+                    listOf(
+                        PlannedRoute.Segment(points = listOf(LatLong(24.0, 121.0), LatLong(24.2, 121.2))),
+                    ),
+            )
+
+        val xml = exportRoute(route)
+
+        assertTrue(!xml.contains("<wpt "))
+        assertTrue(xml.contains("<rte>"))
+    }
+
+    @Test
+    fun `named wpt writes ele before name, per the GPX 1_1 wptType child order`() {
+        val route =
+            PlannedRoute(
+                name = "Ordered",
+                createdAtEpochMs = 1687123456789,
+                waypoints = listOf(PlannedRoute.Waypoint(LatLong(24.0, 121.0), name = "登山口")),
+                segments = emptyList(),
+            )
+
+        // A DEM that always resolves, so the <wpt> carries both children.
+        val xml = exportRoute(route) { _, _ -> 1234.5f }
+
+        val wpt = Regex("""<wpt .*?</wpt>""", RegexOption.DOT_MATCHES_ALL).find(xml)!!.value
+        assertTrue(wpt.indexOf("<ele>") < wpt.indexOf("<name>"))
+        assertTrue(wpt.contains("<ele>1234.5</ele>"))
+        assertTrue(wpt.contains("<name>登山口</name>"))
+    }
+
+    @Test
+    fun `waypoint name is xml-escaped`() {
+        val route =
+            PlannedRoute(
+                name = "Escaping",
+                createdAtEpochMs = 1687123456789,
+                waypoints = listOf(PlannedRoute.Waypoint(LatLong(24.0, 121.0), name = "A & B <x>")),
+                segments = emptyList(),
+            )
+
+        val xml = exportRoute(route)
+
+        assertTrue(xml.contains("<name>A &amp; B &lt;x&gt;</name>"))
+        assertTrue(!xml.contains("A & B <x>"))
     }
 
     @Test
@@ -181,7 +245,11 @@ class GpxExporterTest {
             PlannedRoute(
                 name = "Round Trip Route",
                 createdAtEpochMs = 1687123456789,
-                waypoints = listOf(LatLong(24.0, 121.0), LatLong(24.2, 121.2)),
+                waypoints =
+                    listOf(
+                        PlannedRoute.Waypoint(LatLong(24.0, 121.0)),
+                        PlannedRoute.Waypoint(LatLong(24.2, 121.2)),
+                    ),
                 segments =
                     listOf(
                         PlannedRoute.Segment(points = listOf(LatLong(24.0, 121.0), LatLong(24.1, 121.1), LatLong(24.2, 121.2))),

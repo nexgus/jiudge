@@ -225,11 +225,15 @@ polyline 由讀取端按需衍生.
 | Trace | GPX |
 |---|---|
 | `type:"plan"` 的 `seg` 幾何 | `<rte>` / `<rtept>` (或攤平為單一 route) |
-| `type:"plan"` 的 `wpt` | `<wpt>` (獨立航點) |
+| `type:"plan"` 的 `wpt` (**僅具名者**) | `<wpt>` (獨立航點), 含 `<name>` |
 | `type:"track"` 的 `pt` | `<trk>` / `<trkseg>` / `<trkpt>`, 含 `<ele>` 與 `<time>` |
 
 `pt` 的 `t` 轉為 GPX `<trkpt>` 的 `<time>` (ISO 8601 UTC); `<trkpt>` 的 `<ele>` 由 DEM 以
 (lat, lon) 取得, 不採 `pt.ele` (見 §8 高度與坡度).
+
+沒有 `name` 的 `wpt` 不匯出. GPX 的 `<wpt>` 語意是"景點", 渲染 `<wpt>` 的 App (蛙弟,
+OruxMaps) 會替無名者套上預設標籤, 因此把每個路由控制點都匯出去, 只會讓路線埋在一堆匿名圖釘
+底下. 路線形狀由 `<rte>` 承載, 落點本身也留在 trace 檔中, 不因此遺失.
 
 ### 其他格式
 

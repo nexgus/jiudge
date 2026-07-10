@@ -8,7 +8,6 @@ import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.mapsforge.core.model.LatLong
 import org.mapsforge.map.android.view.MapView
 
 /**
@@ -29,8 +28,10 @@ class RoutePlanner(
     private val dem: DemElevation?,
     private val toughDetector: ToughPathDetector? = null,
 ) {
-    private val _waypoints = mutableStateListOf<LatLong>()
-    val waypoints: List<LatLong> get() = _waypoints
+    // Waypoints rather than bare LatLongs: a plan loaded for editing carries each point's optional
+    // name (spec §5.1), and re-saving must not silently drop it.
+    private val _waypoints = mutableStateListOf<PlannedRoute.Waypoint>()
+    val waypoints: List<PlannedRoute.Waypoint> get() = _waypoints
 
     // segments[i] is the geometry from waypoint[i] to waypoint[i+1]. Snapshot state (like the
     // waypoints) so the bottom bar's "-" enablement recomposes off canRemoveLast. The whole overlay
@@ -67,11 +68,11 @@ class RoutePlanner(
     suspend fun addWaypointAtCenter(): String? {
         val center = mapView.model.mapViewPosition.center
         if (_waypoints.isEmpty()) {
-            _waypoints.add(center)
+            _waypoints.add(PlannedRoute.Waypoint(center))
             pushOverlay()
             return null
         }
-        val from = _waypoints.last()
+        val from = _waypoints.last().point
         val path =
             try {
                 withContext(Dispatchers.Default) {
@@ -89,10 +90,10 @@ class RoutePlanner(
         // geometry, so only the new endpoint snaps (the tiny gap to the snapped route start is
         // bridged by the flattened polyline).
         if (!lastSegmentImported) {
-            _waypoints[_waypoints.lastIndex] = path.first()
+            _waypoints[_waypoints.lastIndex] = _waypoints.last().copy(point = path.first())
         }
         segments.add(PlannedRoute.Segment(path))
-        _waypoints.add(path.last())
+        _waypoints.add(PlannedRoute.Waypoint(path.last()))
         pushOverlay()
         return null
     }
@@ -123,7 +124,7 @@ class RoutePlanner(
         _waypoints.addAll(route.waypoints)
         segments.addAll(route.segments)
         pushOverlay()
-        route.waypoints.firstOrNull()?.let { mapView.model.mapViewPosition.center = it }
+        route.waypoints.firstOrNull()?.let { mapView.model.mapViewPosition.center = it.point }
     }
 
     /** Removes the overlay layer and resets state. */
@@ -142,7 +143,7 @@ class RoutePlanner(
                 layer = it
                 mapView.layerManager.layers.add(it)
             }
-        overlay.update(_waypoints.toList(), segments.map { it.points })
+        overlay.update(_waypoints.map { it.point }, segments.map { it.points })
         mapView.layerManager.redrawLayers()
     }
 }

@@ -19,9 +19,20 @@ import org.mapsforge.core.util.LatLongUtils
 data class PlannedRoute(
     val name: String,
     val createdAtEpochMs: Long,
-    val waypoints: List<LatLong>,
+    val waypoints: List<Waypoint>,
     val segments: List<Segment>,
 ) {
+    /**
+     * One user-placed point. [name] is the optional label from the trace file's `wpt.name` field
+     * (spec §5.1), normalised so that a missing or blank name is null rather than "". Only named
+     * waypoints are exported as GPX `<wpt>` elements (see [GpxExporter]) - an unnamed one is a mere
+     * routing control point, and emitting it would litter the map of any app that renders `<wpt>`.
+     */
+    data class Waypoint(
+        val point: LatLong,
+        val name: String? = null,
+    )
+
     /**
      * One leg of the plan. [imported] marks geometry carried in from an external GPX file rather
      * than routed by BRouter: the editor refuses to "-"-delete such a leg (it cannot be recomputed),
@@ -49,13 +60,14 @@ data class PlannedRoute(
     /** This plan's record lines: all `wpt` records, then all `seg` records, each ordered by `i`. */
     fun toRecords(): List<JSONObject> {
         val records = mutableListOf<JSONObject>()
-        waypoints.forEachIndexed { i, point ->
+        waypoints.forEachIndexed { i, waypoint ->
             records +=
                 JSONObject().apply {
                     put("k", "wpt")
                     put("i", i)
-                    put("lat", Trace.coord(point.latitude))
-                    put("lon", Trace.coord(point.longitude))
+                    put("lat", Trace.coord(waypoint.point.latitude))
+                    put("lon", Trace.coord(waypoint.point.longitude))
+                    waypoint.name?.let { put("name", it) }
                 }
         }
         segments.forEachIndexed { i, segment ->
@@ -83,7 +95,12 @@ data class PlannedRoute(
                     parsed.records
                         .filter { it.optString("k") == "wpt" }
                         .sortedBy { it.getInt("i") }
-                        .map { LatLong(it.getDouble("lat"), it.getDouble("lon")) },
+                        .map {
+                            Waypoint(
+                                point = LatLong(it.getDouble("lat"), it.getDouble("lon")),
+                                name = it.optString("name").trim().ifEmpty { null },
+                            )
+                        },
                 segments =
                     parsed.records
                         .filter { it.optString("k") == "seg" }
@@ -103,7 +120,8 @@ data class PlannedRoute(
          * Builds a plan around geometry imported from an external GPX file: the waypoints are the
          * segment boundary points (first segment's start, each segment's end) and every segment is
          * flagged [Segment.imported]. [segments] must contain no empty segment (the GPX parser drops
-         * those).
+         * those). The boundary points are unnamed - they are artefacts of how the file's segments
+         * were cut, not places the user chose to label.
          */
         fun fromImportedSegments(
             name: String,
@@ -117,7 +135,7 @@ data class PlannedRoute(
                     if (segments.isEmpty()) {
                         emptyList()
                     } else {
-                        listOf(segments.first().first()) + segments.map { it.last() }
+                        (listOf(segments.first().first()) + segments.map { it.last() }).map { Waypoint(it) }
                     },
                 segments = segments.map { Segment(points = it, imported = true) },
             )

@@ -23,8 +23,13 @@ object GpxExporter {
     private const val GPX_NAMESPACE = "http://www.topografix.com/GPX/1/1"
 
     /**
-     * Writes [route] as GPX 1.1: `<metadata>`, then one `<wpt>` per [PlannedRoute.waypoints], then
-     * a single `<rte>` whose `<rtept>` sequence is [PlannedRoute.polyline] (spec §11).
+     * Writes [route] as GPX 1.1: `<metadata>`, then one `<wpt>` per *named* waypoint, then a single
+     * `<rte>` whose `<rtept>` sequence is [PlannedRoute.polyline] (spec §11).
+     *
+     * Unnamed waypoints are deliberately omitted. A GPX `<wpt>` means a point of interest, and apps
+     * that render them (Wadi, OruxMaps) label an unnamed one with a placeholder - so exporting every
+     * routing control point buries the route under anonymous pins. The route's shape is carried by
+     * `<rte>` regardless, and the waypoints stay in the trace file, so nothing is lost.
      *
      * Writes to [out] via a buffered UTF-8 [Writer] and calls [Writer.flush] at the end, but does
      * **not** close [out] - the caller owns the stream's lifecycle (typically via `use`).
@@ -38,7 +43,8 @@ object GpxExporter {
         writeHeader(writer)
         writeMetadata(writer, route.name, route.createdAtEpochMs)
         for (waypoint in route.waypoints) {
-            writePoint(writer, "wpt", waypoint, elevationAt)
+            val label = waypoint.name ?: continue
+            writePoint(writer, "wpt", waypoint.point, elevationAt, label = label)
         }
         if (route.polyline.isNotEmpty()) {
             writer.append("  <rte>\n")
@@ -100,13 +106,18 @@ object GpxExporter {
         writer.append("  </metadata>\n")
     }
 
-    /** Writes a `<wpt>` or `<rtept>` element: an `<ele>` child if a DEM elevation is available. */
+    /**
+     * Writes a `<wpt>` or `<rtept>` element, with an `<ele>` child if a DEM elevation is available
+     * and a `<name>` child if [label] is given. GPX 1.1's `wptType` fixes the child order, so `<ele>`
+     * must precede `<name>`.
+     */
     private fun writePoint(
         writer: Writer,
         tag: String,
         point: LatLong,
         elevationAt: ((Double, Double) -> Float?)?,
         indent: String = "  ",
+        label: String? = null,
     ) {
         val lat = Trace.coord(point.latitude)
         val lon = Trace.coord(point.longitude)
@@ -120,21 +131,30 @@ object GpxExporter {
             .append("\" lon=\"")
             .append(lon.toString())
             .append("\"")
-        if (ele == null) {
+        if (ele == null && label == null) {
             writer.append(" />\n")
-        } else {
-            writer.append(">\n")
+            return
+        }
+        writer.append(">\n")
+        if (ele != null) {
             writer
                 .append(indent)
                 .append("  <ele>")
                 .append(String.format(Locale.US, "%.1f", ele))
                 .append("</ele>\n")
+        }
+        if (label != null) {
             writer
                 .append(indent)
-                .append("</")
-                .append(tag)
-                .append(">\n")
+                .append("  <name>")
+                .append(escape(label))
+                .append("</name>\n")
         }
+        writer
+            .append(indent)
+            .append("</")
+            .append(tag)
+            .append(">\n")
     }
 
     /** Writes a `<trkpt>` element: optional `<ele>` first, then the mandatory `<time>`. */

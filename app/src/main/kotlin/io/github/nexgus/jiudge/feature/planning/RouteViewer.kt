@@ -24,7 +24,7 @@ class RouteViewer(
                 layer = it
                 mapView.layerManager.layers.add(it)
             }
-        overlay.update(route.waypoints, route.segments.map { it.points })
+        overlay.update(route.waypoints.map { it.point }, route.segments.map { it.points })
         mapView.layerManager.redrawLayers()
     }
 
