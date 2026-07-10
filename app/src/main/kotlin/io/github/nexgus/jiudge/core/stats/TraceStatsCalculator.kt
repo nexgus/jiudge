@@ -40,13 +40,15 @@ object TraceStatsCalculator {
         val total = cumulative.lastOrNull() ?: 0.0
         val validTimes = if (timesMs != null && timesMs.size == points.size) timesMs else null
         val profile = buildProfile(points, cumulative, total, elevationAt, validTimes)
-        val (ascent, descent) = ascentDescent(profile)
+        val totals = ascentDescent(profile)
         val (minEle, maxEle) = minMaxElevation(profile)
         val time = computeTime(points, timesMs, total)
         return TraceStats(
             distanceM = total,
-            ascentM = ascent,
-            descentM = descent,
+            ascentM = totals.ascentM,
+            descentM = totals.descentM,
+            ascentDistanceM = totals.ascentDistanceM,
+            descentDistanceM = totals.descentDistanceM,
             minElevationM = minEle,
             maxElevationM = maxEle,
             profile = profile,
@@ -175,32 +177,50 @@ object TraceStatsCalculator {
         return a + ((b - a) * t).toLong()
     }
 
+    /** Elevation totals from the hysteresis pass; all fields null when there is not enough DEM data. */
+    private data class ElevationTotals(
+        val ascentM: Double?,
+        val descentM: Double?,
+        val ascentDistanceM: Double?,
+        val descentDistanceM: Double?,
+    )
+
     /**
-     * Cumulative ascent/descent over the profile's valid (non-null) elevations, with a hysteresis
-     * threshold so small oscillations (GPS/DEM noise) below [HYSTERESIS_M] do not accumulate. Both are
-     * null when fewer than 2 samples have a valid elevation.
+     * Cumulative ascent/descent (metres of elevation) and ascending/descending distance (metres along
+     * track) over the profile's valid (non-null) elevations, with a hysteresis threshold so small
+     * oscillations (GPS/DEM noise) below [HYSTERESIS_M] do not accumulate. A confirmed move assigns
+     * the whole stretch since the previous reference sample to that direction, so gentle stretches
+     * that never reach the threshold (and the unconfirmed tail) belong to neither side - the two
+     * distances do not partition the total. All fields are null when fewer than 2 samples have a
+     * valid elevation.
      */
-    private fun ascentDescent(profile: List<TraceStats.ProfileSample>): Pair<Double?, Double?> {
-        val valid = profile.mapNotNull { it.elevationM }
-        if (valid.size < 2) return null to null
+    private fun ascentDescent(profile: List<TraceStats.ProfileSample>): ElevationTotals {
+        val valid = profile.filter { it.elevationM != null }
+        if (valid.size < 2) return ElevationTotals(null, null, null, null)
         var ascent = 0.0
         var descent = 0.0
-        var ref = valid.first().toDouble()
+        var ascentDistance = 0.0
+        var descentDistance = 0.0
+        var refElevation = valid.first().elevationM!!.toDouble()
+        var refDistance = valid.first().distanceM
         for (i in 1 until valid.size) {
-            val e = valid[i].toDouble()
-            val d = e - ref
+            val sample = valid[i]
+            val d = sample.elevationM!!.toDouble() - refElevation
             when {
                 d >= HYSTERESIS_M -> {
                     ascent += d
-                    ref = e
+                    ascentDistance += sample.distanceM - refDistance
                 }
                 d <= -HYSTERESIS_M -> {
                     descent += -d
-                    ref = e
+                    descentDistance += sample.distanceM - refDistance
                 }
+                else -> continue
             }
+            refElevation = sample.elevationM!!.toDouble()
+            refDistance = sample.distanceM
         }
-        return ascent to descent
+        return ElevationTotals(ascent, descent, ascentDistance, descentDistance)
     }
 
     /** Min/max of the profile's valid (non-null) elevations, or null/null when none are valid. */

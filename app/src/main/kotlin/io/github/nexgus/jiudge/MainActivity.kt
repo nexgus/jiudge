@@ -198,6 +198,33 @@ private data class PendingRecordingStart(
  */
 private fun importDraftFile(context: Context): File = File(context.cacheDir, "import_draft.jsonl")
 
+/**
+ * Companion staging slot to [importDraftFile] holding the same GPX import as a track trace (full
+ * fidelity: no simplification, per-point timestamps). Written only when the file is track-eligible
+ * (every point timestamped); the naming dialog's 軌跡 / 規劃路徑 choice decides which draft is read.
+ */
+private fun importTrackDraftFile(context: Context): File = File(context.cacheDir, "import_draft_track.jsonl")
+
+// Import entry points (saveable as plain strings): see `importEntry` in MapScreen.
+private const val IMPORT_ENTRY_PLAN = "plan"
+private const val IMPORT_ENTRY_TRACK = "track"
+private const val IMPORT_ENTRY_EXTERNAL = "external"
+
+/** Off-main-thread result of parsing + staging a picked GPX, consumed by `importGpx`. */
+private sealed interface ImportParseOutcome {
+    /** The file parsed but contains no usable segment. */
+    data object NoPoints : ImportParseOutcome
+
+    /** Entry point requires a track but not every point carries a timestamp. */
+    data object IneligibleTrack : ImportParseOutcome
+
+    /** Drafts staged; [name] prefills the naming dialog, [trackEligible] enables its 軌跡 option. */
+    data class Staged(
+        val name: String,
+        val trackEligible: Boolean,
+    ) : ImportParseOutcome
+}
+
 /** Suggested file name handed to the SAF create-document picker ('/' would read as a path). */
 private fun gpxSuggestedName(name: String): String = "${name.replace('/', '-')}.gpx"
 
@@ -594,6 +621,15 @@ private fun MapScreen(
     // dialog open. Saveable (the draft geometry itself is staged in [importDraftFile]) so the
     // dialog survives rotation and process death instead of forcing a re-import.
     var importDraftName by rememberSaveable { mutableStateOf<String?>(null) }
+    // Whether the staged import is track-eligible (every point timestamped, so a track draft was
+    // also staged in [importTrackDraftFile]); drives the naming dialog's 軌跡 / 規劃路徑 choice.
+    // Saveable for the same reason as importDraftName.
+    var importDraftTrackEligible by rememberSaveable { mutableStateOf(false) }
+    // Which entry point launched the import, set before the picker launches (docs/ui.md): the 錄製
+    // 軌跡 chooser fixes the type to 軌跡 (no choice shown; an ineligible file is a hard error),
+    // the 規劃路徑 chooser defaults the choice to 規劃路徑, an external `.gpx` hand-over defaults
+    // it to 軌跡. Saveable for the same reason as importDraftName.
+    var importEntry by rememberSaveable { mutableStateOf(IMPORT_ENTRY_PLAN) }
     // Save/load failures mean data was not written or cannot be read back - errors the user must
     // not miss - so they raise a blocking dialog instead of a timed snackbar (see CLAUDE.md,
     // "Message surfaces"). Null while no such error is showing.
@@ -808,21 +844,29 @@ private fun MapScreen(
     // GPX import: a one-off content URI from the system document picker or from another app's
     // ACTION_VIEW hand-over (reading it needs no storage permission - only the later save into
     // Documents/Jiudge does). Parsing and Douglas-Peucker simplification run off the main thread;
-    // the parsed geometry is staged on disk in [importDraftFile] and only the prefilled name parks
-    // in importDraftName, whose naming dialog drives the save - so an activity recreation under
-    // the dialog costs nothing. Parse failures and empty files are data-level errors the user must
-    // not miss, so they raise the blocking error dialog (see CLAUDE.md "Message surfaces").
-    fun importGpxAsPlan(uri: Uri) {
+    // the parsed geometry is staged on disk (a plan draft in [importDraftFile], plus a full-fidelity
+    // track draft in [importTrackDraftFile] when every point is timestamped) and only the prefilled
+    // name parks in importDraftName, whose naming dialog drives the save - so an activity recreation
+    // under the dialog costs nothing. Parse failures and empty files are data-level errors the user
+    // must not miss, so they raise the blocking error dialog (see CLAUDE.md "Message surfaces").
+    fun importGpx(uri: Uri) {
         scope.launch {
             try {
-                // Null signals a file with no usable segment - reported below as an error.
-                val prefill =
+                val outcome =
                     withContext(Dispatchers.IO) {
                         val parsed =
                             context.contentResolver.openInputStream(uri)?.use { GpxImporter.parse(it) }
                                 ?: throw GpxParseException("cannot open the selected file")
-                        val segments = parsed.segments.map { simplifyPolyline(it, GPX_SIMPLIFY_TOLERANCE_M) }
-                        if (segments.isEmpty()) return@withContext null
+                        val segments =
+                            parsed.segments.map { seg ->
+                                simplifyPolyline(seg.map { it.latLong }, GPX_SIMPLIFY_TOLERANCE_M)
+                            }
+                        if (segments.isEmpty()) return@withContext ImportParseOutcome.NoPoints
+                        // The 錄製軌跡 entry fixes the type to 軌跡: an ineligible file is a hard
+                        // error before anything is staged, never a silent fallback to a plan.
+                        if (importEntry == IMPORT_ENTRY_TRACK && !parsed.isTrackEligible) {
+                            return@withContext ImportParseOutcome.IneligibleTrack
+                        }
                         // Prefer the name embedded in the file; fall back to the display name
                         // (file name without extension) the provider reports. Purely best-effort:
                         // a provider that ignores the projection, omits the column, or throws must
@@ -845,12 +889,30 @@ private fun MapScreen(
                                 .ifEmpty { fallbackName.orEmpty() }
                         val draft = PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), segments)
                         Trace.write(importDraftFile(context), draft.header(), draft.toRecords())
-                        name
+                        // Track draft: unsimplified flattened points with their timestamps. A stale
+                        // draft from an earlier ineligible import is deleted rather than left to be
+                        // read by mistake.
+                        if (parsed.isTrackEligible) {
+                            val points =
+                                parsed.segments.flatten().map { p ->
+                                    RecordedTrack.Point(p.latitude, p.longitude, requireNotNull(p.timeMs))
+                                }
+                            val trackDraft =
+                                RecordedTrack(name = name, createdAtEpochMs = points.minOf { it.timeMs }, points = points)
+                            Trace.write(importTrackDraftFile(context), trackDraft.header(), trackDraft.toRecords())
+                        } else {
+                            importTrackDraftFile(context).delete()
+                        }
+                        ImportParseOutcome.Staged(name, parsed.isTrackEligible)
                     }
-                if (prefill == null) {
-                    storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
-                } else {
-                    importDraftName = prefill
+                when (outcome) {
+                    is ImportParseOutcome.NoPoints -> storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
+                    is ImportParseOutcome.IneligibleTrack ->
+                        storageErrorMessage = "匯入失敗: 檔內無完整時間資訊, 無法匯入為軌跡"
+                    is ImportParseOutcome.Staged -> {
+                        importDraftName = outcome.name
+                        importDraftTrackEligible = outcome.trackEligible
+                    }
                 }
             } catch (e: Exception) {
                 storageErrorMessage = "匯入失敗: ${e.message}"
@@ -860,7 +922,7 @@ private fun MapScreen(
 
     val gpxPickerLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) importGpxAsPlan(uri)
+            if (uri != null) importGpx(uri)
         }
 
     // A .gpx opened from another app: same import flow as the in-app picker. Refused while a route
@@ -873,7 +935,10 @@ private fun MapScreen(
         if (mode == PlanMode.ROUTE_EDIT) {
             snackbarHostState.showSnackbar("路徑編輯中, 無法匯入 GPX; 請先儲存或離開編輯")
         } else {
-            importGpxAsPlan(uri)
+            // No entry-point context on a hand-over: a fully timestamped GPX is a recording of an
+            // actual walk, so default the naming dialog's choice to 軌跡.
+            importEntry = IMPORT_ENTRY_EXTERNAL
+            importGpx(uri)
         }
     }
 
@@ -2043,6 +2108,7 @@ private fun MapScreen(
             },
             onImport = {
                 showChooser = false
+                importEntry = IMPORT_ENTRY_PLAN
                 // GPX has no reliably registered MIME type (providers commonly report
                 // application/octet-stream), so do not filter - the parser rejects non-GPX content.
                 gpxPickerLauncher.launch(arrayOf("*/*"))
@@ -2052,56 +2118,110 @@ private fun MapScreen(
     }
 
     importDraftName?.let { draftName ->
+        // On confirm the 軌跡 / 規劃路徑 choice picks which staged draft is read: the plan draft
+        // (simplified geometry) or the track draft (full fidelity + timestamps). Both remain staged
+        // across a rejected-duplicate reopen, so retrying under another name re-reads them.
+        fun saveImportedPlan(name: String) {
+            scope.launch {
+                // The staged draft can only vanish if the OS cleared the cache dir while the
+                // naming dialog was open - rare, but report it rather than silently dropping
+                // an explicit 確認.
+                val staged =
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            Trace.read(importDraftFile(context))?.let { PlannedRoute.fromTrace(it) }
+                        }.getOrNull()
+                    }
+                if (staged == null) {
+                    storageErrorMessage = "匯入失敗: 草稿已遺失, 請重新匯入"
+                    return@launch
+                }
+                val route = staged.copy(name = name, createdAtEpochMs = System.currentTimeMillis())
+                try {
+                    val savedFile =
+                        withContext(Dispatchers.IO) {
+                            val file = routeStore.save(route, checkDuplicate = true)
+                            importDraftFile(context).delete()
+                            importTrackDraftFile(context).delete()
+                            file
+                        }
+                    // Mirror the load-saved-route path: show the imported plan in view mode,
+                    // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
+                    planner?.clear()
+                    viewer?.show(route)
+                    map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
+                    displayedRoute = route
+                    displayedRouteFile = savedFile
+                    mode = PlanMode.ROUTE_VIEW
+                    snackbarHostState.showSnackbar("已匯入規劃路徑: $name")
+                } catch (e: DuplicateRouteNameException) {
+                    // Keep the typed name (and the staged file) and reopen so the user can
+                    // rename in place.
+                    importDraftName = name
+                    snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
+                } catch (e: Exception) {
+                    storageErrorMessage = "儲存失敗: ${e.message}"
+                }
+            }
+        }
+
+        fun saveImportedTrack(name: String) {
+            scope.launch {
+                val staged =
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            Trace.read(importTrackDraftFile(context))?.let { RecordedTrack.fromTrace(it) }
+                        }.getOrNull()
+                    }
+                if (staged == null) {
+                    storageErrorMessage = "匯入失敗: 草稿已遺失, 請重新匯入"
+                    return@launch
+                }
+                val track = staged.copy(name = name)
+                try {
+                    val savedFile =
+                        withContext(Dispatchers.IO) {
+                            val file = trackStore.save(track)
+                            importDraftFile(context).delete()
+                            importTrackDraftFile(context).delete()
+                            file
+                        }
+                    // Mirror the load-saved-track path: show the imported track in history view.
+                    historyTrack = track
+                    historyTrackFile = savedFile
+                    viewingHistory = true
+                    if (track.polyline.isNotEmpty()) {
+                        map.value?.fitToRoute(track.polyline)
+                    }
+                    snackbarHostState.showSnackbar("已匯入軌跡: $name")
+                } catch (e: DuplicateTrackNameException) {
+                    importDraftName = name
+                    snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
+                } catch (e: Exception) {
+                    storageErrorMessage = "儲存失敗: ${e.message}"
+                }
+            }
+        }
+
         ImportRouteDialog(
             initialName = draftName,
-            onConfirm = { name ->
+            trackEligible = importDraftTrackEligible,
+            // 錄製軌跡 entry: type fixed to 軌跡, no choice shown (eligibility was enforced at
+            // parse time). External hand-over: choice shown, defaulting to 軌跡.
+            forceTrack = importEntry == IMPORT_ENTRY_TRACK,
+            preferTrack = importEntry == IMPORT_ENTRY_EXTERNAL,
+            onConfirm = { name, asTrack ->
                 importDraftName = null
                 withStorageAccess {
-                    scope.launch {
-                        // The staged draft can only vanish if the OS cleared the cache dir while the
-                        // naming dialog was open - rare, but report it rather than silently dropping
-                        // an explicit 確認.
-                        val staged =
-                            withContext(Dispatchers.IO) {
-                                runCatching {
-                                    Trace.read(importDraftFile(context))?.let { PlannedRoute.fromTrace(it) }
-                                }.getOrNull()
-                            }
-                        if (staged == null) {
-                            storageErrorMessage = "匯入失敗: 草稿已遺失, 請重新匯入"
-                            return@launch
-                        }
-                        val route = staged.copy(name = name, createdAtEpochMs = System.currentTimeMillis())
-                        try {
-                            val savedFile =
-                                withContext(Dispatchers.IO) {
-                                    val file = routeStore.save(route, checkDuplicate = true)
-                                    importDraftFile(context).delete()
-                                    file
-                                }
-                            // Mirror the load-saved-route path: show the imported plan in view mode,
-                            // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
-                            planner?.clear()
-                            viewer?.show(route)
-                            map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
-                            displayedRoute = route
-                            displayedRouteFile = savedFile
-                            mode = PlanMode.ROUTE_VIEW
-                            snackbarHostState.showSnackbar("已匯入規劃路徑: $name")
-                        } catch (e: DuplicateRouteNameException) {
-                            // Keep the typed name (and the staged file) and reopen so the user can
-                            // rename in place.
-                            importDraftName = name
-                            snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
-                        } catch (e: Exception) {
-                            storageErrorMessage = "儲存失敗: ${e.message}"
-                        }
-                    }
+                    if (asTrack) saveImportedTrack(name) else saveImportedPlan(name)
                 }
             },
             onDismiss = {
                 importDraftName = null
-                scope.launch(Dispatchers.IO) { runCatching { importDraftFile(context).delete() } }
+                scope.launch(Dispatchers.IO) {
+                    runCatching { importDraftFile(context).delete() }
+                    runCatching { importTrackDraftFile(context).delete() }
+                }
             },
         )
     }
@@ -2295,6 +2415,12 @@ private fun MapScreen(
                         }
                     }
                 }
+            },
+            onImport = {
+                showRecordEntryChooser = false
+                importEntry = IMPORT_ENTRY_TRACK
+                // Same unfiltered picker as the planning entry (GPX has no reliable MIME type).
+                gpxPickerLauncher.launch(arrayOf("*/*"))
             },
             onCancel = { showRecordEntryChooser = false },
         )

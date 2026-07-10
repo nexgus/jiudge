@@ -81,25 +81,29 @@
   docs/permissions.md) + 錄製中螢幕恆亮; fix gating 規則 (`FixGate`, 定義於 docs/gating.md);
   staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`TrackStore`, 格式見 docs/trace_spec.md);
   已存軌跡的列表 / 載入檢視 / 改名 / 刪除
-- GPX 軌跡匯入為規劃路徑 (`data/route/GpxImporter` SAX 解析, `core/geo/PolylineSimplify`
-  Douglas-Peucker 抽稀): 規劃入口對話框的 "匯入 GPX 軌跡" 經系統檔案挑選器匯入, 存為一般
-  規劃路徑; 匯入段標記 `origin:"import"`, 編輯時 "-" 對其停用 (見 docs/trace_spec.md §5.2,
-  docs/ui.md); `.gpx` 已在 manifest 註冊 `ACTION_VIEW` (MainActivity 為 `singleTask`),
-  自其他 App 點開 `.gpx` 亦走同一匯入流程
+- GPX 軌跡匯入 (`data/route/GpxImporter` SAX 解析, 含逐點 `<time>`): 規劃與錄製兩個入口
+  選單皆有 "匯入 GPX 軌跡", 經系統檔案挑選器匯入; 檔內每點皆有時間戳時命名對話框可選
+  "軌跡 / 規劃路徑" (預設跟隨入口, 詳 docs/ui.md; 軌跡不抽稀, 經 `TrackStore.save` 存入
+  tracks 後進軌跡檢視, 統計含時間 / 速度),
+  否則一律存為規劃路徑 (`core/geo/PolylineSimplify` Douglas-Peucker 抽稀, 匯入段標記
+  `origin:"import"`, 編輯時 "-" 對其停用, 見 docs/trace_spec.md §5.2/§14, docs/ui.md);
+  `.gpx` 已在 manifest 註冊 `ACTION_VIEW` (MainActivity 為 `singleTask`), 自其他 App 點開
+  `.gpx` 亦走同一匯入流程
 - GPX 匯出 (`data/route/GpxExporter` 串流輸出 GPX 1.1): 已存規劃路徑與軌跡的清單列 "更多"
   選單, 以及路徑檢視 / 軌跡檢視模式的動作列, 皆提供 "匯出 GPX", 經 SAF
   `ACTION_CREATE_DOCUMENT` 存檔 (預設下載目錄, 使用者可另選); `<ele>` 一律由 DEM 取得
   (見 docs/trace_spec.md §8/§11/§14, docs/ui.md)
 - 路徑 / 軌跡統計畫面 (`core/stats`, `feature/stats`): 全螢幕 overlay, 直向剖面圖在上 /
-  橫向剖面圖佔左半, 數據格兩欄可捲動; 距離, 時間 / 速度類 (僅軌跡), DEM 爬升 / 海拔
-  (30 m 重取樣 + 10 m 遲滯), 依坡度上色的高程剖面 (與地圖路徑線共用
+  橫向剖面圖佔左半, 數據區依 "距離與高程 / 時間 / 速度" 分組為兩欄細格線卡片 (可捲動,
+  爬升 / 下降帶坡度配色的 ↑ / ↓ 強調); 距離, 時間 / 速度類 (僅軌跡), DEM 爬升 / 海拔 /
+  高低差與上坡 / 下坡里程 (30 m 重取樣 + 10 m 遲滯), 依坡度上色的高程剖面 (與地圖路徑線共用
   `core/elevation/SlopeScale`); 互動剖面圖 (雙指縮放 / 平移, 單指十字游標顯示距離 / 海拔 /
   坡度 / 時間) 與匯出 PNG; 入口: 路徑 / 軌跡檢視動作列 "統計" 與載入清單 "更多"
   選單 (見 docs/stats.md)
 
 **尚未建置 (已知待辦):**
-- 獨立航點的 GPX 匯出; KML 匯出與匯入; "GPX 匯入為軌跡" 與獨立航點匯入
-  (匯入為規劃路徑與 routes/tracks 的 GPX 匯出已完成, 見上)
+- 獨立航點的 GPX 匯出; KML 匯出與匯入; 獨立航點匯入
+  (匯入為規劃路徑 / 軌跡與 routes/tracks 的 GPX 匯出已完成, 見上)
 - 錄製中的即時統計 (距離, 爬升, 時間, 均速) 與即時海拔剖面 (已存軌跡的事後統計已完成, 見上)
 - 規劃時的高程剖面 (儲存後可經統計畫面檢視; 這裡指的是編輯中的即時剖面)
 - 更新檢查機制

@@ -30,8 +30,8 @@ android {
         applicationId = "io.github.nexgus.jiudge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "0.8.0-rc.4"
+        versionCode = 21
+        versionName = "0.9.0-rc.1"
 
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         buildConfigField("boolean", "GIT_DIRTY", "$gitDirty")

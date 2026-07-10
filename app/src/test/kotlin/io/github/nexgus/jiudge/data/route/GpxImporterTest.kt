@@ -273,6 +273,86 @@ class GpxImporterTest {
     }
 
     @Test
+    fun `trkpt time is parsed to epoch millis and enables track eligibility`() {
+        val xml =
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+              <trk>
+                <trkseg>
+                  <trkpt lat="24.0" lon="121.0"><time>2026-07-01T06:29:22Z</time></trkpt>
+                  <trkpt lat="24.1" lon="121.1"><time>2026-07-01T06:29:32Z</time></trkpt>
+                </trkseg>
+              </trk>
+            </gpx>
+            """.trimIndent()
+
+        val result = parse(xml)
+
+        assertEquals(1_782_887_362_000L, result.segments[0][0].timeMs)
+        assertEquals(1_782_887_372_000L, result.segments[0][1].timeMs)
+        assertTrue(result.isTrackEligible)
+    }
+
+    @Test
+    fun `offset and zoneless times are parsed, zoneless read as UTC`() {
+        // +08:00 offset and a naive local time that the GPX schema defines as UTC.
+        assertEquals(1_782_887_362_000L, GpxImporter.parseGpxTime("2026-07-01T14:29:22+08:00"))
+        assertEquals(1_782_887_362_000L, GpxImporter.parseGpxTime("2026-07-01T06:29:22"))
+        // Fractional seconds.
+        assertEquals(1_782_887_362_500L, GpxImporter.parseGpxTime("2026-07-01T06:29:22.500Z"))
+        assertNull(GpxImporter.parseGpxTime("not a time"))
+        assertNull(GpxImporter.parseGpxTime(""))
+    }
+
+    @Test
+    fun `missing time on any point clears track eligibility`() {
+        val xml =
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+              <trk>
+                <trkseg>
+                  <trkpt lat="24.0" lon="121.0"><time>2026-07-01T06:29:22Z</time></trkpt>
+                  <trkpt lat="24.1" lon="121.1"></trkpt>
+                </trkseg>
+              </trk>
+            </gpx>
+            """.trimIndent()
+
+        val result = parse(xml)
+
+        assertEquals(1_782_887_362_000L, result.segments[0][0].timeMs)
+        assertNull(result.segments[0][1].timeMs)
+        assertTrue(!result.isTrackEligible)
+    }
+
+    @Test
+    fun `metadata time does not leak into points`() {
+        val xml =
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+              <metadata>
+                <time>2026-07-01T00:00:00Z</time>
+              </metadata>
+              <trk>
+                <trkseg>
+                  <trkpt lat="24.0" lon="121.0"></trkpt>
+                  <trkpt lat="24.1" lon="121.1"></trkpt>
+                </trkseg>
+              </trk>
+            </gpx>
+            """.trimIndent()
+
+        val result = parse(xml)
+
+        assertNull(result.segments[0][0].timeMs)
+        assertNull(result.segments[0][1].timeMs)
+        assertTrue(!result.isTrackEligible)
+    }
+
+    @Test
     fun `malformed xml throws GpxParseException`() {
         val xml =
             """

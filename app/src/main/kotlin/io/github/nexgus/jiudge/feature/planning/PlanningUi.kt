@@ -23,6 +23,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -242,28 +243,86 @@ fun PlanEntryChooser(
 }
 
 /**
- * Prompts for the route name an imported GPX track is saved under (prefilled with the name found in
- * the file, or the file name). Blank falls back to a default, like [SaveRouteDialog].
+ * Prompts for the name an imported GPX file is saved under (prefilled with the name found in the
+ * file, or the file name). Blank falls back to a default, like [SaveRouteDialog].
+ *
+ * [trackEligible] is true when every point in the file carries a timestamp, making it eligible to
+ * be imported as a recorded track. [forceTrack] is set by the 錄製軌跡 entry: the type is already
+ * implied, so no 軌跡 / 規劃路徑 choice is shown and confirm always reports a track (the caller
+ * guarantees eligibility - an ineligible file errors out before this dialog). Otherwise
+ * [preferTrack] is the entry point's default: true from an external `.gpx` hand-over, false from
+ * the 規劃路徑 chooser. The choice is then shown when the file is eligible OR the user came in
+ * wanting a track - in the latter case an ineligible file shows the 軌跡 option disabled with the
+ * reason, rather than silently importing as a plan. Confirm reports the choice via [onConfirm]'s
+ * second argument (`asTrack`).
  */
 @Composable
 fun ImportRouteDialog(
     initialName: String,
-    onConfirm: (String) -> Unit,
+    trackEligible: Boolean,
+    forceTrack: Boolean,
+    preferTrack: Boolean,
+    onConfirm: (String, Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    RouteNameDialog(
-        title = "匯入 GPX 軌跡",
-        confirmLabel = "匯入",
-        initialName = initialName,
-        onConfirm = onConfirm,
-        onDismiss = onDismiss,
+    var name by remember { mutableStateOf(initialName) }
+    var asTrack by remember { mutableStateOf(forceTrack || (trackEligible && preferTrack)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("匯入 GPX 軌跡") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("名稱") },
+                    singleLine = true,
+                )
+                if (!forceTrack && (trackEligible || preferTrack)) {
+                    Column {
+                        Text("匯入為", style = MaterialTheme.typography.labelMedium)
+                        val trackLabel = if (trackEligible) "軌跡 (保留時間資訊)" else "軌跡 (檔內無完整時間資訊)"
+                        ImportTypeOption(trackLabel, selected = asTrack, enabled = trackEligible) { asTrack = true }
+                        ImportTypeOption("規劃路徑", selected = !asTrack) { asTrack = false }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val fallback = if (asTrack) "未命名軌跡" else "未命名路線"
+                onConfirm(name.trim().ifEmpty { fallback }, asTrack)
+            }) { Text("匯入") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 
+/** One radio row of [ImportRouteDialog]'s 軌跡 / 規劃路徑 choice. */
+@Composable
+private fun ImportTypeOption(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onSelect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onSelect),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onSelect, enabled = enabled)
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /**
- * Shared single-field naming dialog behind [SaveRouteDialog], [RenameRouteDialog] and
- * [ImportRouteDialog]: one text field prefilled with [initialName]; confirming trims the input and
- * falls back to a default name when blank.
+ * Shared single-field naming dialog behind [SaveRouteDialog] and [RenameRouteDialog]: one text
+ * field prefilled with [initialName]; confirming trims the input and falls back to a default name
+ * when blank.
  */
 @Composable
 private fun RouteNameDialog(

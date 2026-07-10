@@ -6,6 +6,10 @@ import org.xml.sax.SAXException
 import org.xml.sax.helpers.DefaultHandler
 import java.io.IOException
 import java.io.InputStream
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import javax.xml.parsers.ParserConfigurationException
 import javax.xml.parsers.SAXParserFactory
 
@@ -25,6 +29,19 @@ class GpxParseException(
  */
 object GpxImporter {
     /**
+     * One parsed track/route point. [timeMs] is the point's `<time>` as Unix epoch millis, or null
+     * when the element is absent or unparseable; `<ele>` is deliberately not carried (trace_spec §8:
+     * elevation always comes from the DEM at use time).
+     */
+    data class Point(
+        val latitude: Double,
+        val longitude: Double,
+        val timeMs: Long? = null,
+    ) {
+        val latLong: LatLong get() = LatLong(latitude, longitude)
+    }
+
+    /**
      * @param name resolved display name, see priority rules in [GpxHandler].
      * @param segments one entry per `<trkseg>` or `<rte>`, in document order; each inner list is
      *   that segment's points in document order. Segments with fewer than 2 usable points are
@@ -32,8 +49,15 @@ object GpxImporter {
      */
     data class Result(
         val name: String?,
-        val segments: List<List<LatLong>>,
-    )
+        val segments: List<List<Point>>,
+    ) {
+        /**
+         * True when the file can be imported as a recorded track: at least 2 points overall and
+         * every point carries a timestamp (`pt.t` is mandatory in the track format, spec §5.3).
+         */
+        val isTrackEligible: Boolean
+            get() = segments.sumOf { it.size } >= 2 && segments.all { seg -> seg.all { it.timeMs != null } }
+    }
 
     fun parse(input: InputStream): Result {
         val factory = SAXParserFactory.newInstance()
@@ -51,6 +75,21 @@ object GpxImporter {
         }
         return Result(name = handler.resolvedName(), segments = handler.segments())
     }
+
+    /**
+     * Parses a GPX `<time>` value (xsd:dateTime) to epoch millis, or null when unparseable. GPX
+     * timestamps are usually UTC ("Z"), but offsets ("+08:00") occur in the wild, and a few writers
+     * omit the zone entirely - the GPX 1.1 schema documents times as UTC, so a naive value is read
+     * as UTC.
+     */
+    internal fun parseGpxTime(text: String): Long? {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return null
+        runCatching { return Instant.parse(trimmed).toEpochMilli() }
+        runCatching { return OffsetDateTime.parse(trimmed).toInstant().toEpochMilli() }
+        runCatching { return LocalDateTime.parse(trimmed).toInstant(ZoneOffset.UTC).toEpochMilli() }
+        return null
+    }
 }
 
 /**
@@ -63,15 +102,18 @@ object GpxImporter {
  */
 private class GpxHandler : DefaultHandler() {
     private val elementStack = ArrayDeque<String>()
-    private val segments = mutableListOf<List<LatLong>>()
+    private val segments = mutableListOf<List<GpxImporter.Point>>()
 
     // Points accumulated for the segment currently open (trkseg or rte).
-    private var currentSegment: MutableList<LatLong>? = null
+    private var currentSegment: MutableList<GpxImporter.Point>? = null
 
-    // Pending lat/lon attributes for the point element currently open (trkpt or rtept).
+    // Pending lat/lon attributes and <time> text for the point element currently open (trkpt or rtept).
     private var pendingLat: Double? = null
     private var pendingLon: Double? = null
     private var insidePoint = false
+    private var capturingPointTime = false
+    private val timeTextBuilder = StringBuilder()
+    private var pendingTimeMs: Long? = null
 
     // Name capture state: which source is currently being read, and whether that source already
     // has a winning name captured (first trk wins; first metadata wins; first gpx-direct wins).
@@ -107,6 +149,15 @@ private class GpxHandler : DefaultHandler() {
                 insidePoint = true
                 pendingLat = attributes?.getValue("lat")?.toDoubleOrNull()
                 pendingLon = attributes?.getValue("lon")?.toDoubleOrNull()
+                pendingTimeMs = null
+            }
+            "time" -> {
+                // Only a point's direct child <time> counts (not e.g. <metadata><time> or an
+                // extension nested deeper inside the point).
+                if (insidePoint && (parent == "trkpt" || parent == "rtept")) {
+                    capturingPointTime = true
+                    timeTextBuilder.setLength(0)
+                }
             }
             "name" -> {
                 if (!insidePoint) {
@@ -132,8 +183,12 @@ private class GpxHandler : DefaultHandler() {
         start: Int,
         length: Int,
     ) {
-        if (capturingNameFor != null && ch != null) {
+        if (ch == null) return
+        if (capturingNameFor != null) {
             nameTextBuilder.append(ch, start, length)
+        }
+        if (capturingPointTime) {
+            timeTextBuilder.append(ch, start, length)
         }
     }
 
@@ -159,11 +214,18 @@ private class GpxHandler : DefaultHandler() {
                 val lat = pendingLat
                 val lon = pendingLon
                 if (lat != null && lon != null) {
-                    currentSegment?.add(LatLong(lat, lon))
+                    currentSegment?.add(GpxImporter.Point(lat, lon, pendingTimeMs))
                 }
                 pendingLat = null
                 pendingLon = null
+                pendingTimeMs = null
                 insidePoint = false
+            }
+            "time" -> {
+                if (capturingPointTime) {
+                    pendingTimeMs = GpxImporter.parseGpxTime(timeTextBuilder.toString())
+                    capturingPointTime = false
+                }
             }
             "name" -> {
                 val source = capturingNameFor
@@ -189,7 +251,7 @@ private class GpxHandler : DefaultHandler() {
         }
     }
 
-    fun segments(): List<List<LatLong>> = segments
+    fun segments(): List<List<GpxImporter.Point>> = segments
 
     fun resolvedName(): String? = trkName ?: metadataName ?: gpxName
 }

@@ -39,6 +39,11 @@ class TraceStatsCalculatorTest {
         val ascent = requireNotNull(stats.ascentM)
         assertTrue("ascent was $ascent", ascent in 85.0..100.0)
         assertTrue("descent was ${stats.descentM}", (stats.descentM ?: 0.0) <= 0.001)
+        // Monotonic climb: nearly the whole track is confirmed ascending (minus at most the
+        // unconfirmed tail below the hysteresis threshold); no descending distance at all.
+        val ascentDistance = requireNotNull(stats.ascentDistanceM)
+        assertTrue("ascentDistance was $ascentDistance", ascentDistance in stats.distanceM * 0.85..stats.distanceM)
+        assertEquals(0.0, stats.descentDistanceM ?: -1.0, 0.0)
         val minElevation = requireNotNull(stats.minElevationM)
         val maxElevation = requireNotNull(stats.maxElevationM)
         assertTrue("min was $minElevation", minElevation in 999f..1005f)
@@ -60,6 +65,32 @@ class TraceStatsCalculatorTest {
         val stats = TraceStatsCalculator.compute(points, timesMs = null, elevationAt = elevationAt)
 
         assertEquals(0.0, stats.ascentM ?: -1.0, 0.0)
+        assertEquals(0.0, stats.ascentDistanceM ?: -1.0, 0.0)
+        assertEquals(0.0, stats.descentDistanceM ?: -1.0, 0.0)
+    }
+
+    @Test
+    fun `climb then descend splits ascending and descending distance`() {
+        // ~6km line: climbs 100m over the first half, descends 100m over the second half.
+        val start = 24.0
+        val end = 24.054
+        val points = listOf(LatLong(start, 121.0), LatLong(end, 121.0))
+        val elevationAt: (Double, Double) -> Float? = { lat, _ ->
+            val t = ((lat - start) / (end - start)).coerceIn(0.0, 1.0)
+            val ele = if (t < 0.5) 1000.0 + 200.0 * t else 1100.0 - 200.0 * (t - 0.5)
+            ele.toFloat()
+        }
+
+        val stats = TraceStatsCalculator.compute(points, timesMs = null, elevationAt = elevationAt)
+
+        val half = stats.distanceM / 2.0
+        val ascentDistance = requireNotNull(stats.ascentDistanceM)
+        val descentDistance = requireNotNull(stats.descentDistanceM)
+        // Each side covers close to half the track. Hysteresis blurs the summit boundary by up to
+        // one confirmation stretch (10 m of gain at this grade is ~300 m of distance): the stretch
+        // straddling the peak is assigned wholly to the side that confirms it.
+        assertTrue("ascentDistance was $ascentDistance", ascentDistance in half * 0.8..half + 350.0)
+        assertTrue("descentDistance was $descentDistance", descentDistance in half * 0.8..half + 350.0)
     }
 
     @Test
@@ -70,6 +101,8 @@ class TraceStatsCalculatorTest {
 
         assertNull(stats.ascentM)
         assertNull(stats.descentM)
+        assertNull(stats.ascentDistanceM)
+        assertNull(stats.descentDistanceM)
         assertNull(stats.minElevationM)
         assertNull(stats.maxElevationM)
         assertTrue(stats.profile.isEmpty())
@@ -85,6 +118,8 @@ class TraceStatsCalculatorTest {
         assertTrue(stats.profile.all { it.elevationM == null })
         assertNull(stats.ascentM)
         assertNull(stats.descentM)
+        assertNull(stats.ascentDistanceM)
+        assertNull(stats.descentDistanceM)
         assertNull(stats.minElevationM)
         assertNull(stats.maxElevationM)
     }
@@ -193,6 +228,8 @@ class TraceStatsCalculatorTest {
             assertTrue(stats.profile.isEmpty())
             assertNull(stats.ascentM)
             assertNull(stats.descentM)
+            assertNull(stats.ascentDistanceM)
+            assertNull(stats.descentDistanceM)
             assertNull(stats.minElevationM)
             assertNull(stats.maxElevationM)
             assertNull(stats.time)

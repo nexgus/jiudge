@@ -140,6 +140,21 @@ class TrackStore(
         return out
     }
 
+    /**
+     * Saves a complete [track] (e.g. one imported from an external GPX) as a published trace file,
+     * mirroring [RouteStore.save]: rejects a name already used by another track by throwing
+     * [DuplicateTrackNameException], then writes atomically via [Trace.write]. Returns the file.
+     * Recording sessions do not use this - they append to a staging file and finalise instead.
+     */
+    fun save(track: RecordedTrack): File {
+        val target = track.name.trim().ifEmpty { "未命名軌跡" }
+        if (list().any { it.name.trim() == target }) throw DuplicateTrackNameException(target)
+        val named = track.copy(name = target)
+        val out = File(tracksDir(), publishedFileName(target, named.createdAtEpochMs))
+        Trace.write(out, named.header(), named.toRecords())
+        return out
+    }
+
     /** Discards the in-progress staging file. Caller invokes this on cancel-save to keep the folder clean. */
     fun discardStaging(staging: File): Boolean = staging.delete()
 

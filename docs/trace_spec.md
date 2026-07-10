@@ -267,9 +267,15 @@ KML, GeoJSON 透過同一中介結構轉出. 本文件不展開細節, 僅確認
   存取經 `RouteStore`) 與 `RecordedTrack` (存取經 `TrackStore`; 錄製時的逐點 append 與
   staging 檔生命週期亦由 `TrackStore` 提供).
 - 背景軌跡錄製的 foreground service (`core/recording`) 為獨立工作項目, 不在本格式設計範圍內.
-- GPX 匯入: `GpxImporter` (`data/route/`) 以 SAX 串流解析外部 GPX, 每個 `<trkseg>` / `<rte>`
-  對應一個 `seg` (`origin:"import"`), 段邊界點成為 `wpt`; 匯入時以 Douglas-Peucker
-  (`core/geo/PolylineSimplify`) 抽稀. 匯入的 GPX `<ele>` 依 §8 丟棄.
+- GPX 匯入: `GpxImporter` (`data/route/`) 以 SAX 串流解析外部 GPX (含逐點 `<time>`, ISO 8601,
+  無時區依 GPX 規範視為 UTC). 匯入的 GPX `<ele>` 依 §8 丟棄 (§5.3 的 `pt.ele` 欄位保留供日後
+  承接, 目前匯入不寫入).
+  - 匯為 plan: 每個 `<trkseg>` / `<rte>` 對應一個 `seg` (`origin:"import"`), 段邊界點成為
+    `wpt`; 匯入時以 Douglas-Peucker (`core/geo/PolylineSimplify`) 抽稀; 時間戳不保留 (plan
+    格式無時間欄位).
+  - 匯為 track (僅當每個點皆有 `<time>` 時可選, UI 預設此項): 不抽稀, 各段攤平為單一 `pt`
+    序列 (讀取端依 `t` 排序), header `createdAt` 取最早的點時間, 經 `TrackStore.save` 寫入
+    `tracks/` (同名檢查同儲存流程).
 - GPX 匯出: `GpxExporter` (`data/route/`) 依 §11 對應表串流輸出 GPX 1.1 - plan 為 `<wpt>` +
   攤平成單一 `<rte>`, track 為單一 `<trk>`/`<trkseg>` 且每點必含 `<time>`; `<ele>` 依 §8 以
   注入的 DEM 查詢取得, 無 DEM 或查無值時省略. 儲存位置經 SAF `ACTION_CREATE_DOCUMENT`

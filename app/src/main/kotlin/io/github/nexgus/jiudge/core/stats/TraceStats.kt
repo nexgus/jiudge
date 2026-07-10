@@ -14,6 +14,14 @@ data class TraceStats(
     val ascentM: Double?,
     /** Cumulative descent in metres (positive value), or null without DEM data. */
     val descentM: Double?,
+    /**
+     * Total along-track distance in metres over hysteresis-confirmed ascending stretches, or null
+     * without DEM data. Uses the same hysteresis pass as [ascentM], so gentle stretches that never
+     * reach the threshold belong to neither side: ascent + descent distance < [distanceM] in general.
+     */
+    val ascentDistanceM: Double?,
+    /** Total along-track distance in metres over hysteresis-confirmed descending stretches; see [ascentDistanceM]. */
+    val descentDistanceM: Double?,
     /** Lowest DEM elevation along the trace in metres, or null without DEM data. */
     val minElevationM: Float?,
     /** Highest DEM elevation along the trace in metres, or null without DEM data. */

@@ -122,14 +122,16 @@ fun HistoryTrackViewControls(
 
 /**
  * Recording entry chooser - matches the planning entry's shape so the user's mental model is the
- * same: a primary "new" path and a secondary "load saved" path, plus 取消. The load path opens the
- * saved track for browsing first (history-view sub-mode); "繼續錄製" lives inside that sub-mode, not
- * here, so the chooser stays a clean two-option fork.
+ * same: a primary "new" path, a secondary "load saved" path, an import path, plus 取消. The load
+ * path opens the saved track for browsing first (history-view sub-mode); "繼續錄製" lives inside
+ * that sub-mode, not here, so the chooser stays a clean fork. Import shares the planning entry's
+ * GPX flow, but the naming dialog defaults to 軌跡 when entered from here (docs/ui.md).
  */
 @Composable
 fun RecordEntryChooser(
     onNew: () -> Unit,
     onLoad: () -> Unit,
+    onImport: () -> Unit,
     onCancel: () -> Unit,
 ) {
     AlertDialog(
@@ -139,6 +141,7 @@ fun RecordEntryChooser(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("新軌跡") }
                 OutlinedButton(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("載入已存軌跡") }
+                OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("匯入 GPX 軌跡") }
             }
         },
         confirmButton = {},
