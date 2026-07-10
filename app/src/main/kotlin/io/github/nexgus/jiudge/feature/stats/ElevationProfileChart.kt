@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -38,15 +39,18 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import io.github.nexgus.jiudge.core.elevation.SlopeScale
 import io.github.nexgus.jiudge.core.stats.TraceStats
 import java.text.SimpleDateFormat
@@ -57,6 +61,7 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.log10
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.tan
@@ -68,7 +73,9 @@ import androidx.compose.ui.graphics.Canvas as ComposeCanvas
  * - Two-finger pinch/pan zooms and pans the X axis (Y auto-fits the visible range); one finger never
  *   pans, only scrubs the crosshair (tap or drag) - see [ChartViewport].
  * - The crosshair anchors to a profile sample by distance so it survives zoom/pan; an info panel
- *   shows distance/elevation/slope/wall-time for the anchored sample.
+ *   shows distance/elevation/slope/wall-time for the anchored sample. The panel sits in the first
+ *   corner (top-left, top-right, bottom-left, bottom-right) the visible curve does not run under,
+ *   or the least-occluded one when all four are ([chooseInfoPanelCorner]).
  *
  * The actual drawing (grid, filled curve, slope-coloured line, optional title) lives in
  * [drawProfileChart] so this on-screen, interactive view and the offscreen PNG export
@@ -99,6 +106,10 @@ fun ElevationProfileChart(
     // Anchored crosshair sample index into [profile], or null while hidden. Anchoring by index (not
     // by pixel) is what makes the crosshair stick to its sample across zoom/pan (D3).
     var crosshairIndex by remember(profile) { mutableStateOf<Int?>(null) }
+    // Mirrors of the canvas / info-panel pixel sizes, fed by onSizeChanged: the corner choice below
+    // needs both in composition, where DrawScope.size is not available.
+    var canvasSize by remember { mutableStateOf(Size.Zero) }
+    var panelSize by remember { mutableStateOf(IntSize.Zero) }
 
     val textMeasurer = rememberTextMeasurer()
     val colors = rememberChartColors()
@@ -109,6 +120,7 @@ fun ElevationProfileChart(
             modifier =
                 Modifier
                     .fillMaxSize()
+                    .onSizeChanged { canvasSize = it.toSize() }
                     .pointerInput(profile) {
                         val plotLeft = with(density) { PLOT_LEFT_PAD_DP.dp.toPx() }
 
@@ -176,10 +188,33 @@ fun ElevationProfileChart(
 
         crosshairIndex?.let { idx ->
             profile.getOrNull(idx)?.let { sample ->
+                val corner =
+                    if (canvasSize == Size.Zero || panelSize == IntSize.Zero) {
+                        Alignment.TopStart
+                    } else {
+                        val layout = ChartLayout.compute(canvasSize, viewport.startM, viewport.endM, profile, density = density)
+                        chooseInfoPanelCorner(
+                            profile = profile,
+                            layout = layout,
+                            panelSize = panelSize,
+                            marginPx = with(density) { PANEL_MARGIN_DP.dp.toPx() },
+                            clearancePx = with(density) { 4.dp.toPx() },
+                        )
+                    }
                 CrosshairInfoPanel(
                     sample = sample,
                     onClose = { crosshairIndex = null },
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                    modifier =
+                        Modifier
+                            .align(corner)
+                            // Insets to the plot rectangle plus the panel margin - must mirror the
+                            // corner rectangles in chooseInfoPanelCorner.
+                            .padding(
+                                start = (PLOT_LEFT_PAD_DP + PANEL_MARGIN_DP).dp,
+                                top = (PLOT_TOP_PAD_DP + PANEL_MARGIN_DP).dp,
+                                end = (PLOT_RIGHT_PAD_DP + PANEL_MARGIN_DP).dp,
+                                bottom = (PLOT_BOTTOM_PAD_DP + PANEL_MARGIN_DP).dp,
+                            ).onSizeChanged { panelSize = it },
                 )
             }
         }
@@ -189,6 +224,93 @@ fun ElevationProfileChart(
 /** Horizontal padding reserved for the Y-axis labels, in dp - shared between gesture math and drawing. */
 private const val PLOT_LEFT_PAD_DP = 44f
 private const val PLOT_RIGHT_PAD_DP = 8f
+
+/** Vertical paddings around the plot rectangle, in dp; the bottom one reserves the X-axis labels. */
+private const val PLOT_TOP_PAD_DP = 8f
+private const val PLOT_BOTTOM_PAD_DP = 24f
+
+/**
+ * Gap between the crosshair info panel and the plot-rectangle edges, in dp - shared between the
+ * panel's padding modifier and the corner-choice occlusion rectangles, which must agree. The panel
+ * is anchored inside the plot rectangle (not the canvas) so it never covers the axis labels.
+ */
+private const val PANEL_MARGIN_DP = 8f
+
+/**
+ * Picks the corner for the crosshair info panel (docs/stats.md): top-left by default, yielding to
+ * top-right, then bottom-left, then bottom-right, whenever the visible curve would run under the
+ * panel there; when every corner is occluded it picks the one the fewest curve segments pass
+ * through (earlier corners win ties). Corners are anchored [marginPx] inside the plot rectangle,
+ * not the canvas, so the panel never covers the axis labels. The test depends only on the viewport
+ * and the curve (never on the crosshair sample), so the corner stays put while the user scrubs and
+ * can only change on zoom/pan.
+ */
+internal fun chooseInfoPanelCorner(
+    profile: List<TraceStats.ProfileSample>,
+    layout: ChartLayout,
+    panelSize: IntSize,
+    marginPx: Float,
+    clearancePx: Float,
+): Alignment {
+    val w = panelSize.width.toFloat()
+    val h = panelSize.height.toFloat()
+    val left = layout.plotLeft + marginPx
+    val top = layout.plotTop + marginPx
+    val right = layout.plotRight - marginPx
+    val bottom = layout.plotBottom - marginPx
+    val corners =
+        listOf(
+            Alignment.TopStart to Rect(left, top, left + w, top + h),
+            Alignment.TopEnd to Rect(right - w, top, right, top + h),
+            Alignment.BottomStart to Rect(left, bottom - h, left + w, bottom),
+            Alignment.BottomEnd to Rect(right - w, bottom - h, right, bottom),
+        )
+    var best = corners.first().first
+    var bestCount = Int.MAX_VALUE
+    for ((alignment, rect) in corners) {
+        val count = curveSegmentsInRect(profile, layout, rect.inflate(clearancePx))
+        if (count == 0) return alignment
+        if (count < bestCount) {
+            bestCount = count
+            best = alignment
+        }
+    }
+    return best
+}
+
+/**
+ * Number of drawn (non-null elevation) segments of the profile polyline passing through [rect].
+ * Tests segments rather than just sample points so a deep zoom (adjacent samples further apart than
+ * the rect is wide) cannot thread the curve through the rect undetected.
+ */
+private fun curveSegmentsInRect(
+    profile: List<TraceStats.ProfileSample>,
+    layout: ChartLayout,
+    rect: Rect,
+): Int {
+    var count = 0
+    var prev: Offset? = null
+    for (sample in profile) {
+        val elevation = sample.elevationM
+        if (elevation == null) {
+            prev = null
+            continue
+        }
+        val point = Offset(layout.xForDistance(sample.distanceM), layout.yForElevation(elevation))
+        val start = prev
+        prev = point
+        if (start == null) continue
+        val left = max(min(start.x, point.x), rect.left)
+        val right = min(max(start.x, point.x), rect.right)
+        if (left > right) continue
+        // Y extent of the segment across [left, right] (y is linear in x along the segment).
+        val dx = point.x - start.x
+        val y1 = if (dx == 0f) min(start.y, point.y) else start.y + (point.y - start.y) * ((left - start.x) / dx)
+        val y2 = if (dx == 0f) max(start.y, point.y) else start.y + (point.y - start.y) * ((right - start.x) / dx)
+        if (max(y1, y2) >= rect.top && min(y1, y2) <= rect.bottom) count++
+    }
+    return count
+}
 
 /** Index of the profile sample whose distance is closest to [targetM]. */
 private fun nearestSampleIndex(
@@ -287,8 +409,8 @@ data class ChartLayout(
             profile: List<TraceStats.ProfileSample>,
             leftPadDp: Float = PLOT_LEFT_PAD_DP,
             rightPadDp: Float = PLOT_RIGHT_PAD_DP,
-            bottomPadDp: Float = 24f,
-            topPadDp: Float = 8f,
+            bottomPadDp: Float = PLOT_BOTTOM_PAD_DP,
+            topPadDp: Float = PLOT_TOP_PAD_DP,
             density: Density,
         ): ChartLayout {
             val visible = profile.filter { it.distanceM in minDistanceM..maxDistanceM }
@@ -461,7 +583,11 @@ private fun drawCrosshair(
     }
 }
 
-/** Small rounded translucent panel showing 距離/海拔/坡度/時間 for the crosshair-anchored sample. */
+/**
+ * Small rounded translucent panel showing 距離/海拔/坡度/時間 for the crosshair-anchored sample; its
+ * corner is chosen by the caller via [chooseInfoPanelCorner]. Translucent enough that the curve
+ * stays faintly visible underneath even when every corner is occluded.
+ */
 @Composable
 private fun CrosshairInfoPanel(
     sample: TraceStats.ProfileSample,
@@ -470,7 +596,7 @@ private fun CrosshairInfoPanel(
 ) {
     Surface(
         modifier = modifier,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
         shape = RoundedCornerShape(8.dp),
         tonalElevation = 4.dp,
     ) {
