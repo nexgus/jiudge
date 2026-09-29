@@ -2,12 +2,6 @@
 
 台灣專用, 純離線的登山地圖 App, 僅支援 Android, 為單人開發的個人專案.
 
-## Communication
-
-- 使用者主要以**繁體中文 (台灣)**溝通, 閒聊時請以繁體中文回覆.
-- 程式碼, 註解, commit, 分支名稱與 PR 標題一律使用**英文**.
-- 變數命名遵循英文慣例, 切勿以羅馬拼音表示中文.
-
 ## What This Project Is
 
 一款自製的戶外登山地圖 App, 針對既有台灣登山 App 的兩大痛點而設計: **UI / 操作體驗**與**路徑規劃 / 軌跡追蹤的品質**.
@@ -77,29 +71,28 @@
 - 山名搜尋 (`feature/search`): 左側控制列的 "🔍" 開啟一個依子字串即時過濾索引的對話框;
   點選命中項會將地圖置中於該山頭 (若縮放太遠則拉近)
 - 背景軌跡錄製 (`core/recording`, `feature/recording`, `data/route`): foreground service GPS
-  (`FOREGROUND_SERVICE_LOCATION`) + partial wake lock + 電池最佳化豁免詢問 (advisory, 見
-  docs/permissions.md) + 錄製中螢幕恆亮; fix gating 規則 (`FixGate`, 定義於 docs/gating.md);
-  staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`TrackStore`, 格式見 docs/trace_spec.md);
+  (`FOREGROUND_SERVICE_LOCATION`) + partial wake lock + 電池最佳化豁免詢問 (advisory)
+  + 錄製中螢幕恆亮; fix gating 規則 (`FixGate`);
+  staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`TrackStore`);
   已存軌跡的列表 / 載入檢視 / 改名 / 刪除
 - GPX 軌跡匯入 (`data/route/GpxImporter` SAX 解析, 含逐點 `<time>`): 規劃與錄製兩個入口
   選單皆有 "匯入 GPX 軌跡", 經系統檔案挑選器匯入; 檔內每點皆有時間戳時命名對話框可選
-  "軌跡 / 規劃路徑" (預設跟隨入口, 詳 docs/ui.md; 軌跡不抽稀, 經 `TrackStore.save` 存入
+  "軌跡 / 規劃路徑" (預設跟隨入口; 軌跡不抽稀, 經 `TrackStore.save` 存入
   tracks 後進軌跡檢視, 統計含時間 / 速度),
   否則一律存為規劃路徑 (`core/geo/PolylineSimplify` Douglas-Peucker 抽稀, 匯入段標記
-  `origin:"import"`, 編輯時 "-" 對其停用, 見 docs/trace_spec.md §5.2/§14, docs/ui.md);
+  `origin:"import"`, 編輯時 "-" 對其停用);
   `.gpx` 已在 manifest 註冊 `ACTION_VIEW` (MainActivity 為 `singleTask`), 自其他 App 點開
   `.gpx` 亦走同一匯入流程
 - GPX 匯出 (`data/route/GpxExporter` 串流輸出 GPX 1.1): 已存規劃路徑與軌跡的清單列 "更多"
   選單, 以及路徑檢視 / 軌跡檢視模式的動作列, 皆提供 "匯出 GPX", 經 SAF
   `ACTION_CREATE_DOCUMENT` 存檔 (預設下載目錄, 使用者可另選); `<ele>` 一律由 DEM 取得
-  (見 docs/trace_spec.md §8/§11/§14, docs/ui.md)
 - 路徑 / 軌跡統計畫面 (`core/stats`, `feature/stats`): 全螢幕 overlay, 直向剖面圖在上 /
   橫向剖面圖佔左半, 數據區依 "距離與高程 / 時間 / 速度" 分組為兩欄細格線卡片 (可捲動,
   爬升 / 下降帶坡度配色的 ↑ / ↓ 強調); 距離, 時間 / 速度類 (僅軌跡), DEM 爬升 / 海拔 /
   高低差與上坡 / 下坡里程 (30 m 重取樣 + 10 m 遲滯), 依坡度上色的高程剖面 (與地圖路徑線共用
   `core/elevation/SlopeScale`); 互動剖面圖 (雙指縮放 / 平移, 單指十字游標顯示距離 / 海拔 /
   坡度 / 時間) 與匯出 PNG; 入口: 路徑 / 軌跡檢視動作列 "統計" 與載入清單 "更多"
-  選單 (見 docs/stats.md)
+  選單
 
 **尚未建置 (已知待辦):**
 - 獨立航點的 GPX 匯出; KML 匯出與匯入; 獨立航點匯入
@@ -148,7 +141,6 @@ app/src/main/kotlin/io/github/nexgus/jiudge/
   core/           # shared infra: mapdata, routing, storage, location (foreground GPS + compass), elevation (.hgt DEM lookup), index (summit-position index for search), recording (foreground service + controller) (planned: networking)
   data/           # repositories, models, data sources (currently: route)
   ui/             # Compose components, theming, design tokens (planned)
-docs/             # spec, design notes, architecture decisions
 ```
 
 ### Testing
