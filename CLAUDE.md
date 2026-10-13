@@ -23,7 +23,7 @@
 | Routing engine | BRouter (`org.btools:brouter-core`, Java), in-process 呼叫 - 不需 platform channel |
 | Routing data | BRouter `.rd5` segment (5x5 度 tile) + `.brf` profile, OSM 衍生 - 與 render 用的 `.map` 分離, 後者不含路網拓樸 |
 | DEM / hillshade | RudyMap `.hgt` DEM (`hgtmix`); mapsforge 原生 hillshading + 裝置端高程查詢 |
-| Local storage | 每條規劃路徑 / 軌跡一個 JSON/GPX 檔. **使用者路徑放在固定的公開資料夾** `Documents/Jiudge/` (`plans/`, `tracks/`), 以 `java.io.File` 寫入, 受 `MANAGE_EXTERNAL_STORAGE` (All files access) 權限把關, 因此能在解除安裝後留存, 重新安裝並重新授權後 App 可再次讀取. 可下載的 `.map`/`.rd5`/DEM 放在 `getExternalFilesDir` 之下 (`core/storage/AppPaths`). 唯有在需要查詢大量紀錄時才導入 Room (SQLite) |
+| Local storage | 每條路徑 (規劃路徑或軌跡) 一個 JSONL 檔, 種類由檔案內容判定. **使用者路徑放在固定的公開資料夾** `Documents/Jiudge/paths/` (舊版的 `plans/` 與 `tracks/` 由 App 於存取時自動搬入), 以 `java.io.File` 寫入, 受 `MANAGE_EXTERNAL_STORAGE` (All files access) 權限把關, 因此能在解除安裝後留存, 重新安裝並重新授權後 App 可再次讀取. 可下載的 `.map`/`.rd5`/DEM 放在 `getExternalFilesDir` 之下 (`core/storage/AppPaths`). 唯有在需要查詢大量紀錄時才導入 Room (SQLite) |
 | GPS background | Android Foreground Service + Wake Lock + 常駐通知 |
 | Backend | 無. 地圖資料由 App 內直接向 RudyMap 公開 mirror 取得 (static HTTPS) |
 
@@ -57,9 +57,18 @@
 **目前已建置:**
 - 含 hillshade 的離線地圖渲染 (`feature/map`)
 - App 內下載 map / DEM / BRouter 資料 (`feature/mapdata`, `core/mapdata`)
-- 經 BRouter 的路徑規劃 - 航點, 儲存 / 載入 (`feature/planning`, `core/routing`, `data/route`)
-- 在 `.hgt` DEM 上的裝置端高程查詢, 於規劃時驅動依坡度上色的路徑線 + 公里標記
-  (`core/elevation/DemElevation`, `feature/planning/PlannedRouteLayer`)
+- 經 BRouter 的路徑規劃 - 航點, 儲存, 編輯既有規劃路徑 (`feature/planning`, `core/routing`,
+  `data/route`); 地圖狀態的 "規劃" 按下即進入編輯
+- 在 `.hgt` DEM 上的裝置端高程查詢, 驅動路徑線的坡度顯示
+  (`core/elevation/DemElevation`, `core/elevation/SlopeSampler`, `feature/path/PathLayer`)
+- 路徑合一 (`feature/path`, `data/route/PathStore`): 規劃路徑與軌跡為單一種路徑檔, 存於
+  `Documents/Jiudge/paths/`, 種類由檔案內容判定 (含 `seg` 紀錄為規劃路徑, 否則含 `pt`
+  紀錄為軌跡), 名稱不分種類不得重複; 舊的 `plans/` 與 `tracks/` 於存取時自動搬入.
+  全螢幕的檔案管理畫面 (地圖狀態的 "檔案") 為開啟, 統計, 改名, 匯出 GPX, 複製為規劃路徑
+  (僅軌跡), 刪除與匯入 GPX 的唯一入口. 地圖可同時顯示多條已開啟路徑, 以種類色實線區分
+  (錄製中軌跡紅, 軌跡藍, 規劃路徑綠); 已開啟路徑皆有方向箭頭, 起終點標記與里程標記.
+  檢視狀態的按鍵列依種類為 "編輯" 或 "繼續錄製", 其餘為 "統計", "匯出 GPX", "離開".
+  右下角的里程開關與坡度開關套用於全部路徑, 狀態存於 `core/storage/DisplayPrefs`
 - 地圖符號辨識 ("?") (`feature/identify`)
 - 主選單 / 關於 (`feature/about`)
 - 現在位置標記 + 重新置中按鈕 - 前景 GPS + 羅盤朝向錐, OruxMaps 風格
@@ -73,25 +82,23 @@
 - 背景軌跡錄製 (`core/recording`, `feature/recording`, `data/route`): foreground service GPS
   (`FOREGROUND_SERVICE_LOCATION`) + partial wake lock + 電池最佳化豁免詢問 (advisory)
   + 錄製中螢幕恆亮; fix gating 規則 (`FixGate`);
-  staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`TrackStore`);
-  已存軌跡的列表 / 載入檢視 / 改名 / 刪除
-- GPX 軌跡匯入 (`data/route/GpxImporter` SAX 解析, 含逐點 `<time>`): 規劃與錄製兩個入口
-  選單皆有 "匯入 GPX 軌跡", 經系統檔案挑選器匯入; 檔內每點皆有時間戳時命名對話框可選
-  "軌跡 / 規劃路徑" (預設跟隨入口; 軌跡不抽稀, 經 `TrackStore.save` 存入
-  tracks 後進軌跡檢視, 統計含時間 / 速度),
-  否則一律存為規劃路徑 (`core/geo/PolylineSimplify` Douglas-Peucker 抽稀, 匯入段標記
-  `origin:"import"`, 編輯時 "-" 對其停用);
-  `.gpx` 已在 manifest 註冊 `ACTION_VIEW` (MainActivity 為 `singleTask`), 自其他 App 點開
-  `.gpx` 亦走同一匯入流程
-- GPX 匯出 (`data/route/GpxExporter` 串流輸出 GPX 1.1): 已存規劃路徑與軌跡的清單列 "更多"
-  選單, 以及路徑檢視 / 軌跡檢視模式的動作列, 皆提供 "匯出 GPX", 經 SAF
+  staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`PathStore`);
+  地圖狀態的 "錄製" 按下即開始新錄製
+- GPX 匯入 (`data/route/GpxImporter` SAX 解析, 含逐點 `<time>`): 入口為檔案管理畫面的
+  "匯入 GPX" (系統檔案挑選器) 與自其他 App 點開 `.gpx` (manifest 已註冊 `ACTION_VIEW`,
+  MainActivity 為 `singleTask`); 匯入時只詢問名稱, 檔內每點皆有時間戳時存為軌跡
+  (不抽稀, 統計含時間 / 速度), 否則存為規劃路徑 (`core/geo/PolylineSimplify`
+  Douglas-Peucker 3 m 抽稀, 匯入段標記 `origin:"import"`, 編輯時 "-" 對其停用);
+  軌跡可於檔案管理畫面 "複製為規劃路徑" (`data/route/PathConversions`)
+- GPX 匯出 (`data/route/GpxExporter` 串流輸出 GPX 1.1): 檔案管理畫面各列的 "更多"
+  選單, 以及檢視狀態的按鍵列, 皆提供 "匯出 GPX", 經 SAF
   `ACTION_CREATE_DOCUMENT` 存檔 (預設下載目錄, 使用者可另選); `<ele>` 一律由 DEM 取得
 - 路徑 / 軌跡統計畫面 (`core/stats`, `feature/stats`): 全螢幕 overlay, 直向剖面圖在上 /
   橫向剖面圖佔左半, 數據區依 "距離與高程 / 時間 / 速度" 分組為兩欄細格線卡片 (可捲動,
   爬升 / 下降帶坡度配色的 ↑ / ↓ 強調); 距離, 時間 / 速度類 (僅軌跡), DEM 爬升 / 海拔 /
   高低差與上坡 / 下坡里程 (30 m 重取樣 + 10 m 遲滯), 依坡度上色的高程剖面 (與地圖路徑線共用
   `core/elevation/SlopeScale`); 互動剖面圖 (雙指縮放 / 平移, 單指十字游標顯示距離 / 海拔 /
-  坡度 / 時間) 與匯出 PNG; 入口: 路徑 / 軌跡檢視動作列 "統計" 與載入清單 "更多"
+  坡度 / 時間) 與匯出 PNG; 入口: 檢視狀態按鍵列的 "統計" 與檔案管理畫面的 "更多"
   選單
 
 **尚未建置 (已知待辦):**
@@ -137,7 +144,7 @@ repo 根目錄有兩支輔助腳本封裝了常見流程 (兩者都會先 `cd` �
 ### Directory layout (native Android)
 ```
 app/src/main/kotlin/io/github/nexgus/jiudge/
-  feature/        # feature modules: map (+ current-location overlay), planning, identify, mapdata, about, search (peak-name lookup), recording (recorder + fix gating + UI) (planned: gpx, settings)
+  feature/        # feature modules: map (+ current-location overlay), path (unified path layer + file manager + view-state UI), planning, identify, mapdata, about, search (peak-name lookup), recording (recorder + fix gating + UI) (planned: gpx, settings)
   core/           # shared infra: mapdata, routing, storage, location (foreground GPS + compass), elevation (.hgt DEM lookup), index (summit-position index for search), recording (foreground service + controller) (planned: networking)
   data/           # repositories, models, data sources (currently: route)
   ui/             # Compose components, theming, design tokens (planned)
