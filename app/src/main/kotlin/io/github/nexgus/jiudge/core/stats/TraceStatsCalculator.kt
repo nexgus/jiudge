@@ -205,7 +205,8 @@ object TraceStatsCalculator {
         var refDistance = valid.first().distanceM
         for (i in 1 until valid.size) {
             val sample = valid[i]
-            val d = sample.elevationM!!.toDouble() - refElevation
+            val elevation = sample.elevationM!!.toDouble()
+            val d = elevation - refElevation
             when {
                 d >= HYSTERESIS_M -> {
                     ascent += d
@@ -217,7 +218,7 @@ object TraceStatsCalculator {
                 }
                 else -> continue
             }
-            refElevation = sample.elevationM!!.toDouble()
+            refElevation = elevation
             refDistance = sample.distanceM
         }
         return ElevationTotals(ascent, descent, ascentDistance, descentDistance)
