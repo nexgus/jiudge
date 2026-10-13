@@ -1,7 +1,7 @@
 package io.github.nexgus.jiudge.feature.recording
 
+import io.github.nexgus.jiudge.data.route.PathStore
 import io.github.nexgus.jiudge.data.route.RecordedTrack
-import io.github.nexgus.jiudge.data.route.TrackStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,13 +12,13 @@ import java.io.IOException
 /**
  * Stateful coordinator for one recording session: holds the in-memory point list that drives the live
  * red-chevron overlay, gates writes by the recording state, and owns the staging file that
- * [TrackStore] will finalise (or discard) once the user is done. Pure state and file IO; no Android
+ * [PathStore] will finalise (or discard) once the user is done. Pure state and file IO; no Android
  * dependency, no subscription to the location provider - the caller pushes fixes in via [onFix]. The
  * location subscription itself stays where it already lives (the map screen's foreground GPS), so we
  * do not duplicate provider work.
  *
  * The staging file is dot-prefixed so a dead session leaves no published noise (swept at the next
- * map entry by [TrackStore.cleanupStaleRecordings], which is handed the live session's file to
+ * map entry by [PathStore.cleanupStaleRecordings], which is handed the live session's file to
  * skip - a recording may still be running when the sweep fires). Manual pause/resume ([pause]/[resume]) is
  * the three-layer UI state machine's "已停止" layer: the session and its staging file stay alive
  * across a pause, [points] is left untouched (the map overlay keeps showing the path so far), and
@@ -28,7 +28,7 @@ import java.io.IOException
  * format.
  */
 class Recorder(
-    private val store: TrackStore,
+    private val store: PathStore,
 ) {
     enum class State { IDLE, RECORDING, PAUSED }
 
@@ -109,7 +109,8 @@ class Recorder(
      */
     fun startContinuation(source: File) {
         val staging = store.startContinuationStaging(source)
-        val seeded = store.load(staging)
+        // The staging copy of a track is itself a track: startContinuationStaging refuses any other kind.
+        val seeded = store.load(staging) as RecordedTrack
         session =
             Session(
                 startEpochMs = seeded.createdAtEpochMs,
@@ -208,7 +209,7 @@ class Recorder(
 
     /**
      * Publishes [session] (returned by [end]) under [name], replacing the original on continuations.
-     * Throws [io.github.nexgus.jiudge.data.route.DuplicateTrackNameException] on a name collision.
+     * Throws [io.github.nexgus.jiudge.data.route.DuplicatePathNameException] on a name collision.
      */
     fun finalize(
         session: Session,

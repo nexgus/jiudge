@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.nexgus.jiudge.data.route.PathStore
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -289,10 +290,7 @@ fun ImportRouteDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                val fallback = if (asTrack) "未命名軌跡" else "未命名路線"
-                onConfirm(name.trim().ifEmpty { fallback }, asTrack)
-            }) { Text("匯入") }
+            TextButton(onClick = { onConfirm(name.trim().ifEmpty { PathStore.DEFAULT_NAME }, asTrack) }) { Text("匯入") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
@@ -345,7 +343,7 @@ private fun RouteNameDialog(
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim().ifEmpty { "未命名路線" }) }) { Text(confirmLabel) }
+            TextButton(onClick = { onConfirm(name.trim().ifEmpty { PathStore.DEFAULT_NAME }) }) { Text(confirmLabel) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
@@ -378,16 +376,17 @@ private fun formatDistance(meters: Double): String =
 /**
  * Lists saved routes for loading; tapping a row displays it on the map. Each row's "更多" menu offers
  * rename, export to GPX, and delete, delegated upward via [onRename]/[onExport]/[onDelete] (the
- * caller confirms and persists).
+ * caller confirms and persists). [summaries] is the caller's [PathStore] listing narrowed to
+ * planned routes.
  */
 @Composable
 fun LoadRouteDialog(
-    summaries: List<io.github.nexgus.jiudge.data.route.RouteStore.Summary>,
-    onPick: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
-    onStats: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
-    onRename: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
-    onExport: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
-    onDelete: (io.github.nexgus.jiudge.data.route.RouteStore.Summary) -> Unit,
+    summaries: List<PathStore.Summary>,
+    onPick: (PathStore.Summary) -> Unit,
+    onStats: (PathStore.Summary) -> Unit,
+    onRename: (PathStore.Summary) -> Unit,
+    onExport: (PathStore.Summary) -> Unit,
+    onDelete: (PathStore.Summary) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }

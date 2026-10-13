@@ -1,6 +1,6 @@
 package io.github.nexgus.jiudge.core.recording
 
-import io.github.nexgus.jiudge.data.route.TrackStore
+import io.github.nexgus.jiudge.data.route.PathStore
 import io.github.nexgus.jiudge.feature.recording.Recorder
 import kotlinx.coroutines.flow.StateFlow
 import org.mapsforge.core.model.LatLong
@@ -25,7 +25,7 @@ import java.io.IOException
  * the notification, stop the foreground service) once that completes.
  */
 object RecordingController {
-    private val store = TrackStore()
+    private val store = PathStore()
     private val recorder = Recorder(store)
 
     /** The recorder's live state - drives whether the recording / paused bottom bar shows. */
@@ -47,7 +47,7 @@ object RecordingController {
     fun currentSession(): Recorder.Session? = recorder.currentSession()
 
     /**
-     * Sweeps leftover staging files (`tracks/.recording-*.jsonl`) from crashed or swiped-away
+     * Sweeps leftover staging files (`paths/.recording-*.jsonl`) from crashed or swiped-away
      * sessions, never touching the live session's file. Owned here rather than by the UI because
      * this singleton is the only place that knows whether a session is live: the activity that
      * triggers the sweep may be destroyed and recreated while the service keeps recording, so

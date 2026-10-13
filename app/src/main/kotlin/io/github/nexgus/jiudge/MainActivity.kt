@@ -110,16 +110,15 @@ import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.core.stats.TraceStats
 import io.github.nexgus.jiudge.core.stats.TraceStatsCalculator
 import io.github.nexgus.jiudge.core.storage.AppPaths
-import io.github.nexgus.jiudge.data.route.DuplicateRouteNameException
-import io.github.nexgus.jiudge.data.route.DuplicateTrackNameException
+import io.github.nexgus.jiudge.data.route.DuplicatePathNameException
 import io.github.nexgus.jiudge.data.route.GpxExporter
 import io.github.nexgus.jiudge.data.route.GpxImporter
 import io.github.nexgus.jiudge.data.route.GpxParseException
+import io.github.nexgus.jiudge.data.route.PathKind
+import io.github.nexgus.jiudge.data.route.PathStore
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RecordedTrack
-import io.github.nexgus.jiudge.data.route.RouteStore
 import io.github.nexgus.jiudge.data.route.Trace
-import io.github.nexgus.jiudge.data.route.TrackStore
 import io.github.nexgus.jiudge.feature.about.AboutDialog
 import io.github.nexgus.jiudge.feature.about.MainMenuButton
 import io.github.nexgus.jiudge.feature.identify.IdentifyBar
@@ -224,6 +223,17 @@ private sealed interface ImportParseOutcome {
         val trackEligible: Boolean,
     ) : ImportParseOutcome
 }
+
+// The two pickers and their view modes still handle one kind each, so they narrow the store's
+// kind-agnostic listing and loading here.
+
+private fun PathStore.listPlans(): List<PathStore.Summary> = list().filter { it.kind == PathKind.PLAN }
+
+private fun PathStore.listTracks(): List<PathStore.Summary> = list().filter { it.kind == PathKind.TRACK }
+
+private fun PathStore.loadPlan(file: File): PlannedRoute = load(file) as? PlannedRoute ?: error("not a planned route: ${file.name}")
+
+private fun PathStore.loadTrack(file: File): RecordedTrack = load(file) as? RecordedTrack ?: error("not a recorded track: ${file.name}")
 
 /** Suggested file name handed to the SAF create-document picker ('/' would read as a path). */
 private fun gpxSuggestedName(name: String): String = "${name.replace('/', '-')}.gpx"
@@ -345,8 +355,7 @@ class MainActivity : ComponentActivity() {
                                 MapScreen(
                                     mapDir = paths.mapDir,
                                     engine = remember { BRouterEngine(paths.brouterDir) },
-                                    routeStore = remember { RouteStore() },
-                                    trackStore = remember { TrackStore() },
+                                    pathStore = remember { PathStore() },
                                     snackbarHostState = snackbarHostState,
                                     onMapCreated = { mapView = it },
                                     // Identity-guarded: on a mapEpoch rebuild the new screen's
@@ -458,8 +467,7 @@ private const val STALE_FIX_THRESHOLD_MS: Long = 60_000L
 private fun MapScreen(
     mapDir: File,
     engine: BRouterEngine,
-    routeStore: RouteStore,
-    trackStore: TrackStore,
+    pathStore: PathStore,
     snackbarHostState: SnackbarHostState,
     onMapCreated: (MapView) -> Unit,
     onMapReleased: (MapView) -> Unit,
@@ -601,10 +609,10 @@ private fun MapScreen(
 
     var showChooser by remember { mutableStateOf(false) }
     var showSave by remember { mutableStateOf(false) }
-    var loadList by remember { mutableStateOf<List<RouteStore.Summary>?>(null) }
+    var loadList by remember { mutableStateOf<List<PathStore.Summary>?>(null) }
     // Set while a rename/delete dialog is open over the load picker; null when none is pending.
-    var renameTarget by remember { mutableStateOf<RouteStore.Summary?>(null) }
-    var deleteTarget by remember { mutableStateOf<RouteStore.Summary?>(null) }
+    var renameTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
+    var deleteTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
     // Route currently drawn by the viewer: shown in ROUTE_VIEW, and kept in MAP_VIEW after 離開.
     var displayedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
     // Backing file of displayedRoute (the file it was loaded from or last saved to); null when no
@@ -612,8 +620,9 @@ private fun MapScreen(
     var displayedRouteFile by remember { mutableStateOf<File?>(null) }
     // What ROUTE_EDIT "取消" reverts to: set when entering edit, refreshed on save.
     var editBaseline by remember { mutableStateOf<PlannedRoute?>(null) }
-    // Raised on 新增, lowered after the first save: a brand-new route must not reuse an existing
-    // name, but re-saving an edited route may keep its own name.
+    // Raised on 新增, lowered after the first save: a brand-new route has no edit source, so its
+    // save replaces nothing, while re-saving an edited route replaces the file it was loaded from
+    // and may therefore keep its own name.
     var isNewRoute by remember { mutableStateOf(false) }
     // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
     var saveNameDraft by remember { mutableStateOf<String?>(null) }
@@ -660,9 +669,9 @@ private fun MapScreen(
     var showRecordEntryChooser by remember { mutableStateOf(false) }
     var showSaveTrack by remember { mutableStateOf(false) }
     var showDiscardRecording by remember { mutableStateOf(false) }
-    var loadTrackList by remember { mutableStateOf<List<TrackStore.Summary>?>(null) }
-    var renameTrackTarget by remember { mutableStateOf<TrackStore.Summary?>(null) }
-    var deleteTrackTarget by remember { mutableStateOf<TrackStore.Summary?>(null) }
+    var loadTrackList by remember { mutableStateOf<List<PathStore.Summary>?>(null) }
+    var renameTrackTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
+    var deleteTrackTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
     var saveTrackNameDraft by remember { mutableStateOf<String?>(null) }
     // Pending start request held across the permission flow. null source = brand-new recording;
     // non-null source = continuation of that saved track. Cleared once the service is dispatched
@@ -994,9 +1003,9 @@ private fun MapScreen(
                                     ?: error("cannot open the destination file")
                             stream.use { out ->
                                 if (target.isTrack) {
-                                    GpxExporter.write(trackStore.load(target.file), out, lookup)
+                                    GpxExporter.write(pathStore.loadTrack(target.file), out, lookup)
                                 } else {
-                                    GpxExporter.write(routeStore.load(target.file), out, lookup)
+                                    GpxExporter.write(pathStore.loadPlan(target.file), out, lookup)
                                 }
                             }
                         }
@@ -2099,7 +2108,7 @@ private fun MapScreen(
                 withStorageAccess {
                     scope.launch {
                         try {
-                            loadList = withContext(Dispatchers.IO) { routeStore.list() }
+                            loadList = withContext(Dispatchers.IO) { pathStore.listPlans() }
                         } catch (e: Exception) {
                             storageErrorMessage = "讀取清單失敗: ${e.message}"
                         }
@@ -2140,7 +2149,7 @@ private fun MapScreen(
                 try {
                     val savedFile =
                         withContext(Dispatchers.IO) {
-                            val file = routeStore.save(route, checkDuplicate = true)
+                            val file = pathStore.save(route)
                             importDraftFile(context).delete()
                             importTrackDraftFile(context).delete()
                             file
@@ -2154,11 +2163,11 @@ private fun MapScreen(
                     displayedRouteFile = savedFile
                     mode = PlanMode.ROUTE_VIEW
                     snackbarHostState.showSnackbar("已匯入規劃路徑: $name")
-                } catch (e: DuplicateRouteNameException) {
+                } catch (e: DuplicatePathNameException) {
                     // Keep the typed name (and the staged file) and reopen so the user can
                     // rename in place.
                     importDraftName = name
-                    snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
+                    snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                 } catch (e: Exception) {
                     storageErrorMessage = "儲存失敗: ${e.message}"
                 }
@@ -2181,7 +2190,7 @@ private fun MapScreen(
                 try {
                     val savedFile =
                         withContext(Dispatchers.IO) {
-                            val file = trackStore.save(track)
+                            val file = pathStore.save(track)
                             importDraftFile(context).delete()
                             importTrackDraftFile(context).delete()
                             file
@@ -2194,9 +2203,9 @@ private fun MapScreen(
                         map.value?.fitToRoute(track.polyline)
                     }
                     snackbarHostState.showSnackbar("已匯入軌跡: $name")
-                } catch (e: DuplicateTrackNameException) {
+                } catch (e: DuplicatePathNameException) {
                     importDraftName = name
-                    snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
+                    snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                 } catch (e: Exception) {
                     storageErrorMessage = "儲存失敗: ${e.message}"
                 }
@@ -2235,15 +2244,15 @@ private fun MapScreen(
                 if (p != null) {
                     val saved = p.toPlannedRoute(name, System.currentTimeMillis())
                     // Re-saving an edited route writes a fresh file (the name is stamped with the
-                    // new createdAt), so hand the edit source over for deletion or the picker would
-                    // list both copies.
+                    // new createdAt), so hand the edit source over: the store deletes it, or the
+                    // picker would list both copies, and leaves it out of the duplicate-name check.
                     val replacing = if (isNewRoute) null else displayedRouteFile
                     withStorageAccess {
                         scope.launch {
                             try {
                                 val savedFile =
                                     withContext(Dispatchers.IO) {
-                                        routeStore.save(saved, checkDuplicate = isNewRoute, replacing = replacing)
+                                        pathStore.save(saved, replacing = replacing)
                                     }
                                 // Keep the route on screen: leave editing for view mode, not cleared.
                                 p.clear()
@@ -2255,11 +2264,11 @@ private fun MapScreen(
                                 saveNameDraft = null
                                 mode = PlanMode.ROUTE_VIEW
                                 snackbarHostState.showSnackbar("已儲存規劃路徑: $name")
-                            } catch (e: DuplicateRouteNameException) {
+                            } catch (e: DuplicatePathNameException) {
                                 // Keep the typed name and reopen so the user can rename in place.
                                 saveNameDraft = name
                                 showSave = true
-                                snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
+                                snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                             } catch (e: Exception) {
                                 storageErrorMessage = "儲存失敗: ${e.message}"
                             }
@@ -2310,7 +2319,7 @@ private fun MapScreen(
                 // Opening a saved file shows it in view mode (per docs/ui.md); "編輯" enters editing.
                 scope.launch {
                     try {
-                        val route = withContext(Dispatchers.IO) { routeStore.load(summary.file) }
+                        val route = withContext(Dispatchers.IO) { pathStore.loadPlan(summary.file) }
                         planner?.clear()
                         viewer?.show(route)
                         // Frame the whole trace on file load (only here - not on save/cancel).
@@ -2328,7 +2337,7 @@ private fun MapScreen(
                 // reading the trace file needs the same storage access as loading it.
                 loadList = null
                 withStorageAccess {
-                    openStats(summary.name, isTrack = false) { routeStore.load(summary.file).polyline to null }
+                    openStats(summary.name, isTrack = false) { pathStore.loadPlan(summary.file).polyline to null }
                 }
             },
             onRename = { renameTarget = it },
@@ -2349,8 +2358,8 @@ private fun MapScreen(
                 withStorageAccess {
                     scope.launch {
                         try {
-                            val renamed = withContext(Dispatchers.IO) { routeStore.rename(target.file, newName) }
-                            loadList = withContext(Dispatchers.IO) { routeStore.list() }
+                            val renamed = withContext(Dispatchers.IO) { pathStore.rename(target.file, newName) }
+                            loadList = withContext(Dispatchers.IO) { pathStore.listPlans() }
                             // Keep the on-screen route's name in sync if it was the one renamed.
                             // Renaming may shift the file path (the slug follows the name), so the
                             // backing-file reference must follow too or a later export/edit would
@@ -2361,9 +2370,9 @@ private fun MapScreen(
                                 displayedRouteFile = renamed.file
                             }
                             snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
-                        } catch (e: DuplicateRouteNameException) {
+                        } catch (e: DuplicatePathNameException) {
                             renameTarget = target
-                            snackbarHostState.showSnackbar("已有同名路線 \"${e.routeName}\", 請改用其他名稱")
+                            snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("改名失敗: ${e.message}")
                         }
@@ -2382,8 +2391,8 @@ private fun MapScreen(
                 withStorageAccess {
                     scope.launch {
                         try {
-                            withContext(Dispatchers.IO) { routeStore.delete(target.file) }
-                            loadList = withContext(Dispatchers.IO) { routeStore.list() }
+                            withContext(Dispatchers.IO) { pathStore.delete(target.file) }
+                            loadList = withContext(Dispatchers.IO) { pathStore.listPlans() }
                             // The on-screen route may keep showing, but it no longer has a backing
                             // file - drop the reference so the 匯出 GPX pill disappears with it.
                             if (displayedRouteFile == target.file) displayedRouteFile = null
@@ -2409,7 +2418,7 @@ private fun MapScreen(
                 withStorageAccess {
                     scope.launch {
                         try {
-                            loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                            loadTrackList = withContext(Dispatchers.IO) { pathStore.listTracks() }
                         } catch (e: Exception) {
                             storageErrorMessage = "讀取軌跡清單失敗: ${e.message}"
                         }
@@ -2433,7 +2442,7 @@ private fun MapScreen(
                 loadTrackList = null
                 scope.launch {
                     try {
-                        val loaded = withContext(Dispatchers.IO) { trackStore.load(summary.file) }
+                        val loaded = withContext(Dispatchers.IO) { pathStore.loadTrack(summary.file) }
                         historyTrack = loaded
                         historyTrackFile = summary.file
                         viewingHistory = true
@@ -2451,7 +2460,7 @@ private fun MapScreen(
                 loadTrackList = null
                 withStorageAccess {
                     openStats(summary.name, isTrack = true) {
-                        val track = trackStore.load(summary.file)
+                        val track = pathStore.loadTrack(summary.file)
                         track.polyline to track.points.map { it.timeMs }
                     }
                 }
@@ -2474,8 +2483,8 @@ private fun MapScreen(
                 withStorageAccess {
                     scope.launch {
                         try {
-                            val renamed = withContext(Dispatchers.IO) { trackStore.rename(target.file, newName) }
-                            loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                            val renamed = withContext(Dispatchers.IO) { pathStore.rename(target.file, newName) }
+                            loadTrackList = withContext(Dispatchers.IO) { pathStore.listTracks() }
                             // Keep the viewed track's name and backing file in sync if it was the
                             // one renamed - renaming may shift the file path (the slug follows the
                             // name), and 匯出 GPX / 繼續錄製 both act on that file.
@@ -2484,9 +2493,9 @@ private fun MapScreen(
                                 historyTrackFile = renamed.file
                             }
                             snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
-                        } catch (e: DuplicateTrackNameException) {
+                        } catch (e: DuplicatePathNameException) {
                             renameTrackTarget = target
-                            snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
+                            snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("改名失敗: ${e.message}")
                         }
@@ -2505,8 +2514,8 @@ private fun MapScreen(
                 withStorageAccess {
                     scope.launch {
                         try {
-                            withContext(Dispatchers.IO) { trackStore.delete(target.file) }
-                            loadTrackList = withContext(Dispatchers.IO) { trackStore.list() }
+                            withContext(Dispatchers.IO) { pathStore.delete(target.file) }
+                            loadTrackList = withContext(Dispatchers.IO) { pathStore.listTracks() }
                             // The viewed track may keep showing, but it no longer has a backing
                             // file - drop the reference so 匯出 GPX / 繼續錄製 cannot act on it.
                             if (historyTrackFile == target.file) historyTrackFile = null
@@ -2544,18 +2553,18 @@ private fun MapScreen(
                                 // historyTrackFile points at a public file 繼續錄製 can hand to
                                 // RecordingService.startContinuation.
                                 RecordingService.finish(context)
-                                val loaded = withContext(Dispatchers.IO) { trackStore.load(savedFile) }
+                                val loaded = withContext(Dispatchers.IO) { pathStore.loadTrack(savedFile) }
                                 historyTrack = loaded
                                 historyTrackFile = savedFile
                                 viewingHistory = true
                                 saveTrackNameDraft = null
                                 snackbarHostState.showSnackbar("已儲存軌跡: $name")
-                            } catch (e: DuplicateTrackNameException) {
+                            } catch (e: DuplicatePathNameException) {
                                 // Spec E: keep the session alive (still PAUSED) and reopen the dialog
                                 // with the user's typed name preserved so they can retry.
                                 saveTrackNameDraft = name
                                 showSaveTrack = true
-                                snackbarHostState.showSnackbar("已有同名軌跡 \"${e.trackName}\", 請改用其他名稱")
+                                snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                             } catch (e: Exception) {
                                 storageErrorMessage = "儲存失敗: ${e.message}"
                             }
@@ -2592,7 +2601,7 @@ private fun MapScreen(
                         val source = session.source
                         if (session.isContinuation && source != null) {
                             try {
-                                val loaded = withContext(Dispatchers.IO) { trackStore.load(source) }
+                                val loaded = withContext(Dispatchers.IO) { pathStore.loadTrack(source) }
                                 historyTrack = loaded
                                 historyTrackFile = source
                                 viewingHistory = true

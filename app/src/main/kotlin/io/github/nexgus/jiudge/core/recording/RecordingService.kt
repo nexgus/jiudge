@@ -118,7 +118,7 @@ class RecordingService : Service() {
         // app". Spec H: terminate the recording outright, remove the notification, and stop the
         // service - but the staging file itself is NOT deleted here; the session is ended below, so
         // [RecordingController.sweepStaleStaging] (run at the next map entry) no longer sees it as
-        // live and sweeps it, rather than this service reaching into TrackStore itself.
+        // live and sweeps it, rather than this service reaching into PathStore itself.
         releaseGps()
         RecordingController.handleEnd()
         stopSelfCleanly()

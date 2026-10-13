@@ -8,7 +8,7 @@ import org.mapsforge.core.util.LatLongUtils
 /**
  * A saved route plan: the user-placed waypoints plus the geometry between each pair of consecutive
  * waypoints - routed by BRouter, or carried in verbatim from an imported GPX file. Persisted as one
- * JSONL trace file per route (see [RouteStore] and [Trace]) - filesystem storage fits this personal,
+ * JSONL trace file per route (see [PathStore] and [Trace]) - filesystem storage fits this personal,
  * file-sharing-oriented app better than a database (see CLAUDE.md).
  *
  * [segments] is the source of truth (segments[i] is the path from waypoints[i] to waypoints[i+1]),
@@ -17,11 +17,11 @@ import org.mapsforge.core.util.LatLongUtils
  * and each segment a `seg` record, ordered by their index `i` (spec §5.1, §5.2).
  */
 data class PlannedRoute(
-    val name: String,
-    val createdAtEpochMs: Long,
+    override val name: String,
+    override val createdAtEpochMs: Long,
     val waypoints: List<Waypoint>,
     val segments: List<Segment>,
-) {
+) : SavedPath {
     /**
      * One user-placed point. [name] is the optional label from the trace file's `wpt.name` field
      * (spec §5.1), normalised so that a missing or blank name is null rather than "". Only named
@@ -49,16 +49,21 @@ data class PlannedRoute(
      * flow reads this several times (persisting, fitting the viewport, measuring). Safe because the
      * route is immutable; a `copy()` recomputes on its own instance.
      */
-    val polyline: List<LatLong> by lazy { joinRouteSegments(segments.map { it.points }) }
+    override val polyline: List<LatLong> by lazy { joinRouteSegments(segments.map { it.points }) }
 
     /** Total routed length in metres: great-circle distances summed along [polyline]. */
-    val distanceMeters: Double by lazy { polyline.zipWithNext { a, b -> LatLongUtils.vincentyDistance(a, b) }.sum() }
+    override val distanceMeters: Double by lazy { polyline.zipWithNext { a, b -> LatLongUtils.vincentyDistance(a, b) }.sum() }
 
-    /** The header line for this plan's trace file (spec §4). */
-    fun header(): TraceHeader = TraceHeader(type = Trace.TYPE_PLAN, name = name, createdAtEpochMs = createdAtEpochMs)
+    override val kind: PathKind get() = PathKind.PLAN
+
+    /** A plan is geometry only: its points carry no time. */
+    override val pointTimesMs: List<Long>? get() = null
+
+    /** The header line for this plan's trace file. */
+    override fun header(): TraceHeader = TraceHeader(name = name, createdAtEpochMs = createdAtEpochMs)
 
     /** This plan's record lines: all `wpt` records, then all `seg` records, each ordered by `i`. */
-    fun toRecords(): List<JSONObject> {
+    override fun toRecords(): List<JSONObject> {
         val records = mutableListOf<JSONObject>()
         waypoints.forEachIndexed { i, waypoint ->
             records +=

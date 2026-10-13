@@ -60,7 +60,7 @@ class PlannedRouteTest {
 
     @Test
     fun `unknown origin value is treated as imported`() {
-        val header = TraceHeader(type = Trace.TYPE_PLAN, name = "r", createdAtEpochMs = 1L)
+        val header = TraceHeader(name = "r", createdAtEpochMs = 1L)
         val records =
             listOf(
                 JSONObject("""{"k":"wpt","i":0,"lat":24.1,"lon":121.1}"""),
@@ -73,7 +73,7 @@ class PlannedRouteTest {
 
     @Test
     fun `absent origin reads as routed`() {
-        val header = TraceHeader(type = Trace.TYPE_PLAN, name = "r", createdAtEpochMs = 1L)
+        val header = TraceHeader(name = "r", createdAtEpochMs = 1L)
         val records =
             listOf(
                 JSONObject("""{"k":"wpt","i":0,"lat":24.1,"lon":121.1}"""),
@@ -116,7 +116,7 @@ class PlannedRouteTest {
 
     @Test
     fun `blank waypoint name reads back as null`() {
-        val header = TraceHeader(type = Trace.TYPE_PLAN, name = "r", createdAtEpochMs = 1L)
+        val header = TraceHeader(name = "r", createdAtEpochMs = 1L)
         val records =
             listOf(
                 JSONObject("""{"k":"wpt","i":0,"lat":24.1,"lon":121.1,"name":"   "}"""),

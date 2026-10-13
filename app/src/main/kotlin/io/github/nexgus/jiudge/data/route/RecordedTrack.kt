@@ -6,7 +6,7 @@ import org.mapsforge.core.util.LatLongUtils
 
 /**
  * A recorded GPS track: an append-only series of fixes captured while the user moves. Persisted as one
- * JSONL trace file per track (see [TrackStore] and [Trace]) - the line-oriented layer suits append-as-
+ * JSONL trace file per track (see [PathStore] and [Trace]) - the line-oriented layer suits append-as-
  * you-go writes (spec §3) and survives a torn final line on crash without losing the prior points.
  *
  * Each fix becomes a `pt` record carrying the position and the wall-clock time of the fix; the
@@ -16,10 +16,10 @@ import org.mapsforge.core.util.LatLongUtils
  * actually walked, ordered by `t` ascending.
  */
 data class RecordedTrack(
-    val name: String,
-    val createdAtEpochMs: Long,
+    override val name: String,
+    override val createdAtEpochMs: Long,
     val points: List<Point>,
-) {
+) : SavedPath {
     /** A single recorded location sample. */
     data class Point(
         val latitude: Double,
@@ -30,18 +30,24 @@ data class RecordedTrack(
     )
 
     /** The geometry as a [LatLong] list, for layer rendering and bounds calculations. */
-    val polyline: List<LatLong>
+    override val polyline: List<LatLong>
         get() = points.map { LatLong(it.latitude, it.longitude) }
 
     /** Total ground distance in metres, summed along consecutive points. */
-    val distanceMeters: Double
+    override val distanceMeters: Double
         get() = polyline.zipWithNext { a, b -> LatLongUtils.vincentyDistance(a, b) }.sum()
 
-    /** The header line for this track's trace file (spec §4). */
-    fun header(): TraceHeader = TraceHeader(type = Trace.TYPE_TRACK, name = name, createdAtEpochMs = createdAtEpochMs)
+    override val kind: PathKind get() = PathKind.TRACK
+
+    /** Every fix is timestamped, so this is never null for a track. */
+    override val pointTimesMs: List<Long>
+        get() = points.map { it.timeMs }
+
+    /** The header line for this track's trace file. */
+    override fun header(): TraceHeader = TraceHeader(name = name, createdAtEpochMs = createdAtEpochMs)
 
     /** This track's record lines: all `pt` records, ordered by their `t`. */
-    fun toRecords(): List<JSONObject> =
+    override fun toRecords(): List<JSONObject> =
         points.map { p ->
             JSONObject().apply {
                 put("k", "pt")

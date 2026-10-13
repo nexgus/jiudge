@@ -28,7 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import io.github.nexgus.jiudge.data.route.TrackStore
+import io.github.nexgus.jiudge.data.route.PathStore
 import io.github.nexgus.jiudge.feature.planning.MapPill
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -172,7 +172,7 @@ fun SaveTrackDialog(
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim().ifEmpty { "未命名軌跡" }) }) { Text("儲存") }
+            TextButton(onClick = { onConfirm(name.trim().ifEmpty { PathStore.DEFAULT_NAME }) }) { Text("儲存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
@@ -219,16 +219,17 @@ private fun formatDistance(meters: Double): String =
  * export to GPX, and delete, delegated upward via [onRename]/[onExport]/[onDelete] (the caller
  * confirms and persists). Mirrors [io.github.nexgus.jiudge.feature.planning.LoadRouteDialog]. The
  * dialog itself is purpose-neutral - the caller decides what "pick" means (load into the history
- * viewer); 繼續錄製 lives in the history-view sub-mode after a pick, not on this dialog.
+ * viewer); 繼續錄製 lives in the history-view sub-mode after a pick, not on this dialog. [summaries]
+ * is the caller's [PathStore] listing narrowed to recorded tracks.
  */
 @Composable
 fun LoadTrackDialog(
-    summaries: List<TrackStore.Summary>,
-    onPick: (TrackStore.Summary) -> Unit,
-    onStats: (TrackStore.Summary) -> Unit,
-    onRename: (TrackStore.Summary) -> Unit,
-    onExport: (TrackStore.Summary) -> Unit,
-    onDelete: (TrackStore.Summary) -> Unit,
+    summaries: List<PathStore.Summary>,
+    onPick: (PathStore.Summary) -> Unit,
+    onStats: (PathStore.Summary) -> Unit,
+    onRename: (PathStore.Summary) -> Unit,
+    onExport: (PathStore.Summary) -> Unit,
+    onDelete: (PathStore.Summary) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
@@ -339,7 +340,7 @@ fun RenameTrackDialog(
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim().ifEmpty { "未命名軌跡" }) }) { Text("確定") }
+            TextButton(onClick = { onConfirm(name.trim().ifEmpty { PathStore.DEFAULT_NAME }) }) { Text("確定") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
