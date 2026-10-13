@@ -1,34 +1,16 @@
 package io.github.nexgus.jiudge.feature.recording
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import io.github.nexgus.jiudge.data.route.PathStore
 import io.github.nexgus.jiudge.feature.planning.MapPill
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -91,94 +73,6 @@ fun PausedBottomBar(
 }
 
 /**
- * Bottom action bar for the history-track viewing sub-mode: continue recording on top of the loaded
- * track, open the stats screen, export it as GPX, or leave the sub-mode (the track stays on the map
- * until the user explicitly clears it). The pills size naturally (the earlier shared 110 dp
- * min-width no longer fits four pills on narrow screens). [onExport] is null when the viewed track
- * has no backing file (e.g. it was just deleted from the load picker) - the pill is omitted rather
- * than disabled. 統計 works on the in-memory track, so it needs no backing file and always shows.
- */
-@Composable
-fun HistoryTrackViewControls(
-    onContinue: () -> Unit,
-    onStats: () -> Unit,
-    onExport: (() -> Unit)?,
-    onLeave: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MapPill(text = "繼續錄製", onClick = onContinue, primary = true)
-        MapPill(text = "統計", onClick = onStats)
-        if (onExport != null) {
-            MapPill(text = "匯出 GPX", onClick = onExport)
-        }
-        MapPill(text = "離開", onClick = onLeave)
-    }
-}
-
-/**
- * Recording entry chooser - matches the planning entry's shape so the user's mental model is the
- * same: a primary "new" path, a secondary "load saved" path, an import path, plus 取消. The load
- * path opens the saved track for browsing first (history-view sub-mode); "繼續錄製" lives inside
- * that sub-mode, not here, so the chooser stays a clean fork. Import shares the planning entry's
- * GPX flow, but the naming dialog defaults to 軌跡 when entered from here (docs/ui.md).
- */
-@Composable
-fun RecordEntryChooser(
-    onNew: () -> Unit,
-    onLoad: () -> Unit,
-    onImport: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text("錄製軌跡") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("新軌跡") }
-                OutlinedButton(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("載入已存軌跡") }
-                OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("匯入 GPX 軌跡") }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onCancel) { Text("取消") } },
-    )
-}
-
-/**
- * Prompts for a track name on stop (prefilled with [initialName]). Blank falls back to a default,
- * matching the planning save flow.
- */
-@Composable
-fun SaveTrackDialog(
-    initialName: String,
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var name by remember { mutableStateOf(initialName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("儲存軌跡") },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("軌跡名稱") },
-                singleLine = true,
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim().ifEmpty { PathStore.DEFAULT_NAME }) }) { Text("儲存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-/**
  * Confirms throwing away an unsaved recording, reachable from both the 錄製中 and 已停止 layers
  * (spec B; the 錄製中 path pauses the session before this dialog opens, so it always faces a paused
  * session). The wording shifts by [continuationName]: a fresh recording is gone for good when
@@ -202,162 +96,6 @@ fun DiscardRecordingDialog(
         title = { Text("不儲存軌跡") },
         text = { Text(message) },
         confirmButton = { TextButton(onClick = onConfirm) { Text("丟棄") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-/** Track length for the picker: metres below 1 km, otherwise kilometres to one decimal. */
-private fun formatDistance(meters: Double): String =
-    if (meters >= 1000.0) {
-        String.format(Locale.getDefault(), "%.1f 公里", meters / 1000.0)
-    } else {
-        String.format(Locale.getDefault(), "%.0f 公尺", meters)
-    }
-
-/**
- * Lists saved tracks for loading; tapping a row picks it. Each row's "更多" menu offers rename,
- * export to GPX, and delete, delegated upward via [onRename]/[onExport]/[onDelete] (the caller
- * confirms and persists). Mirrors [io.github.nexgus.jiudge.feature.planning.LoadRouteDialog]. The
- * dialog itself is purpose-neutral - the caller decides what "pick" means (load into the history
- * viewer); 繼續錄製 lives in the history-view sub-mode after a pick, not on this dialog. [summaries]
- * is the caller's [PathStore] listing narrowed to recorded tracks.
- */
-@Composable
-fun LoadTrackDialog(
-    summaries: List<PathStore.Summary>,
-    onPick: (PathStore.Summary) -> Unit,
-    onStats: (PathStore.Summary) -> Unit,
-    onRename: (PathStore.Summary) -> Unit,
-    onExport: (PathStore.Summary) -> Unit,
-    onDelete: (PathStore.Summary) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("載入軌跡") },
-        text = {
-            if (summaries.isEmpty()) {
-                Text("尚無已儲存的軌跡")
-            } else {
-                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
-                    items(summaries) { s ->
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(
-                                    modifier =
-                                        Modifier
-                                            .weight(1f)
-                                            .clickable { onPick(s) }
-                                            .padding(vertical = 10.dp),
-                                ) {
-                                    Text(s.name, style = MaterialTheme.typography.bodyLarge)
-                                    Text(
-                                        "${dateFormat.format(Date(s.createdAtEpochMs))} - ${formatDistance(s.distanceMeters)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                TrackRowMenu(
-                                    onStats = { onStats(s) },
-                                    onRename = { onRename(s) },
-                                    onExport = { onExport(s) },
-                                    onDelete = { onDelete(s) },
-                                )
-                            }
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("關閉") } },
-    )
-}
-
-/** Per-row "更多" overflow menu offering stats, rename, GPX export, and delete for a saved track. */
-@Composable
-private fun TrackRowMenu(
-    onStats: () -> Unit,
-    onRename: () -> Unit,
-    onExport: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { expanded = true }) { Text("更多") }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text("統計") },
-                onClick = {
-                    expanded = false
-                    onStats()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("改名") },
-                onClick = {
-                    expanded = false
-                    onRename()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("匯出 GPX") },
-                onClick = {
-                    expanded = false
-                    onExport()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("刪除") },
-                onClick = {
-                    expanded = false
-                    onDelete()
-                },
-            )
-        }
-    }
-}
-
-/** Prompts for a new track name on rename (prefilled with [initialName]). Blank falls back to a default. */
-@Composable
-fun RenameTrackDialog(
-    initialName: String,
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var name by remember { mutableStateOf(initialName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("軌跡改名") },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("軌跡名稱") },
-                singleLine = true,
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim().ifEmpty { PathStore.DEFAULT_NAME }) }) { Text("確定") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-/** Confirms irreversible deletion of a saved track (the file lives in a public, uninstall-surviving folder). */
-@Composable
-fun DeleteTrackDialog(
-    trackName: String,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("刪除軌跡") },
-        text = { Text("確定要刪除 \"$trackName\" 嗎? 此操作無法復原.") },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("刪除") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

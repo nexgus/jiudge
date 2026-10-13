@@ -55,15 +55,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -114,11 +117,14 @@ import io.github.nexgus.jiudge.data.route.DuplicatePathNameException
 import io.github.nexgus.jiudge.data.route.GpxExporter
 import io.github.nexgus.jiudge.data.route.GpxImporter
 import io.github.nexgus.jiudge.data.route.GpxParseException
+import io.github.nexgus.jiudge.data.route.PATH_SIMPLIFY_TOLERANCE_M
 import io.github.nexgus.jiudge.data.route.PathKind
 import io.github.nexgus.jiudge.data.route.PathStore
 import io.github.nexgus.jiudge.data.route.PlannedRoute
 import io.github.nexgus.jiudge.data.route.RecordedTrack
+import io.github.nexgus.jiudge.data.route.SavedPath
 import io.github.nexgus.jiudge.data.route.Trace
+import io.github.nexgus.jiudge.data.route.toPlannedRoute
 import io.github.nexgus.jiudge.feature.about.AboutDialog
 import io.github.nexgus.jiudge.feature.about.MainMenuButton
 import io.github.nexgus.jiudge.feature.identify.IdentifyBar
@@ -135,34 +141,28 @@ import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.map.SearchPeakMarkerLayer
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.mapdata.MapUpdateDialog
+import io.github.nexgus.jiudge.feature.path.CopyAsPlanDialog
+import io.github.nexgus.jiudge.feature.path.DeletePathDialog
+import io.github.nexgus.jiudge.feature.path.ImportPathDialog
+import io.github.nexgus.jiudge.feature.path.MapEntryControls
 import io.github.nexgus.jiudge.feature.path.PathDisplayOptions
+import io.github.nexgus.jiudge.feature.path.PathManagerScreen
 import io.github.nexgus.jiudge.feature.path.PathOverlays
 import io.github.nexgus.jiudge.feature.path.PathStyle
+import io.github.nexgus.jiudge.feature.path.PathViewControls
+import io.github.nexgus.jiudge.feature.path.RenamePathDialog
+import io.github.nexgus.jiudge.feature.path.SavePathDialog
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
-import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
-import io.github.nexgus.jiudge.feature.planning.ImportRouteDialog
-import io.github.nexgus.jiudge.feature.planning.LoadRouteDialog
-import io.github.nexgus.jiudge.feature.planning.MapViewControls
-import io.github.nexgus.jiudge.feature.planning.PlanEntryChooser
 import io.github.nexgus.jiudge.feature.planning.PlanningBottomBar
-import io.github.nexgus.jiudge.feature.planning.RenameRouteDialog
 import io.github.nexgus.jiudge.feature.planning.RoutePlanner
-import io.github.nexgus.jiudge.feature.planning.RouteViewControls
-import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import io.github.nexgus.jiudge.feature.planning.SearchTargetControls
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
 import io.github.nexgus.jiudge.feature.recording.BackgroundLocationRationaleDialog
 import io.github.nexgus.jiudge.feature.recording.BatteryExemptionRationaleDialog
-import io.github.nexgus.jiudge.feature.recording.DeleteTrackDialog
 import io.github.nexgus.jiudge.feature.recording.DiscardRecordingDialog
-import io.github.nexgus.jiudge.feature.recording.HistoryTrackViewControls
-import io.github.nexgus.jiudge.feature.recording.LoadTrackDialog
 import io.github.nexgus.jiudge.feature.recording.PausedBottomBar
-import io.github.nexgus.jiudge.feature.recording.RecordEntryChooser
 import io.github.nexgus.jiudge.feature.recording.Recorder
 import io.github.nexgus.jiudge.feature.recording.RecordingBottomBar
-import io.github.nexgus.jiudge.feature.recording.RenameTrackDialog
-import io.github.nexgus.jiudge.feature.recording.SaveTrackDialog
 import io.github.nexgus.jiudge.feature.search.PeakSearchDialog
 import io.github.nexgus.jiudge.feature.stats.StatsScreen
 import io.github.nexgus.jiudge.feature.stats.rememberChartColors
@@ -187,52 +187,51 @@ private data class PendingRecordingStart(
 )
 
 /**
- * Fixed staging slot for a parsed-and-simplified GPX import awaiting its route name, written as a
- * regular plan trace. The geometry (potentially thousands of points) must not ride in the
- * saved-state Bundle (~1 MB binder limit), so only the prefilled name string is kept in
- * `rememberSaveable` state and the draft body lives here - the naming dialog then survives
- * activity recreation without losing the parsed import. The single fixed name doubles as cleanup:
- * a remnant from an abandoned session is simply overwritten by the next import.
+ * Fixed staging slot for a parsed GPX import awaiting its name, written as a regular path file of
+ * whichever kind the import turned out to be (a track when every point is timestamped, otherwise a
+ * planned route). The geometry (potentially thousands of points) must not ride in the saved-state
+ * Bundle (~1 MB binder limit), so only the prefilled name string is kept in `rememberSaveable`
+ * state and the draft body lives here - the naming dialog then survives activity recreation
+ * without losing the parsed import. The single fixed name doubles as cleanup: a remnant from an
+ * abandoned session is simply overwritten by the next import.
  */
 private fun importDraftFile(context: Context): File = File(context.cacheDir, "import_draft.jsonl")
 
 /**
- * Companion staging slot to [importDraftFile] holding the same GPX import as a track trace (full
- * fidelity: no simplification, per-point timestamps). Written only when the file is track-eligible
- * (every point timestamped); the naming dialog's 軌跡 / 規劃路徑 choice decides which draft is read.
+ * A saved path shown on the map. [id] is what identifies it for as long as it stays opened - it is
+ * the key of its map layer and what the focus points at - and it never changes, unlike [file],
+ * whose location follows a rename. Whenever a path (re)joins the opened paths it does so under a
+ * fresh id, which is what puts it on top of the others.
+ *
+ * Deliberately not a data class: two entries are the same only when they are the same instance, so
+ * comparing or removing one never walks the (possibly huge) point lists.
  */
-private fun importTrackDraftFile(context: Context): File = File(context.cacheDir, "import_draft_track.jsonl")
+private class OpenedPath(
+    val id: Long,
+    val path: SavedPath,
+    val file: File,
+)
 
-// Import entry points (saveable as plain strings): see `importEntry` in MapScreen.
-private const val IMPORT_ENTRY_PLAN = "plan"
-private const val IMPORT_ENTRY_TRACK = "track"
-private const val IMPORT_ENTRY_EXTERNAL = "external"
+/**
+ * Whether [a] and [b] denote the same path file. Beyond plain equality this follows a file the
+ * store has moved out of a legacy folder since one of the references was taken: a move keeps the
+ * file name, so equal names in different folders are one file - unless both still exist, in which
+ * case they are two files that merely share a name.
+ */
+private fun samePathFile(
+    a: File,
+    b: File,
+): Boolean = a == b || (a.name == b.name && !(a.exists() && b.exists()))
 
-/** Off-main-thread result of parsing + staging a picked GPX, consumed by `importGpx`. */
-private sealed interface ImportParseOutcome {
-    /** The file parsed but contains no usable segment. */
-    data object NoPoints : ImportParseOutcome
+/** The points the map is framed on when [this] path is opened. */
+private fun SavedPath.framingPoints(): List<LatLong> = polyline.ifEmpty { (this as? PlannedRoute)?.waypoints?.map { it.point }.orEmpty() }
 
-    /** Entry point requires a track but not every point carries a timestamp. */
-    data object IneligibleTrack : ImportParseOutcome
-
-    /** Drafts staged; [name] prefills the naming dialog, [trackEligible] enables its 軌跡 option. */
-    data class Staged(
-        val name: String,
-        val trackEligible: Boolean,
-    ) : ImportParseOutcome
-}
-
-// The two pickers and their view modes still handle one kind each, so they narrow the store's
-// kind-agnostic listing and loading here.
-
-private fun PathStore.listPlans(): List<PathStore.Summary> = list().filter { it.kind == PathKind.PLAN }
-
-private fun PathStore.listTracks(): List<PathStore.Summary> = list().filter { it.kind == PathKind.TRACK }
-
-private fun PathStore.loadPlan(file: File): PlannedRoute = load(file) as? PlannedRoute ?: error("not a planned route: ${file.name}")
-
-private fun PathStore.loadTrack(file: File): RecordedTrack = load(file) as? RecordedTrack ?: error("not a recorded track: ${file.name}")
+/** [this] path under another name; geometry, times and creation time are kept. */
+private fun SavedPath.renamed(name: String): SavedPath =
+    when (this) {
+        is PlannedRoute -> copy(name = name)
+        is RecordedTrack -> copy(name = name)
+    }
 
 /** Suggested file name handed to the SAF create-document picker ('/' would read as a path). */
 private fun gpxSuggestedName(name: String): String = "${name.replace('/', '-')}.gpx"
@@ -247,22 +246,21 @@ private data class StatsTarget(
 )
 
 /**
- * A saved route or track awaiting export to GPX, kept alive across the SAF "create document" picker
- * (it returns asynchronously). [file] is the source trace under Documents/Jiudge, [name] is its
- * display name (used for both the snackbar and the suggested file name), and [isTrack] selects which
- * [io.github.nexgus.jiudge.data.route.GpxExporter.write] overload to call.
+ * A saved path awaiting export to GPX, kept alive across the SAF "create document" picker (it
+ * returns asynchronously). [file] is the path file under Documents/Jiudge and [name] its display
+ * name (used for both the snackbar and the suggested file name). The exported format follows the
+ * kind the file turns out to hold when it is read.
  */
 private data class GpxExportTarget(
     val file: File,
     val name: String,
-    val isTrack: Boolean,
 ) {
     companion object {
         /** Saves the pending export across activity recreation while the SAF picker is open. */
         val Saver =
             listSaver<GpxExportTarget?, String>(
-                save = { target -> target?.let { listOf(it.file.absolutePath, it.name, it.isTrack.toString()) } ?: emptyList() },
-                restore = { saved -> if (saved.isEmpty()) null else GpxExportTarget(File(saved[0]), saved[1], saved[2].toBoolean()) },
+                save = { target -> target?.let { listOf(it.file.absolutePath, it.name) } ?: emptyList() },
+                restore = { saved -> if (saved.isEmpty()) null else GpxExportTarget(File(saved[0]), saved[1]) },
             )
     }
 }
@@ -271,7 +269,7 @@ class MainActivity : ComponentActivity() {
     private var mapView: MapView? = null
 
     // A .gpx handed over by another app (the manifest's ACTION_VIEW filters), parked here until the
-    // map screen is composed and runs the import-as-plan flow on it. Compose state so a URI that
+    // map screen is composed and runs the GPX import flow on it. Compose state so a URI that
     // arrives while the download screen is still up is picked up as soon as the map appears.
     private var pendingGpxUri by mutableStateOf<Uri?>(null)
 
@@ -439,8 +437,20 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** The three route-planning UI modes (see docs/ui.md). */
-private enum class PlanMode { MAP_VIEW, ROUTE_EDIT, ROUTE_VIEW }
+/**
+ * The three states of the map screen, which decide the bottom-start action bar (unless a recording
+ * session, which sits on top of any of them, owns that bar).
+ */
+private enum class ScreenMode {
+    /** No focused path and no edit in progress: the bar holds the entry buttons. */
+    MAP,
+
+    /** One opened path is focused: the bar acts on it. */
+    VIEW,
+
+    /** A planned route is being edited with the crosshair. */
+    EDIT,
+}
 
 // Whether the GPS accuracy circle is drawn. Hard-coded on for now; a future Settings screen
 // (feature/settings, not yet built) will expose this as a user toggle.
@@ -450,19 +460,10 @@ private const val SHOW_ACCURACY_CIRCLE = true
 // labels on - until the two on-map switches that toggle them exist.
 private val PATH_DISPLAY_OPTIONS = PathDisplayOptions(showSlope = false, showDistanceMarkers = true)
 
-// Keys of the opened paths handed to PathOverlays. The map currently shows at most one planned
-// route and one saved track (besides the recording), so one fixed key per kind is enough.
-private enum class OpenedPathSlot { PLAN, TRACK }
-
 // Centring on a searched peak keeps the current zoom, unless it is below MIN (too far out to see the
 // summit), in which case it pulls in to PEAK_VIEW.
 private const val PEAK_VIEW_MIN_ZOOM: Byte = 14
 private const val PEAK_VIEW_ZOOM: Byte = 15
-
-// Douglas-Peucker tolerance applied to every imported GPX segment. 3 m is visually lossless at the
-// deepest zoom yet cuts a 1 Hz-recorded track's point count by an order of magnitude, keeping the
-// saved file small and the per-frame overlay drawing fast.
-private const val GPX_SIMPLIFY_TOLERANCE_M = 3.0
 
 // On ON_RESUME, a fix older than this is treated as too stale to snap the map to (e.g. mid-tunnel
 // where GPS has been silent for a while - centring on the pre-tunnel spot would mislead). Short
@@ -507,9 +508,9 @@ private fun MapScreen(
     val toughDetector = remember(mapDir) { ToughPathDetector(File(mapDir, RudyMapView.BASEMAP_NAME)) }
     DisposableEffect(toughDetector) { onDispose { toughDetector.close() } }
 
-    // Every path drawn over the map - the opened route, the opened track, the plan being edited and
-    // the recording - goes through one PathOverlays per live MapView (recreated if the view is). It
-    // owns their layers and stacking order; closing it cancels any slope sampling still running.
+    // Every path drawn over the map - the opened paths, the plan being edited and the recording -
+    // goes through one PathOverlays per live MapView (recreated if the view is). It owns their
+    // layers and stacking order; closing it cancels any slope sampling still running.
     val pathOverlays =
         remember(map.value) { map.value?.let { PathOverlays(it, density, demElevation, PATH_DISPLAY_OPTIONS) } }
     DisposableEffect(pathOverlays) { onDispose { pathOverlays?.close() } }
@@ -521,23 +522,48 @@ private fun MapScreen(
             if (mv == null || pathOverlays == null) null else RoutePlanner(mv, engine, pathOverlays, toughDetector)
         }
 
-    // Shows [route] as the opened planned route. It is re-opened rather than updated in place, so
-    // the route shown last sits above a track opened before it.
-    fun showOpenedPlan(route: PlannedRoute) {
-        pathOverlays?.removeOpened(OpenedPathSlot.PLAN)
-        pathOverlays?.showOpened(
-            key = OpenedPathSlot.PLAN,
-            style = PathStyle.PLAN,
-            points = route.polyline,
-            waypoints = route.waypoints.map { it.point },
-        )
+    // The saved paths shown on the map, bottom to top; any number may be open at once. They stay
+    // on the map through leaving the view state, editing another plan and recording, and go away
+    // only through 清除 or by deleting the path in the file manager. Memory only: a restart (or the
+    // screen rebuild after a map-data update) begins with none.
+    var openedPaths by remember { mutableStateOf<List<OpenedPath>>(emptyList()) }
+    var nextOpenedId by remember { mutableLongStateOf(0L) }
+
+    // The opened path the view-state action bar acts on; null when none is focused.
+    var focusId by remember { mutableStateOf<Long?>(null) }
+    val focusedPath by remember { derivedStateOf { openedPaths.firstOrNull { it.id == focusId } } }
+
+    // Raised while a plan is being edited through the planner. editSource is the opened path the
+    // edit started from - off openedPaths for the duration, since the editing layer draws it
+    // instead - and is what 取消 puts back; null while a brand-new plan is being edited.
+    var editing by remember { mutableStateOf(false) }
+    var editSource by remember { mutableStateOf<OpenedPath?>(null) }
+
+    // Derived, never set: editing wins, otherwise a focused path means the view state. Read through
+    // the state delegate so long-lived effects and callbacks always see the current value.
+    val mode by remember {
+        derivedStateOf {
+            when {
+                editing -> ScreenMode.EDIT
+                focusedPath != null -> ScreenMode.VIEW
+                else -> ScreenMode.MAP
+            }
+        }
     }
 
-    fun clearOpenedPlan() {
-        pathOverlays?.removeOpened(OpenedPathSlot.PLAN)
+    fun openedFor(file: File): OpenedPath? = openedPaths.firstOrNull { samePathFile(it.file, file) }
+
+    // Puts [path] on the map as the topmost opened path and returns its entry. An entry already
+    // showing the same file is dropped first, so a file is never on the map twice.
+    fun addOpened(
+        path: SavedPath,
+        file: File,
+    ): OpenedPath {
+        val opened = OpenedPath(nextOpenedId++, path, file)
+        openedPaths = openedPaths.filterNot { samePathFile(it.file, file) } + opened
+        return opened
     }
 
-    var mode by remember { mutableStateOf(PlanMode.MAP_VIEW) }
     var busy by remember { mutableStateOf(false) }
 
     // Main menu / "關於": the installed map version is read off the main thread once, so the dialog
@@ -640,43 +666,30 @@ private fun MapScreen(
         position.setMapPosition(MapPosition(peak.position, targetZoom))
     }
 
-    var showChooser by remember { mutableStateOf(false) }
     var showSave by remember { mutableStateOf(false) }
-    var loadList by remember { mutableStateOf<List<PathStore.Summary>?>(null) }
-    // Set while a rename/delete dialog is open over the load picker; null when none is pending.
+    // The file manager's listing; non-null keeps the full-screen file manager open.
+    var managerList by remember { mutableStateOf<List<PathStore.Summary>?>(null) }
+    // Set while a rename / delete / copy dialog is open over the file manager; null when none is
+    // pending. deleteTargetOpened records, as the delete dialog opens, whether that path is on the
+    // map - the confirmation says so. The two name drafts keep what was typed across a
+    // rejected-duplicate name, like saveNameDraft below.
     var renameTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
+    var renameNameDraft by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
-    // Route currently drawn as the opened plan: shown in ROUTE_VIEW, and kept in MAP_VIEW after 離開.
-    var displayedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
-    // Backing file of displayedRoute (the file it was loaded from or last saved to); null when no
-    // file backs it (e.g. it was deleted from the picker). Drives the 匯出 GPX pill in route view.
-    var displayedRouteFile by remember { mutableStateOf<File?>(null) }
-    // What ROUTE_EDIT "取消" reverts to: set when entering edit, refreshed on save.
-    var editBaseline by remember { mutableStateOf<PlannedRoute?>(null) }
-    // Raised on 新增, lowered after the first save: a brand-new route has no edit source, so its
-    // save replaces nothing, while re-saving an edited route replaces the file it was loaded from
-    // and may therefore keep its own name.
-    var isNewRoute by remember { mutableStateOf(false) }
+    var deleteTargetOpened by remember { mutableStateOf(false) }
+    var copyTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
+    var copyNameDraft by remember { mutableStateOf<String?>(null) }
     // Name kept across a rejected-duplicate save so the reopened dialog prefills it for editing.
     var saveNameDraft by remember { mutableStateOf<String?>(null) }
-    // Prefilled name of a parsed GPX import awaiting its route name; non-null keeps the naming
-    // dialog open. Saveable (the draft geometry itself is staged in [importDraftFile]) so the
-    // dialog survives rotation and process death instead of forcing a re-import.
+    // Prefilled name of a parsed GPX import awaiting its name; non-null keeps the naming dialog
+    // open. Saveable (the draft geometry itself is staged in [importDraftFile]) so the dialog
+    // survives rotation and process death instead of forcing a re-import.
     var importDraftName by rememberSaveable { mutableStateOf<String?>(null) }
-    // Whether the staged import is track-eligible (every point timestamped, so a track draft was
-    // also staged in [importTrackDraftFile]); drives the naming dialog's 軌跡 / 規劃路徑 choice.
-    // Saveable for the same reason as importDraftName.
-    var importDraftTrackEligible by rememberSaveable { mutableStateOf(false) }
-    // Which entry point launched the import, set before the picker launches (docs/ui.md): the 錄製
-    // 軌跡 chooser fixes the type to 軌跡 (no choice shown; an ineligible file is a hard error),
-    // the 規劃路徑 chooser defaults the choice to 規劃路徑, an external `.gpx` hand-over defaults
-    // it to 軌跡. Saveable for the same reason as importDraftName.
-    var importEntry by rememberSaveable { mutableStateOf(IMPORT_ENTRY_PLAN) }
     // Save/load failures mean data was not written or cannot be read back - errors the user must
     // not miss - so they raise a blocking dialog instead of a timed snackbar (see CLAUDE.md,
     // "Message surfaces"). Null while no such error is showing.
     var storageErrorMessage by remember { mutableStateOf<String?>(null) }
-    // Route or track awaiting GPX export, held from the picker launch until the SAF callback fires.
+    // Path awaiting GPX export, held from the picker launch until the SAF callback fires.
     // Saveable: the picker is a separate activity, so ours may be recreated (rotation, process
     // death) before the callback delivers the destination URI.
     var exportTarget by rememberSaveable(stateSaver = GpxExportTarget.Saver) { mutableStateOf<GpxExportTarget?>(null) }
@@ -699,12 +712,8 @@ private fun MapScreen(
 
     // Dialog flags for the recording flow. saveTrackNameDraft mirrors saveNameDraft - preserved
     // across a rejected duplicate so the reopened dialog prefills the typed name for editing.
-    var showRecordEntryChooser by remember { mutableStateOf(false) }
     var showSaveTrack by remember { mutableStateOf(false) }
     var showDiscardRecording by remember { mutableStateOf(false) }
-    var loadTrackList by remember { mutableStateOf<List<PathStore.Summary>?>(null) }
-    var renameTrackTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
-    var deleteTrackTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
     var saveTrackNameDraft by remember { mutableStateOf<String?>(null) }
     // Pending start request held across the permission flow. null source = brand-new recording;
     // non-null source = continuation of that saved track. Cleared once the service is dispatched
@@ -719,16 +728,6 @@ private fun MapScreen(
     // Strict-lease Recording acquire cannot collide). Declared up here rather than beside the other
     // map-marker state so dispatchPendingStart, defined a few lines below, can see it.
     var gpsOwnership: GpsSource.Ownership? by remember { mutableStateOf(null) }
-
-    // History-track viewing state. historyTrack holds the loaded RecordedTrack (null when nothing is
-    // loaded); historyTrackFile is the on-disk file it was loaded from (kept so 繼續錄製 can hand it
-    // to recorder.startContinuation without re-resolving by name). viewingHistory is the sub-mode
-    // flag that surfaces the "繼續錄製 / 離開" action bar - 離開 keeps historyTrack on screen but
-    // exits the sub-mode, so the user sees the main map controls again with the blue overlay still
-    // visible until cleared.
-    var historyTrack by remember { mutableStateOf<RecordedTrack?>(null) }
-    var historyTrackFile by remember { mutableStateOf<File?>(null) }
-    var viewingHistory by remember { mutableStateOf(false) }
 
     // Storage-access gate: saving/loading routes writes the fixed public folder Documents/Jiudge,
     // which needs All files access on Android 11+ (a Settings toggle) or legacy WRITE_EXTERNAL_STORAGE
@@ -885,30 +884,24 @@ private fun MapScreen(
 
     // GPX import: a one-off content URI from the system document picker or from another app's
     // ACTION_VIEW hand-over (reading it needs no storage permission - only the later save into
-    // Documents/Jiudge does). Parsing and Douglas-Peucker simplification run off the main thread;
-    // the parsed geometry is staged on disk (a plan draft in [importDraftFile], plus a full-fidelity
-    // track draft in [importTrackDraftFile] when every point is timestamped) and only the prefilled
-    // name parks in importDraftName, whose naming dialog drives the save - so an activity recreation
-    // under the dialog costs nothing. Parse failures and empty files are data-level errors the user
-    // must not miss, so they raise the blocking error dialog (see CLAUDE.md "Message surfaces").
+    // Documents/Jiudge does). What the file becomes follows from its contents and is never asked:
+    // a track when every point is timestamped (all points and times kept, created at the earliest
+    // one), otherwise a planned route (times dropped, each segment simplified and marked imported).
+    // Parsing runs off the main thread; the result is staged on disk in [importDraftFile] and only
+    // the prefilled name parks in importDraftName, whose naming dialog drives the save - so an
+    // activity recreation under the dialog costs nothing. Parse failures and empty files are
+    // data-level errors the user must not miss, so they raise the blocking error dialog (see
+    // CLAUDE.md "Message surfaces").
     fun importGpx(uri: Uri) {
         scope.launch {
             try {
-                val outcome =
+                // Null when the file parsed but holds no usable segment.
+                val stagedName =
                     withContext(Dispatchers.IO) {
                         val parsed =
                             context.contentResolver.openInputStream(uri)?.use { GpxImporter.parse(it) }
                                 ?: throw GpxParseException("cannot open the selected file")
-                        val segments =
-                            parsed.segments.map { seg ->
-                                simplifyPolyline(seg.map { it.latLong }, GPX_SIMPLIFY_TOLERANCE_M)
-                            }
-                        if (segments.isEmpty()) return@withContext ImportParseOutcome.NoPoints
-                        // The 錄製軌跡 entry fixes the type to 軌跡: an ineligible file is a hard
-                        // error before anything is staged, never a silent fallback to a plan.
-                        if (importEntry == IMPORT_ENTRY_TRACK && !parsed.isTrackEligible) {
-                            return@withContext ImportParseOutcome.IneligibleTrack
-                        }
+                        if (parsed.segments.isEmpty()) return@withContext null
                         // Prefer the name embedded in the file; fall back to the display name
                         // (file name without extension) the provider reports. Purely best-effort:
                         // a provider that ignores the projection, omits the column, or throws must
@@ -929,32 +922,27 @@ private fun MapScreen(
                                 ?.trim()
                                 .orEmpty()
                                 .ifEmpty { fallbackName.orEmpty() }
-                        val draft = PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), segments)
-                        Trace.write(importDraftFile(context), draft.header(), draft.toRecords())
-                        // Track draft: unsimplified flattened points with their timestamps. A stale
-                        // draft from an earlier ineligible import is deleted rather than left to be
-                        // read by mistake.
-                        if (parsed.isTrackEligible) {
-                            val points =
-                                parsed.segments.flatten().map { p ->
-                                    RecordedTrack.Point(p.latitude, p.longitude, requireNotNull(p.timeMs))
-                                }
-                            val trackDraft =
+                        val draft: SavedPath =
+                            if (parsed.isTrackEligible) {
+                                val points =
+                                    parsed.segments.flatten().map { p ->
+                                        RecordedTrack.Point(p.latitude, p.longitude, requireNotNull(p.timeMs))
+                                    }
                                 RecordedTrack(name = name, createdAtEpochMs = points.minOf { it.timeMs }, points = points)
-                            Trace.write(importTrackDraftFile(context), trackDraft.header(), trackDraft.toRecords())
-                        } else {
-                            importTrackDraftFile(context).delete()
-                        }
-                        ImportParseOutcome.Staged(name, parsed.isTrackEligible)
+                            } else {
+                                val segments =
+                                    parsed.segments.map { seg ->
+                                        simplifyPolyline(seg.map { it.latLong }, PATH_SIMPLIFY_TOLERANCE_M)
+                                    }
+                                PlannedRoute.fromImportedSegments(name, System.currentTimeMillis(), segments)
+                            }
+                        Trace.write(importDraftFile(context), draft.header(), draft.toRecords())
+                        name
                     }
-                when (outcome) {
-                    is ImportParseOutcome.NoPoints -> storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
-                    is ImportParseOutcome.IneligibleTrack ->
-                        storageErrorMessage = "匯入失敗: 檔內無完整時間資訊, 無法匯入為軌跡"
-                    is ImportParseOutcome.Staged -> {
-                        importDraftName = outcome.name
-                        importDraftTrackEligible = outcome.trackEligible
-                    }
+                if (stagedName == null) {
+                    storageErrorMessage = "匯入失敗: 檔案內沒有任何軌跡點"
+                } else {
+                    importDraftName = stagedName
                 }
             } catch (e: Exception) {
                 storageErrorMessage = "匯入失敗: ${e.message}"
@@ -967,19 +955,15 @@ private fun MapScreen(
             if (uri != null) importGpx(uri)
         }
 
-    // A .gpx opened from another app: same import flow as the in-app picker. Refused while a route
-    // edit is in progress - the naming dialog's confirm clears the planner and switches to
-    // ROUTE_VIEW, which would discard the unsaved edit. Consumed (cleared) up front so a
-    // recomposition cannot replay the parse.
+    // A .gpx opened from another app: same import flow as the file manager's picker. Refused while
+    // a plan is being edited, so the unsaved edit is never left behind a freshly imported path.
+    // Consumed (cleared) up front so a recomposition cannot replay the parse.
     LaunchedEffect(externalGpxUri) {
         val uri = externalGpxUri ?: return@LaunchedEffect
         onExternalGpxConsumed()
-        if (mode == PlanMode.ROUTE_EDIT) {
+        if (mode == ScreenMode.EDIT) {
             snackbarHostState.showSnackbar("路徑編輯中, 無法匯入 GPX; 請先儲存或離開編輯")
         } else {
-            // No entry-point context on a hand-over: a fully timestamped GPX is a recording of an
-            // actual walk, so default the naming dialog's choice to 軌跡.
-            importEntry = IMPORT_ENTRY_EXTERNAL
             importGpx(uri)
         }
     }
@@ -1023,8 +1007,9 @@ private fun MapScreen(
                 storageErrorMessage = "匯出失敗: 匯出目標已遺失, 請重新操作"
                 return@rememberLauncherForActivityResult
             }
-            // Reading the source trace lives under Documents/Jiudge, which needs storage access;
-            // writing to the picked SAF uri does not.
+            // Reading the source path file lives under Documents/Jiudge, which needs storage
+            // access; writing to the picked SAF uri does not. The file's kind picks the format: a
+            // planned route goes out as named waypoints plus a route, a track as a timed track.
             withStorageAccess {
                 scope.launch {
                     try {
@@ -1035,10 +1020,9 @@ private fun MapScreen(
                                 context.contentResolver.openOutputStream(uri)
                                     ?: error("cannot open the destination file")
                             stream.use { out ->
-                                if (target.isTrack) {
-                                    GpxExporter.write(pathStore.loadTrack(target.file), out, lookup)
-                                } else {
-                                    GpxExporter.write(pathStore.loadPlan(target.file), out, lookup)
+                                when (val path = pathStore.load(target.file)) {
+                                    is PlannedRoute -> GpxExporter.write(path, out, lookup)
+                                    is RecordedTrack -> GpxExporter.write(path, out, lookup)
                                 }
                             }
                         }
@@ -1192,7 +1176,7 @@ private fun MapScreen(
 
     // Pixel sizes of the map-overlay container and the two bottom control groups. Drive the
     // small-screen fallback that lifts the bottom-end FAB column above the bottom-start pill row
-    // when they would otherwise overlap (e.g. with three pills in MapViewControls on narrow phones).
+    // when they would otherwise overlap (e.g. with the four view-state pills on narrow phones).
     var mapContainerWidthPx by remember { mutableStateOf(0) }
     var pillRowWidthPx by remember { mutableStateOf(0) }
     var pillRowHeightPx by remember { mutableStateOf(0) }
@@ -1261,15 +1245,41 @@ private fun MapScreen(
         }.collect { start -> overlays.setRecordingProvisionalStart(start) }
     }
 
-    // History-track overlay: show whichever saved track is currently loaded as the opened track;
-    // null clears it. Keyed on the point list rather than the track itself, so a rename (same
-    // points) leaves the line untouched while a different track is re-opened above the route.
-    LaunchedEffect(pathOverlays, historyTrack?.points) {
+    // Opened-path overlays: mirror openedPaths onto the map, one layer per entry keyed by its id.
+    // An entry's geometry never changes under its id - an edit or a continued recording comes back
+    // as a new entry - so only ids that appeared or went away need any work, and a rename touches
+    // nothing. New ids are always at the end of the list, so showing them in list order stacks
+    // them above the paths already there (and rebuilds the whole order on a fresh PathOverlays).
+    LaunchedEffect(pathOverlays) {
         val overlays = pathOverlays ?: return@LaunchedEffect
-        overlays.removeOpened(OpenedPathSlot.TRACK)
-        historyTrack?.let { track ->
-            overlays.showOpened(key = OpenedPathSlot.TRACK, style = PathStyle.TRACK, points = track.polyline)
+        var shownIds = emptySet<Long>()
+        snapshotFlow { openedPaths }.collect { paths ->
+            val ids = paths.mapTo(HashSet()) { it.id }
+            (shownIds - ids).forEach { overlays.removeOpened(it) }
+            for (opened in paths) {
+                if (opened.id in shownIds) continue
+                val path = opened.path
+                overlays.showOpened(
+                    key = opened.id,
+                    style = if (path.kind == PathKind.TRACK) PathStyle.TRACK else PathStyle.PLAN,
+                    points = path.polyline,
+                    waypoints = (path as? PlannedRoute)?.waypoints?.map { it.point }.orEmpty(),
+                )
+            }
+            shownIds = ids
         }
+    }
+
+    // A continued recording takes its source track off the opened paths: all of that track's
+    // points are the start of the recording now, so the recording layer draws them. Done once the
+    // session is actually live rather than on the button press, so a start that never happens (a
+    // permission refused along the way) leaves the track where it was, still focused.
+    LaunchedEffect(recordingState) {
+        if (recordingState == Recorder.State.IDLE) return@LaunchedEffect
+        val source = RecordingController.currentSession()?.takeIf { it.isContinuation }?.source ?: return@LaunchedEffect
+        val taken = openedFor(source) ?: return@LaunchedEffect
+        openedPaths = openedPaths - taken
+        if (focusId == taken.id) focusId = null
     }
 
     LaunchedEffect(searchPeakLayer, pendingPeak) {
@@ -1318,11 +1328,11 @@ private fun MapScreen(
                     }
                     headingProvider.start()
                     // Only refocus when the current UI context is one where following makes sense
-                    // (plain map view, or recording on top of it - all with no search / route work
-                    // in progress). Inside ROUTE_VIEW / ROUTE_EDIT, or with a pending search peak
+                    // (the plain map state, or recording on top of it - all with no search / path
+                    // work in progress). In the view or edit state, or with a pending search peak
                     // / open search dialog, the user is deliberately looking at something else -
                     // keep the map where they left it and let followUser retain its prior value.
-                    if (mode == PlanMode.MAP_VIEW && pendingPeak == null && !searchDialogOpen && !suppressResumeRefocus) {
+                    if (mode == ScreenMode.MAP && pendingPeak == null && !searchDialogOpen && !suppressResumeRefocus) {
                         followUser = true
                         // Snap the map onto the last known position now if it is fresh; a stale
                         // fix (typically inside a long tunnel where GPS has been silent) would
@@ -1435,7 +1445,7 @@ private fun MapScreen(
     }
 
     // 1 Hz: per-fix safe-zone follow and first-fix center. Restarted when the MapView is recreated or
-    // when the plan mode changes; entering ROUTE_EDIT (tapping the crosshair to add waypoints)
+    // when the screen mode changes; entering the edit state (tapping the crosshair to add waypoints)
     // disables the safe-zone push so the map does not slide under the user's tap.
     LaunchedEffect(map.value, mode) {
         val mv = map.value ?: return@LaunchedEffect
@@ -1454,17 +1464,17 @@ private fun MapScreen(
                 // on release and this branch never fires.
                 recenterOnFix = false
                 mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
-            } else if (mode == PlanMode.MAP_VIEW &&
+            } else if (mode == ScreenMode.MAP &&
                 pendingPeak == null &&
                 !searchDialogOpen &&
                 !userTouching &&
                 followUser
             ) {
                 // The mode / pendingPeak / searchDialogOpen trio is the context gate: follow only
-                // in plain map view (recording sits on top of MAP_VIEW so it is included) with no
-                // search dialog and no pending search peak. ROUTE_VIEW / ROUTE_EDIT and the search
-                // flow are cases where the user is deliberately looking at something other than
-                // their own location, so an incoming fix must not drag the map away.
+                // in the plain map state (recording sits on top of it so it is included) with no
+                // search dialog and no pending search peak. The view state, the edit state and the
+                // search flow are cases where the user is deliberately looking at something other
+                // than their own location, so an incoming fix must not drag the map away.
                 // followUser gates every automatic pan below. It is only false once one of the
                 // user's own map gestures ended with the marker outside the viewport (see the
                 // touch listener below), or the user explicitly picked a target to look at
@@ -1575,6 +1585,95 @@ private fun MapScreen(
         } else {
             recenterOnFix = true
             scope.launch { snackbarHostState.showSnackbar("正在定位中, 取得位置後將自動置中") }
+        }
+    }
+
+    // Enters the edit state on a blank plan; opened paths stay on the map. Routing a leg needs the
+    // BRouter data, so without it the edit state is not entered and a timed message says why.
+    fun startNewPlan() {
+        if (!engine.isReady()) {
+            scope.launch { snackbarHostState.showSnackbar("BRouter 路由資料未就緒, 無法規劃路徑") }
+            return
+        }
+        planner?.clear()
+        editSource = null
+        editing = true
+    }
+
+    // Enters the edit state on an opened planned route: it leaves the opened paths (the others
+    // stay on the map) and the planner's editing layer draws it instead.
+    fun startEditing(source: OpenedPath) {
+        val route = source.path as? PlannedRoute ?: return
+        val activePlanner = planner ?: return
+        openedPaths = openedPaths - source
+        focusId = null
+        editSource = source
+        activePlanner.loadFrom(route)
+        // loadFrom pans to the route's first waypoint: stop following so the next fix does not
+        // drag the map back onto the marker.
+        followUser = false
+        recenterOnFix = false
+        editing = true
+    }
+
+    // Leaves the edit state without saving. A route that was opened before the edit goes back on
+    // the map as it was, on top and focused; a brand-new plan leaves nothing behind.
+    fun cancelEditing() {
+        planner?.clear()
+        val source = editSource
+        editSource = null
+        editing = false
+        if (source != null) focusId = addOpened(source.path, source.file).id
+    }
+
+    // Opens the file manager on a fresh listing. The manager belongs to the plain map state, so a
+    // listing that arrives after the screen has moved on - a tap on 規劃 or 錄製 landed while the
+    // folder was being read - is dropped.
+    fun openManager() {
+        scope.launch {
+            try {
+                val listing = withContext(Dispatchers.IO) { pathStore.list() }
+                if (mode == ScreenMode.MAP && recordingState == Recorder.State.IDLE) managerList = listing
+            } catch (e: Exception) {
+                storageErrorMessage = "讀取清單失敗: ${e.message}"
+            }
+        }
+    }
+
+    // Re-reads the listing after the file manager changed something. Dropped when the manager was
+    // closed in the meantime, since assigning the listing is what shows it.
+    suspend fun reloadManagerList() {
+        try {
+            val fresh = withContext(Dispatchers.IO) { pathStore.list() }
+            if (managerList != null) managerList = fresh
+        } catch (e: Exception) {
+            storageErrorMessage = "讀取清單失敗: ${e.message}"
+        }
+    }
+
+    // Opens a path picked in the file manager: it joins the opened paths (those already on the map
+    // stay), the manager closes, the map frames the whole path and it becomes the focused one. A
+    // path that is already open is not added again - it is only focused and framed. On a read
+    // failure the manager stays up under the error dialog.
+    fun openPath(summary: PathStore.Summary) {
+        fun focus(opened: OpenedPath) {
+            managerList = null
+            focusId = opened.id
+            map.value?.fitToRoute(opened.path.framingPoints())
+        }
+        val shown = openedFor(summary.file)
+        if (shown != null) {
+            focus(shown)
+            return
+        }
+        scope.launch {
+            try {
+                val path = withContext(Dispatchers.IO) { pathStore.load(summary.file) }
+                // A second tap on the row may have opened it while this read was running.
+                focus(openedFor(summary.file) ?: addOpened(path, summary.file))
+            } catch (e: Exception) {
+                storageErrorMessage = "開啟失敗: ${e.message}"
+            }
         }
     }
 
@@ -1824,14 +1923,14 @@ private fun MapScreen(
         // following".
         //
         // Placement: by default it sits at BottomEnd on the same baseline as the bottom-start pill
-        // row. On small screens, where the pill row (e.g. all three of 錄製軌跡/規劃路徑/清除軌跡/路徑)
-        // would otherwise overlap this column, it lifts above the pill row instead - measured live
+        // row. On small screens, where the pill row (e.g. the four pills of the view state) would
+        // otherwise overlap this column, it lifts above the pill row instead - measured live
         // off the actual pill-row width/height and the container width, so the choice adapts to
         // whatever pill set the current mode is showing.
         if (!identifyMode &&
             identifyResult == null &&
             identifyCandidates == null &&
-            mode != PlanMode.ROUTE_EDIT
+            mode != ScreenMode.EDIT
         ) {
             val stackAboveGapDp = 12.dp
             // True only when we have measurements for both groups AND they would overlap. The
@@ -1874,7 +1973,7 @@ private fun MapScreen(
         }
 
         // Crosshair only while editing a route (independent of the bottom controls row).
-        if (mode == PlanMode.ROUTE_EDIT && !identifyMode && identifyResult == null) {
+        if (mode == ScreenMode.EDIT && !identifyMode && identifyResult == null) {
             CrosshairOverlay(modifier = Modifier.fillMaxSize())
         }
 
@@ -1903,9 +2002,8 @@ private fun MapScreen(
                 )
             } else if (!identifyMode && identifyResult == null && recordingState == Recorder.State.RECORDING) {
                 // While a recording session is alive the bottom-start row is owned by the recording
-                // bar; the map-view / planning controls do not show. This also hides "規劃路徑"
-                // during recording, sidestepping the bottom-row collision the planning flow would
-                // otherwise cause.
+                // bar; the entry / view / editing controls do not show. This also hides "規劃" and
+                // "檔案" during recording: a reference path is opened before the recording starts.
                 RecordingBottomBar(
                     onStop = {
                         // Spec C: pause (not stop-and-finalise) - the service keeps the GPS
@@ -1946,59 +2044,24 @@ private fun MapScreen(
                 )
             } else if (!identifyMode && identifyResult == null) {
                 when (mode) {
-                    PlanMode.MAP_VIEW ->
-                        if (viewingHistory && historyTrack != null) {
-                            // History-track viewing sub-mode: equal-width 繼續錄製 / 離開 pair.
-                            // 繼續錄製 seeds the recorder from the loaded file and transitions to
-                            // the recording state (RecordingBottomBar takes over via the
-                            // recordingState branch above). 離開 keeps the blue overlay on screen
-                            // but exits the sub-mode, returning to the default MapViewControls -
-                            // the user can then clear via "清除軌跡/路徑".
-                            HistoryTrackViewControls(
-                                onContinue = {
-                                    val file = historyTrackFile
-                                    if (file != null) {
-                                        viewingHistory = false
-                                        requestStartRecording(continuationSource = file)
-                                    }
-                                },
-                                onStats = {
-                                    historyTrack?.let { track ->
-                                        openStats(track.name, isTrack = true) {
-                                            track.polyline to track.points.map { it.timeMs }
-                                        }
-                                    }
-                                },
-                                onExport =
-                                    historyTrackFile?.let { file ->
-                                        historyTrack?.let { track ->
-                                            {
-                                                exportTarget = GpxExportTarget(file, track.name, isTrack = true)
-                                                gpxExportLauncher.launch(gpxSuggestedName(track.name))
-                                            }
-                                        }
-                                    },
-                                onLeave = { viewingHistory = false },
-                            )
-                        } else {
-                            MapViewControls(
-                                canRecord = locationGranted,
-                                canClear = displayedRoute != null || historyTrack != null,
-                                onRecord = {
-                                    withStorageAccess { showRecordEntryChooser = true }
-                                },
-                                onPlan = { showChooser = true },
-                                onClear = {
-                                    clearOpenedPlan()
-                                    displayedRoute = null
-                                    displayedRouteFile = null
-                                    historyTrack = null
-                                    historyTrackFile = null
-                                },
-                            )
-                        }
+                    ScreenMode.MAP ->
+                        MapEntryControls(
+                            canRecord = locationGranted,
+                            canClear = openedPaths.isNotEmpty(),
+                            // 錄製 and 規劃 start right away, with no chooser in between.
+                            onRecord = {
+                                withStorageAccess { requestStartRecording(continuationSource = null) }
+                            },
+                            onPlan = { startNewPlan() },
+                            onFiles = { withStorageAccess { openManager() } },
+                            // Takes every opened path off the map; the files are untouched.
+                            onClear = {
+                                openedPaths = emptyList()
+                                focusId = null
+                            },
+                        )
 
-                    PlanMode.ROUTE_EDIT ->
+                    ScreenMode.EDIT ->
                         PlanningBottomBar(
                             waypointCount = planner?.waypoints?.size ?: 0,
                             canRemove = planner?.canRemoveLast ?: false,
@@ -2014,61 +2077,76 @@ private fun MapScreen(
                             },
                             onRemove = { planner?.removeLastWaypoint() },
                             onSave = { showSave = true },
-                            onCancel = {
-                                planner?.clear()
-                                val baseline = editBaseline
-                                if (baseline != null) {
-                                    showOpenedPlan(baseline)
-                                    displayedRoute = baseline
-                                    mode = PlanMode.ROUTE_VIEW
-                                } else {
-                                    displayedRoute = null
-                                    displayedRouteFile = null
-                                    mode = PlanMode.MAP_VIEW
-                                }
-                            },
+                            onCancel = { cancelEditing() },
                         )
 
-                    PlanMode.ROUTE_VIEW ->
-                        RouteViewControls(
-                            onEdit = {
-                                val route = displayedRoute
-                                if (route != null && planner != null) {
-                                    clearOpenedPlan()
-                                    planner.loadFrom(route)
-                                    // loadFrom pans to the route's first waypoint: stop following
-                                    // so the next fix does not drag the map back onto the marker.
-                                    followUser = false
-                                    recenterOnFix = false
-                                    editBaseline = route
-                                    isNewRoute = false
-                                    mode = PlanMode.ROUTE_EDIT
-                                }
-                            },
-                            onStats = {
-                                displayedRoute?.let { route ->
-                                    openStats(route.name, isTrack = false) { route.polyline to null }
-                                }
-                            },
-                            onExport =
-                                displayedRouteFile?.let { file ->
-                                    displayedRoute?.let { route ->
-                                        {
-                                            exportTarget = GpxExportTarget(file, route.name, isTrack = false)
-                                            gpxExportLauncher.launch(gpxSuggestedName(route.name))
-                                        }
+                    ScreenMode.VIEW ->
+                        focusedPath?.let { focused ->
+                            val path = focused.path
+                            PathViewControls(
+                                kind = path.kind,
+                                onEdit = { startEditing(focused) },
+                                // The track stays focused until the session is live (see the
+                                // effect that takes a continuation's source off the opened paths).
+                                onContinueRecording = { requestStartRecording(continuationSource = focused.file) },
+                                onStats = {
+                                    openStats(path.name, isTrack = path.kind == PathKind.TRACK) {
+                                        path.polyline to path.pointTimesMs
                                     }
                                 },
-                            onLeave = { mode = PlanMode.MAP_VIEW },
-                        )
+                                onExport = {
+                                    exportTarget = GpxExportTarget(focused.file, path.name)
+                                    gpxExportLauncher.launch(gpxSuggestedName(path.name))
+                                },
+                                // Back to the map state; the path stays on the map as an opened path.
+                                onLeave = { focusId = null },
+                            )
+                        }
                 }
             }
         }
 
-        // Stats overlay: drawn last inside the map Box so it covers the map, banners, and controls
-        // (its opaque Surface also swallows touches). Back and 關閉 both just clear the state; the
-        // underlying mode (route view / history view) is untouched, so closing lands back where the
-        // user came from.
+        // File manager: a full-screen surface over the map, banners and controls. Being part of
+        // this screen rather than a dialog window, timed messages still show above it and the
+        // stats overlay below can cover it in turn. Every action but opening a path, a finished
+        // import and closing leaves the manager up.
+        managerList?.let { summaries ->
+            PathManagerScreen(
+                summaries = summaries,
+                onOpen = { openPath(it) },
+                onStats = { summary ->
+                    // Reading the path file needs the same storage access as opening it.
+                    withStorageAccess {
+                        openStats(summary.name, isTrack = summary.kind == PathKind.TRACK) {
+                            val path = pathStore.load(summary.file)
+                            path.polyline to path.pointTimesMs
+                        }
+                    }
+                },
+                onRename = { renameTarget = it },
+                onExport = { summary ->
+                    exportTarget = GpxExportTarget(summary.file, summary.name)
+                    gpxExportLauncher.launch(gpxSuggestedName(summary.name))
+                },
+                onCopyAsPlan = { copyTarget = it },
+                onDelete = { summary ->
+                    deleteTargetOpened = openedFor(summary.file) != null
+                    deleteTarget = summary
+                },
+                onImport = {
+                    // GPX has no reliably registered MIME type (providers commonly report
+                    // application/octet-stream), so do not filter - the parser rejects non-GPX content.
+                    gpxPickerLauncher.launch(arrayOf("*/*"))
+                },
+                onClose = { managerList = null },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        // Stats overlay: drawn last inside the map Box so it covers the map, banners, controls and
+        // the file manager (its opaque Surface also swallows touches). Back and 關閉 both just clear
+        // the state; whatever it was opened from - the view state or the file manager - is
+        // untouched underneath, so closing lands back where the user came from.
         statsTarget?.let { target ->
             StatsScreen(
                 name = target.name,
@@ -2099,84 +2177,51 @@ private fun MapScreen(
         )
     }
 
-    if (showChooser) {
-        PlanEntryChooser(
-            onNew = {
-                showChooser = false
-                if (engine.isReady()) {
-                    clearOpenedPlan()
-                    planner?.clear()
-                    displayedRoute = null
-                    displayedRouteFile = null
-                    editBaseline = null
-                    isNewRoute = true
-                    mode = PlanMode.ROUTE_EDIT
-                } else {
-                    scope.launch {
-                        snackbarHostState.showSnackbar("BRouter 路由資料未就緒, 無法規劃路徑")
-                    }
-                }
-            },
-            onLoad = {
-                showChooser = false
-                withStorageAccess {
-                    scope.launch {
-                        try {
-                            loadList = withContext(Dispatchers.IO) { pathStore.listPlans() }
-                        } catch (e: Exception) {
-                            storageErrorMessage = "讀取清單失敗: ${e.message}"
-                        }
-                    }
-                }
-            },
-            onImport = {
-                showChooser = false
-                importEntry = IMPORT_ENTRY_PLAN
-                // GPX has no reliably registered MIME type (providers commonly report
-                // application/octet-stream), so do not filter - the parser rejects non-GPX content.
-                gpxPickerLauncher.launch(arrayOf("*/*"))
-            },
-            onCancel = { showChooser = false },
-        )
-    }
-
     importDraftName?.let { draftName ->
-        // On confirm the 軌跡 / 規劃路徑 choice picks which staged draft is read: the plan draft
-        // (simplified geometry) or the track draft (full fidelity + timestamps). Both remain staged
-        // across a rejected-duplicate reopen, so retrying under another name re-reads them.
-        fun saveImportedPlan(name: String) {
+        // Saves the staged import under [name] and shows it: whichever kind the draft holds, it
+        // becomes the topmost opened path, is focused and framed whole, and the file manager and
+        // the stats screen - either may be up when the import came from another app - close. The
+        // draft stays staged across a rejected-duplicate reopen, so retrying under another name
+        // re-reads it.
+        fun saveImported(name: String) {
             scope.launch {
                 // The staged draft can only vanish if the OS cleared the cache dir while the
                 // naming dialog was open - rare, but report it rather than silently dropping
-                // an explicit 確認.
+                // an explicit 匯入.
                 val staged =
                     withContext(Dispatchers.IO) {
                         runCatching {
-                            Trace.read(importDraftFile(context))?.let { PlannedRoute.fromTrace(it) }
+                            Trace.read(importDraftFile(context))?.let { SavedPath.fromTrace(it) }
                         }.getOrNull()
                     }
                 if (staged == null) {
                     storageErrorMessage = "匯入失敗: 草稿已遺失, 請重新匯入"
                     return@launch
                 }
-                val route = staged.copy(name = name, createdAtEpochMs = System.currentTimeMillis())
+                // A track keeps the creation time taken from its earliest point; a planned route
+                // is created now.
+                val imported: SavedPath =
+                    when (staged) {
+                        is PlannedRoute -> staged.copy(name = name, createdAtEpochMs = System.currentTimeMillis())
+                        is RecordedTrack -> staged.copy(name = name)
+                    }
                 try {
                     val savedFile =
                         withContext(Dispatchers.IO) {
-                            val file = pathStore.save(route)
+                            val file =
+                                when (imported) {
+                                    is PlannedRoute -> pathStore.save(imported)
+                                    is RecordedTrack -> pathStore.save(imported)
+                                }
                             importDraftFile(context).delete()
-                            importTrackDraftFile(context).delete()
                             file
                         }
-                    // Mirror the load-saved-route path: show the imported plan in view mode,
-                    // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
-                    planner?.clear()
-                    showOpenedPlan(route)
-                    map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
-                    displayedRoute = route
-                    displayedRouteFile = savedFile
-                    mode = PlanMode.ROUTE_VIEW
-                    snackbarHostState.showSnackbar("已匯入規劃路徑: $name")
+                    managerList = null
+                    statsTarget = null
+                    statsData = null
+                    focusId = addOpened(imported, savedFile).id
+                    map.value?.fitToRoute(imported.framingPoints())
+                    snackbarHostState.showSnackbar("已匯入路徑: $name")
                 } catch (e: DuplicatePathNameException) {
                     // Keep the typed name (and the staged file) and reopen so the user can
                     // rename in place.
@@ -2188,79 +2233,34 @@ private fun MapScreen(
             }
         }
 
-        fun saveImportedTrack(name: String) {
-            scope.launch {
-                val staged =
-                    withContext(Dispatchers.IO) {
-                        runCatching {
-                            Trace.read(importTrackDraftFile(context))?.let { RecordedTrack.fromTrace(it) }
-                        }.getOrNull()
-                    }
-                if (staged == null) {
-                    storageErrorMessage = "匯入失敗: 草稿已遺失, 請重新匯入"
-                    return@launch
-                }
-                val track = staged.copy(name = name)
-                try {
-                    val savedFile =
-                        withContext(Dispatchers.IO) {
-                            val file = pathStore.save(track)
-                            importDraftFile(context).delete()
-                            importTrackDraftFile(context).delete()
-                            file
-                        }
-                    // Mirror the load-saved-track path: show the imported track in history view.
-                    historyTrack = track
-                    historyTrackFile = savedFile
-                    viewingHistory = true
-                    if (track.polyline.isNotEmpty()) {
-                        map.value?.fitToRoute(track.polyline)
-                    }
-                    snackbarHostState.showSnackbar("已匯入軌跡: $name")
-                } catch (e: DuplicatePathNameException) {
-                    importDraftName = name
-                    snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
-                } catch (e: Exception) {
-                    storageErrorMessage = "儲存失敗: ${e.message}"
-                }
-            }
-        }
-
-        ImportRouteDialog(
+        ImportPathDialog(
             initialName = draftName,
-            trackEligible = importDraftTrackEligible,
-            // 錄製軌跡 entry: type fixed to 軌跡, no choice shown (eligibility was enforced at
-            // parse time). External hand-over: choice shown, defaulting to 軌跡.
-            forceTrack = importEntry == IMPORT_ENTRY_TRACK,
-            preferTrack = importEntry == IMPORT_ENTRY_EXTERNAL,
-            onConfirm = { name, asTrack ->
+            onConfirm = { name ->
                 importDraftName = null
-                withStorageAccess {
-                    if (asTrack) saveImportedTrack(name) else saveImportedPlan(name)
-                }
+                withStorageAccess { saveImported(name) }
             },
             onDismiss = {
                 importDraftName = null
                 scope.launch(Dispatchers.IO) {
                     runCatching { importDraftFile(context).delete() }
-                    runCatching { importTrackDraftFile(context).delete() }
                 }
             },
         )
     }
 
     if (showSave) {
-        SaveRouteDialog(
-            initialName = saveNameDraft ?: editBaseline?.name ?: "",
+        SavePathDialog(
+            initialName = saveNameDraft ?: editSource?.path?.name ?: "",
             onConfirm = { name ->
                 val p = planner
                 showSave = false
                 if (p != null) {
                     val saved = p.toPlannedRoute(name, System.currentTimeMillis())
-                    // Re-saving an edited route writes a fresh file (the name is stamped with the
-                    // new createdAt), so hand the edit source over: the store deletes it, or the
-                    // picker would list both copies, and leaves it out of the duplicate-name check.
-                    val replacing = if (isNewRoute) null else displayedRouteFile
+                    // Saving an edited route writes a fresh file (the name is stamped with the new
+                    // creation time), so hand the edit source over: the store deletes it, or the
+                    // file manager would list both copies, and leaves it out of the duplicate-name
+                    // check so the route may keep its own name. A brand-new plan replaces nothing.
+                    val replacing = editSource?.file
                     withStorageAccess {
                         scope.launch {
                             try {
@@ -2268,16 +2268,14 @@ private fun MapScreen(
                                     withContext(Dispatchers.IO) {
                                         pathStore.save(saved, replacing = replacing)
                                     }
-                                // Keep the route on screen: leave editing for view mode, not cleared.
+                                // Keep the route on screen: leave editing for the view state, with
+                                // the saved route as the topmost opened path and the focused one.
                                 p.clear()
-                                showOpenedPlan(saved)
-                                displayedRoute = saved
-                                displayedRouteFile = savedFile
-                                editBaseline = saved
-                                isNewRoute = false
+                                editSource = null
+                                editing = false
                                 saveNameDraft = null
-                                mode = PlanMode.ROUTE_VIEW
-                                snackbarHostState.showSnackbar("已儲存規劃路徑: $name")
+                                focusId = addOpened(saved, savedFile).id
+                                snackbarHostState.showSnackbar("已儲存路徑: $name")
                             } catch (e: DuplicatePathNameException) {
                                 // Keep the typed name and reopen so the user can rename in place.
                                 saveNameDraft = name
@@ -2325,94 +2323,64 @@ private fun MapScreen(
         )
     }
 
-    loadList?.let { summaries ->
-        LoadRouteDialog(
-            summaries = summaries,
-            onPick = { summary ->
-                loadList = null
-                // Opening a saved file shows it in view mode (per docs/ui.md); "編輯" enters editing.
-                scope.launch {
-                    try {
-                        val route = withContext(Dispatchers.IO) { pathStore.loadPlan(summary.file) }
-                        planner?.clear()
-                        showOpenedPlan(route)
-                        // Frame the whole trace on file load (only here - not on save/cancel).
-                        map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
-                        displayedRoute = route
-                        displayedRouteFile = summary.file
-                        mode = PlanMode.ROUTE_VIEW
-                    } catch (e: Exception) {
-                        storageErrorMessage = "載入失敗: ${e.message}"
-                    }
-                }
-            },
-            onStats = { summary ->
-                // The stats overlay cannot show above this dialog window, so close the list first;
-                // reading the trace file needs the same storage access as loading it.
-                loadList = null
-                withStorageAccess {
-                    openStats(summary.name, isTrack = false) { pathStore.loadPlan(summary.file).polyline to null }
-                }
-            },
-            onRename = { renameTarget = it },
-            onExport = { summary ->
-                exportTarget = GpxExportTarget(summary.file, summary.name, isTrack = false)
-                gpxExportLauncher.launch(gpxSuggestedName(summary.name))
-            },
-            onDelete = { deleteTarget = it },
-            onDismiss = { loadList = null },
-        )
-    }
-
     renameTarget?.let { target ->
-        RenameRouteDialog(
-            initialName = target.name,
+        RenamePathDialog(
+            initialName = renameNameDraft ?: target.name,
             onConfirm = { newName ->
                 renameTarget = null
+                renameNameDraft = null
                 withStorageAccess {
                     scope.launch {
                         try {
                             val renamed = withContext(Dispatchers.IO) { pathStore.rename(target.file, newName) }
-                            loadList = withContext(Dispatchers.IO) { pathStore.listPlans() }
-                            // Keep the on-screen route's name in sync if it was the one renamed.
-                            // Renaming may shift the file path (the slug follows the name), so the
-                            // backing-file reference must follow too or a later export/edit would
-                            // point at the deleted old path.
-                            if (displayedRoute?.createdAtEpochMs == target.createdAtEpochMs) {
-                                displayedRoute = displayedRoute?.copy(name = renamed.name)
-                                editBaseline = editBaseline?.copy(name = renamed.name)
-                                displayedRouteFile = renamed.file
+                            // Keep the path's entry on the map in step when it is opened: same id,
+                            // so its layer and the focus are untouched, with the new name and the
+                            // new file - renaming may shift the file path (the slug follows the
+                            // name), and export, edit and continued recording all act on that file.
+                            openedFor(target.file)?.let { opened ->
+                                val entry = OpenedPath(opened.id, opened.path.renamed(renamed.name), renamed.file)
+                                openedPaths = openedPaths.map { if (it === opened) entry else it }
                             }
+                            reloadManagerList()
                             snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
                         } catch (e: DuplicatePathNameException) {
+                            // Keep the typed name and reopen so the user can rename in place.
+                            renameNameDraft = newName
                             renameTarget = target
                             snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                         } catch (e: Exception) {
-                            snackbarHostState.showSnackbar("改名失敗: ${e.message}")
+                            storageErrorMessage = "改名失敗: ${e.message}"
                         }
                     }
                 }
             },
-            onDismiss = { renameTarget = null },
+            onDismiss = {
+                renameTarget = null
+                renameNameDraft = null
+            },
         )
     }
 
     deleteTarget?.let { target ->
-        DeleteRouteDialog(
-            routeName = target.name,
+        DeletePathDialog(
+            pathName = target.name,
+            isOpened = deleteTargetOpened,
             onConfirm = {
                 deleteTarget = null
                 withStorageAccess {
                     scope.launch {
                         try {
                             withContext(Dispatchers.IO) { pathStore.delete(target.file) }
-                            loadList = withContext(Dispatchers.IO) { pathStore.listPlans() }
-                            // The on-screen route may keep showing, but it no longer has a backing
-                            // file - drop the reference so the 匯出 GPX pill disappears with it.
-                            if (displayedRouteFile == target.file) displayedRouteFile = null
+                            // A deleted path leaves the map with its file, so no line is ever left
+                            // on screen without a file behind it. The other opened paths stay.
+                            openedFor(target.file)?.let { opened ->
+                                openedPaths = openedPaths - opened
+                                if (focusId == opened.id) focusId = null
+                            }
+                            reloadManagerList()
                             snackbarHostState.showSnackbar("已刪除 \"${target.name}\"")
                         } catch (e: Exception) {
-                            snackbarHostState.showSnackbar("刪除失敗: ${e.message}")
+                            storageErrorMessage = "刪除失敗: ${e.message}"
                         }
                     }
                 }
@@ -2421,136 +2389,51 @@ private fun MapScreen(
         )
     }
 
-    if (showRecordEntryChooser) {
-        RecordEntryChooser(
-            onNew = {
-                showRecordEntryChooser = false
-                requestStartRecording(continuationSource = null)
-            },
-            onLoad = {
-                showRecordEntryChooser = false
+    copyTarget?.let { target ->
+        CopyAsPlanDialog(
+            initialName = copyNameDraft ?: "${target.name} 規劃",
+            onConfirm = { name ->
+                copyTarget = null
+                copyNameDraft = null
                 withStorageAccess {
                     scope.launch {
                         try {
-                            loadTrackList = withContext(Dispatchers.IO) { pathStore.listTracks() }
-                        } catch (e: Exception) {
-                            storageErrorMessage = "讀取軌跡清單失敗: ${e.message}"
-                        }
-                    }
-                }
-            },
-            onImport = {
-                showRecordEntryChooser = false
-                importEntry = IMPORT_ENTRY_TRACK
-                // Same unfiltered picker as the planning entry (GPX has no reliable MIME type).
-                gpxPickerLauncher.launch(arrayOf("*/*"))
-            },
-            onCancel = { showRecordEntryChooser = false },
-        )
-    }
-
-    loadTrackList?.let { summaries ->
-        LoadTrackDialog(
-            summaries = summaries,
-            onPick = { summary ->
-                loadTrackList = null
-                scope.launch {
-                    try {
-                        val loaded = withContext(Dispatchers.IO) { pathStore.loadTrack(summary.file) }
-                        historyTrack = loaded
-                        historyTrackFile = summary.file
-                        viewingHistory = true
-                        if (loaded.polyline.isNotEmpty()) {
-                            map.value?.fitToRoute(loaded.polyline)
-                        }
-                    } catch (e: Exception) {
-                        storageErrorMessage = "載入軌跡失敗: ${e.message}"
-                    }
-                }
-            },
-            onStats = { summary ->
-                // Same shape as the route list: close the dialog (the overlay cannot cover it) and
-                // read the trace under storage access.
-                loadTrackList = null
-                withStorageAccess {
-                    openStats(summary.name, isTrack = true) {
-                        val track = pathStore.loadTrack(summary.file)
-                        track.polyline to track.points.map { it.timeMs }
-                    }
-                }
-            },
-            onRename = { renameTrackTarget = it },
-            onExport = { summary ->
-                exportTarget = GpxExportTarget(summary.file, summary.name, isTrack = true)
-                gpxExportLauncher.launch(gpxSuggestedName(summary.name))
-            },
-            onDelete = { deleteTrackTarget = it },
-            onDismiss = { loadTrackList = null },
-        )
-    }
-
-    renameTrackTarget?.let { target ->
-        RenameTrackDialog(
-            initialName = target.name,
-            onConfirm = { newName ->
-                renameTrackTarget = null
-                withStorageAccess {
-                    scope.launch {
-                        try {
-                            val renamed = withContext(Dispatchers.IO) { pathStore.rename(target.file, newName) }
-                            loadTrackList = withContext(Dispatchers.IO) { pathStore.listTracks() }
-                            // Keep the viewed track's name and backing file in sync if it was the
-                            // one renamed - renaming may shift the file path (the slug follows the
-                            // name), and 匯出 GPX / 繼續錄製 both act on that file.
-                            if (historyTrackFile == target.file) {
-                                historyTrack = historyTrack?.copy(name = renamed.name)
-                                historyTrackFile = renamed.file
+                            // The copy is a new planned route created now; the track it came from
+                            // is only read. Nothing on the map changes - the file manager stays up
+                            // and simply lists one more path.
+                            withContext(Dispatchers.IO) {
+                                val track =
+                                    pathStore.load(target.file) as? RecordedTrack
+                                        ?: error("not a recorded track: ${target.file.name}")
+                                pathStore.save(track.toPlannedRoute(name, System.currentTimeMillis()))
                             }
-                            snackbarHostState.showSnackbar("已改名為 \"${renamed.name}\"")
+                            reloadManagerList()
+                            snackbarHostState.showSnackbar("已複製為規劃路徑: $name")
                         } catch (e: DuplicatePathNameException) {
-                            renameTrackTarget = target
+                            // Keep the typed name and reopen so the user can rename in place.
+                            copyNameDraft = name
+                            copyTarget = target
                             snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
                         } catch (e: Exception) {
-                            snackbarHostState.showSnackbar("改名失敗: ${e.message}")
+                            storageErrorMessage = "儲存失敗: ${e.message}"
                         }
                     }
                 }
             },
-            onDismiss = { renameTrackTarget = null },
-        )
-    }
-
-    deleteTrackTarget?.let { target ->
-        DeleteTrackDialog(
-            trackName = target.name,
-            onConfirm = {
-                deleteTrackTarget = null
-                withStorageAccess {
-                    scope.launch {
-                        try {
-                            withContext(Dispatchers.IO) { pathStore.delete(target.file) }
-                            loadTrackList = withContext(Dispatchers.IO) { pathStore.listTracks() }
-                            // The viewed track may keep showing, but it no longer has a backing
-                            // file - drop the reference so 匯出 GPX / 繼續錄製 cannot act on it.
-                            if (historyTrackFile == target.file) historyTrackFile = null
-                            snackbarHostState.showSnackbar("已刪除 \"${target.name}\"")
-                        } catch (e: Exception) {
-                            snackbarHostState.showSnackbar("刪除失敗: ${e.message}")
-                        }
-                    }
-                }
+            onDismiss = {
+                copyTarget = null
+                copyNameDraft = null
             },
-            onDismiss = { deleteTrackTarget = null },
         )
     }
 
     if (showSaveTrack) {
-        // Spec D: the session lives in RecordingController for as long as the 已停止 layer is up
-        // (state stays PAUSED), so the save dialog reads it straight off currentSession() rather than
-        // a one-shot "pending session" signal - it is still there if the dialog reopens after a
+        // The session lives in RecordingController for as long as the 已停止 layer is up (state
+        // stays PAUSED), so the save dialog reads it straight off currentSession() rather than a
+        // one-shot "pending session" signal - it is still there if the dialog reopens after a
         // rejected duplicate name.
         val session = RecordingController.currentSession()
-        SaveTrackDialog(
+        SavePathDialog(
             initialName = saveTrackNameDraft ?: session?.defaultName ?: "",
             onConfirm = { name ->
                 showSaveTrack = false
@@ -2559,23 +2442,20 @@ private fun MapScreen(
                         scope.launch {
                             try {
                                 val savedFile = withContext(Dispatchers.IO) { RecordingController.finalize(session, name) }
-                                // Spec J: saving ends the session - RecordingService.finish() tells
-                                // the service to release GPS/wake lock, remove the notification, and
-                                // call RecordingController.handleEnd() (back to IDLE) - and moves to
-                                // the history-view sub-mode showing the just-saved track. Reload from
-                                // the finalised file so historyTrack carries the real timestamps and
-                                // historyTrackFile points at a public file 繼續錄製 can hand to
-                                // RecordingService.startContinuation.
+                                // Saving ends the session - RecordingService.finish() tells the
+                                // service to release GPS/wake lock, remove the notification, and
+                                // call RecordingController.handleEnd() (back to IDLE) - and lands
+                                // in the view state on the just-saved track. It is read back from
+                                // the finalised file so the opened entry carries the real
+                                // timestamps and a file 繼續錄製 can hand to the service again.
                                 RecordingService.finish(context)
-                                val loaded = withContext(Dispatchers.IO) { pathStore.loadTrack(savedFile) }
-                                historyTrack = loaded
-                                historyTrackFile = savedFile
-                                viewingHistory = true
+                                val saved = withContext(Dispatchers.IO) { pathStore.load(savedFile) }
                                 saveTrackNameDraft = null
-                                snackbarHostState.showSnackbar("已儲存軌跡: $name")
+                                focusId = addOpened(saved, savedFile).id
+                                snackbarHostState.showSnackbar("已儲存路徑: $name")
                             } catch (e: DuplicatePathNameException) {
-                                // Spec E: keep the session alive (still PAUSED) and reopen the dialog
-                                // with the user's typed name preserved so they can retry.
+                                // Keep the session alive (still PAUSED) and reopen the dialog with
+                                // the user's typed name preserved so they can retry.
                                 saveTrackNameDraft = name
                                 showSaveTrack = true
                                 snackbarHostState.showSnackbar("已有同名路徑 \"${e.pathName}\", 請改用其他名稱")
@@ -2587,8 +2467,8 @@ private fun MapScreen(
                 }
             },
             onDismiss = {
-                // Spec D: back / outside-tap / 取消 all just close the dialog - back to 已停止, no
-                // discard, no session change.
+                // Back / outside-tap / 取消 all just close the dialog - back to 已停止, no discard,
+                // no session change.
                 showSaveTrack = false
             },
         )
@@ -2603,41 +2483,36 @@ private fun MapScreen(
                 if (session != null) {
                     scope.launch {
                         withContext(Dispatchers.IO) { RecordingController.discard(session) }
-                        // Spec J: discarding always ends the session - RecordingService.finish()
-                        // releases GPS/wake lock, removes the notification, and calls
+                        // Discarding always ends the session - RecordingService.finish() releases
+                        // GPS/wake lock, removes the notification, and calls
                         // RecordingController.handleEnd() (back to IDLE).
                         RecordingService.finish(context)
-                        // A discarded continuation still has its original source file intact, so
-                        // fall back to viewing that original (blue overlay + 繼續錄製 / 離開) - the
-                        // user discarded only the newly added extension, not the underlying track.
-                        // A discarded fresh recording has no source to fall back to; clear the
-                        // viewer entirely and let the default map-view controls return.
+                        saveTrackNameDraft = null
+                        // A discarded continuation loses only the newly added points; its source
+                        // file is intact, so that track goes back on the map, on top and focused.
+                        // The source comes from the session, not from what this screen remembers,
+                        // so this also holds after the activity was recreated mid-recording. A
+                        // discarded fresh recording has nothing to fall back to: back to the map
+                        // state, opened paths untouched.
                         val source = session.source
                         if (session.isContinuation && source != null) {
                             try {
-                                val loaded = withContext(Dispatchers.IO) { pathStore.loadTrack(source) }
-                                historyTrack = loaded
-                                historyTrackFile = source
-                                viewingHistory = true
+                                val original = withContext(Dispatchers.IO) { pathStore.load(source) }
+                                focusId = addOpened(original, source).id
                             } catch (e: Exception) {
-                                historyTrack = null
-                                historyTrackFile = null
-                                viewingHistory = false
+                                focusId = null
                                 storageErrorMessage = "回復原始軌跡失敗: ${e.message}"
                             }
                         } else {
-                            historyTrack = null
-                            historyTrackFile = null
-                            viewingHistory = false
+                            focusId = null
                         }
-                        saveTrackNameDraft = null
                     }
                 }
             },
             onDismiss = {
-                // Spec B: 取消 just closes this dialog, landing on the 已停止 layer (放棄 from the
-                // recording layer pauses before opening this dialog, so the session is always PAUSED
-                // here); the user resumes explicitly via 繼續錄製.
+                // 取消 just closes this dialog, landing on the 已停止 layer (放棄 from the recording
+                // layer pauses before opening this dialog, so the session is always PAUSED here);
+                // the user resumes explicitly via 繼續錄製.
                 showDiscardRecording = false
             },
         )
