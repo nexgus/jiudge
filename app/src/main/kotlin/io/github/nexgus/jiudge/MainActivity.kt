@@ -515,6 +515,7 @@ private fun MapScreen(
     val displayPrefs = remember { DisplayPrefs(appContext) }
     var slopeSaved by remember { mutableStateOf(displayPrefs.showSlope) }
     var distanceMarkersOn by remember { mutableStateOf(displayPrefs.showDistanceMarkers) }
+    var managerKind by remember { mutableStateOf(displayPrefs.managerKind) }
     val slopeOn = slopeSaved && demElevation != null
     val displayOptions = PathDisplayOptions(showSlope = slopeOn, showDistanceMarkers = distanceMarkersOn)
 
@@ -2148,6 +2149,11 @@ private fun MapScreen(
         managerList?.let { summaries ->
             PathManagerScreen(
                 summaries = summaries,
+                selectedKind = managerKind,
+                onSelectKind = { kind ->
+                    managerKind = kind
+                    displayPrefs.managerKind = kind
+                },
                 onOpen = { openPath(it) },
                 onStats = { summary ->
                     // Reading the path file needs the same storage access as opening it.

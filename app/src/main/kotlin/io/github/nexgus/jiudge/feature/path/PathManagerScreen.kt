@@ -23,10 +23,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,10 +47,18 @@ import java.util.Locale
 // Diameter of the kind-colour dot leading each row.
 private val KIND_DOT_SIZE = 12.dp
 
+// The tabs, left to right.
+private val TAB_KINDS = listOf(PathKind.TRACK, PathKind.PLAN)
+
 /**
- * Full-screen file manager: every saved path - tracks and planned routes together, in the order
- * [summaries] is given (the store lists newest first) - with the actions on them. It is the one
- * place saved paths are opened, renamed, deleted, exported, copied and imported from.
+ * Full-screen file manager: the saved paths - one kind at a time, tracks or planned routes, chosen
+ * with the tabs under the top bar - in the order [summaries] is given (the store lists newest
+ * first), with the actions on them. It is the one place saved paths are opened, renamed, deleted,
+ * exported, copied and imported from.
+ *
+ * Each tab label carries the number of paths of its kind in [summaries]. The screen does not keep
+ * the selection itself: it shows [selectedKind] and calls [onSelectKind] when the other tab is
+ * tapped, so the caller decides where the choice is kept.
  *
  * Shown over the map the same way the stats screen is: the caller passes a `fillMaxSize` modifier,
  * and the opaque surface keeps map content and touches from bleeding through. The close icon and
@@ -60,6 +71,8 @@ private val KIND_DOT_SIZE = 12.dp
 @Composable
 fun PathManagerScreen(
     summaries: List<PathStore.Summary>,
+    selectedKind: PathKind,
+    onSelectKind: (PathKind) -> Unit,
     onOpen: (PathStore.Summary) -> Unit,
     onStats: (PathStore.Summary) -> Unit,
     onRename: (PathStore.Summary) -> Unit,
@@ -99,36 +112,54 @@ fun PathManagerScreen(
                 }
             }
 
-            if (summaries.isEmpty()) {
+            TabRow(selectedTabIndex = TAB_KINDS.indexOf(selectedKind)) {
+                TAB_KINDS.forEach { kind ->
+                    Tab(
+                        selected = kind == selectedKind,
+                        onClick = { onSelectKind(kind) },
+                        text = { Text("${tabName(kind)} (${summaries.count { it.kind == kind }})") },
+                    )
+                }
+            }
+
+            val shown = remember(summaries, selectedKind) { summaries.filter { it.kind == selectedKind } }
+            if (shown.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        "尚無已儲存的路徑",
+                        "尚無已儲存的${tabName(selectedKind)}",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(summaries) { summary ->
-                        PathRow(
-                            summary = summary,
-                            subtitle =
-                                "${dateFormat.format(Date(summary.createdAtEpochMs))} - " +
-                                    formatDistance(summary.distanceMeters),
-                            onOpen = { onOpen(summary) },
-                            onStats = { onStats(summary) },
-                            onRename = { onRename(summary) },
-                            onExport = { onExport(summary) },
-                            onCopyAsPlan = { onCopyAsPlan(summary) },
-                            onDelete = { onDelete(summary) },
-                        )
-                        HorizontalDivider()
+                // Keyed by the tab so each tab's list starts at the top rather than inheriting the
+                // other one's scroll position.
+                key(selectedKind) {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(shown) { summary ->
+                            PathRow(
+                                summary = summary,
+                                subtitle =
+                                    "${dateFormat.format(Date(summary.createdAtEpochMs))} - " +
+                                        formatDistance(summary.distanceMeters),
+                                onOpen = { onOpen(summary) },
+                                onStats = { onStats(summary) },
+                                onRename = { onRename(summary) },
+                                onExport = { onExport(summary) },
+                                onCopyAsPlan = { onCopyAsPlan(summary) },
+                                onDelete = { onDelete(summary) },
+                            )
+                            HorizontalDivider()
+                        }
                     }
                 }
             }
         }
     }
 }
+
+/** Name of a kind as shown on its tab and in the empty-list message. */
+private fun tabName(kind: PathKind): String = if (kind == PathKind.TRACK) "軌跡" else "規劃路徑"
 
 /** Path length for the list: metres below 1 km, otherwise kilometres to one decimal. */
 private fun formatDistance(meters: Double): String =
