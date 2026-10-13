@@ -14,9 +14,9 @@ import kotlin.math.min
  * [io.github.nexgus.jiudge.core.elevation.DemElevation] directly.
  *
  * The elevation-profile resampling mirrors
- * [io.github.nexgus.jiudge.feature.planning.PlannedRouteLayer]'s `sampleSlopes`/`interpolateAlong`
+ * [io.github.nexgus.jiudge.core.elevation.SlopeSampler]
  * (same 30 m step, same hold-forward/hold-backward gap fill, same central-difference slope), so the
- * stats screen and the map route line always agree on where the DEM has data and how steep it looks.
+ * stats screen and the map path line always agree on where the DEM has data and how steep it looks.
  */
 object TraceStatsCalculator {
     /** Minimum net elevation change (m) before it counts as ascent/descent - filters GPS/DEM noise. */
@@ -102,7 +102,7 @@ object TraceStatsCalculator {
             epochs[n + 1] = timesMs?.let { interpolateEpoch(cumulative, it, total) }
         }
 
-        // Hold gaps forward then backward, matching PlannedRouteLayer.sampleSlopes, so every sample
+        // Hold gaps forward then backward, matching SlopeSampler, so every sample
         // has a value to feed the central difference (the reported elevationM stays the raw/null value).
         val filled = rawElevations.copyOf()
         var hold: Float? = null

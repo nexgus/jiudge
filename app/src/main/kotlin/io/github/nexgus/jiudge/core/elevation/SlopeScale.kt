@@ -2,7 +2,7 @@ package io.github.nexgus.jiudge.core.elevation
 
 /**
  * Shared slope classification: five discrete classes over the signed grade along travel
- * (degrees, + uphill), used by both the map route line ([io.github.nexgus.jiudge.feature.planning.PlannedRouteLayer])
+ * (degrees, + uphill), used by both the map path line ([io.github.nexgus.jiudge.feature.path.PathLayer])
  * and the elevation-profile chart so the two always colour the same slope the same way.
  * Thresholds follow the common hiking grade bands (<=4 deg flat, 4-16 moderate, 16+ steep);
  * see docs/slope_vs_color.md.

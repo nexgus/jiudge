@@ -135,6 +135,9 @@ import io.github.nexgus.jiudge.feature.map.RudyMapView
 import io.github.nexgus.jiudge.feature.map.SearchPeakMarkerLayer
 import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.mapdata.MapUpdateDialog
+import io.github.nexgus.jiudge.feature.path.PathDisplayOptions
+import io.github.nexgus.jiudge.feature.path.PathOverlays
+import io.github.nexgus.jiudge.feature.path.PathStyle
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.DeleteRouteDialog
 import io.github.nexgus.jiudge.feature.planning.ImportRouteDialog
@@ -145,7 +148,6 @@ import io.github.nexgus.jiudge.feature.planning.PlanningBottomBar
 import io.github.nexgus.jiudge.feature.planning.RenameRouteDialog
 import io.github.nexgus.jiudge.feature.planning.RoutePlanner
 import io.github.nexgus.jiudge.feature.planning.RouteViewControls
-import io.github.nexgus.jiudge.feature.planning.RouteViewer
 import io.github.nexgus.jiudge.feature.planning.SaveRouteDialog
 import io.github.nexgus.jiudge.feature.planning.SearchTargetControls
 import io.github.nexgus.jiudge.feature.planning.fitToRoute
@@ -153,13 +155,10 @@ import io.github.nexgus.jiudge.feature.recording.BackgroundLocationRationaleDial
 import io.github.nexgus.jiudge.feature.recording.BatteryExemptionRationaleDialog
 import io.github.nexgus.jiudge.feature.recording.DeleteTrackDialog
 import io.github.nexgus.jiudge.feature.recording.DiscardRecordingDialog
-import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_COLOR
-import io.github.nexgus.jiudge.feature.recording.HISTORY_CHEVRON_HALO_COLOR
 import io.github.nexgus.jiudge.feature.recording.HistoryTrackViewControls
 import io.github.nexgus.jiudge.feature.recording.LoadTrackDialog
 import io.github.nexgus.jiudge.feature.recording.PausedBottomBar
 import io.github.nexgus.jiudge.feature.recording.RecordEntryChooser
-import io.github.nexgus.jiudge.feature.recording.RecordedTrackLayer
 import io.github.nexgus.jiudge.feature.recording.Recorder
 import io.github.nexgus.jiudge.feature.recording.RecordingBottomBar
 import io.github.nexgus.jiudge.feature.recording.RenameTrackDialog
@@ -447,6 +446,14 @@ private enum class PlanMode { MAP_VIEW, ROUTE_EDIT, ROUTE_VIEW }
 // (feature/settings, not yet built) will expose this as a user toggle.
 private const val SHOW_ACCURACY_CIRCLE = true
 
+// Display options applied to every path on the map. Fixed for now - slope colouring off, distance
+// labels on - until the two on-map switches that toggle them exist.
+private val PATH_DISPLAY_OPTIONS = PathDisplayOptions(showSlope = false, showDistanceMarkers = true)
+
+// Keys of the opened paths handed to PathOverlays. The map currently shows at most one planned
+// route and one saved track (besides the recording), so one fixed key per kind is enough.
+private enum class OpenedPathSlot { PLAN, TRACK }
+
 // Centring on a searched peak keeps the current zoom, unless it is below MIN (too far out to see the
 // summit), in which case it pulls in to PEAK_VIEW.
 private const val PEAK_VIEW_MIN_ZOOM: Byte = 14
@@ -500,9 +507,35 @@ private fun MapScreen(
     val toughDetector = remember(mapDir) { ToughPathDetector(File(mapDir, RudyMapView.BASEMAP_NAME)) }
     DisposableEffect(toughDetector) { onDispose { toughDetector.close() } }
 
-    // One planner / viewer per live MapView; recreated if the view is.
-    val planner = remember(map.value) { map.value?.let { RoutePlanner(it, engine, density, demElevation, toughDetector) } }
-    val viewer = remember(map.value) { map.value?.let { RouteViewer(it, density, demElevation) } }
+    // Every path drawn over the map - the opened route, the opened track, the plan being edited and
+    // the recording - goes through one PathOverlays per live MapView (recreated if the view is). It
+    // owns their layers and stacking order; closing it cancels any slope sampling still running.
+    val pathOverlays =
+        remember(map.value) { map.value?.let { PathOverlays(it, density, demElevation, PATH_DISPLAY_OPTIONS) } }
+    DisposableEffect(pathOverlays) { onDispose { pathOverlays?.close() } }
+
+    // One planner per live MapView, drawing through the overlays' editing layer.
+    val planner =
+        remember(map.value, pathOverlays) {
+            val mv = map.value
+            if (mv == null || pathOverlays == null) null else RoutePlanner(mv, engine, pathOverlays, toughDetector)
+        }
+
+    // Shows [route] as the opened planned route. It is re-opened rather than updated in place, so
+    // the route shown last sits above a track opened before it.
+    fun showOpenedPlan(route: PlannedRoute) {
+        pathOverlays?.removeOpened(OpenedPathSlot.PLAN)
+        pathOverlays?.showOpened(
+            key = OpenedPathSlot.PLAN,
+            style = PathStyle.PLAN,
+            points = route.polyline,
+            waypoints = route.waypoints.map { it.point },
+        )
+    }
+
+    fun clearOpenedPlan() {
+        pathOverlays?.removeOpened(OpenedPathSlot.PLAN)
+    }
 
     var mode by remember { mutableStateOf(PlanMode.MAP_VIEW) }
     var busy by remember { mutableStateOf(false) }
@@ -613,7 +646,7 @@ private fun MapScreen(
     // Set while a rename/delete dialog is open over the load picker; null when none is pending.
     var renameTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
     var deleteTarget by remember { mutableStateOf<PathStore.Summary?>(null) }
-    // Route currently drawn by the viewer: shown in ROUTE_VIEW, and kept in MAP_VIEW after 離開.
+    // Route currently drawn as the opened plan: shown in ROUTE_VIEW, and kept in MAP_VIEW after 離開.
     var displayedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
     // Backing file of displayedRoute (the file it was loaded from or last saved to); null when no
     // file backs it (e.g. it was deleted from the picker). Drives the 匯出 GPX pill in route view.
@@ -1170,49 +1203,27 @@ private fun MapScreen(
     var locationInfoOpen by remember { mutableStateOf(false) }
     var locationInfoDemAltitude by remember { mutableStateOf<Double?>(null) }
 
+    // The two marker layers are added through pathOverlays, which places them above every path:
+    // the search highlight first, the current-location marker on top of everything.
     val locationLayer =
-        remember(map.value) {
-            map.value?.let { mv ->
+        remember(map.value, pathOverlays) {
+            val mv = map.value
+            if (mv == null || pathOverlays == null) {
+                null
+            } else {
                 CurrentLocationLayer(
                     density = density,
                     mapViewPosition = mv.model.mapViewPosition,
                     onMarkerLongPress = { locationInfoOpen = true },
-                ).also { mv.layerManager.layers.add(it) }
+                ).also { pathOverlays.addMarkerLayer(it) }
             }
         }
 
     // Highlight for a peak jumped to from the search dialog: a translucent yellow disc that stays
     // until the user confirms the target or returns to the result list.
     val searchPeakLayer =
-        remember(map.value) {
-            map.value?.let { mv ->
-                SearchPeakMarkerLayer(density)
-                    .also { mv.layerManager.layers.add(it) }
-            }
-        }
-
-    // Live recording overlay: red ">" chevrons rendering whichever polyline the recorder currently
-    // holds. Mounted for the life of this MapView; the recorder simply pushes points in via update().
-    val recordedTrackLayer =
-        remember(map.value) {
-            map.value?.let { mv ->
-                RecordedTrackLayer(density)
-                    .also { mv.layerManager.layers.add(it) }
-            }
-        }
-
-    // History-track viewer overlay: same chevron layer in blue, rendering whichever saved track is
-    // currently loaded for viewing. Mounted for the life of this MapView; the polyline is pushed in
-    // whenever historyTrack changes (load / clear).
-    val historyTrackLayer =
-        remember(map.value) {
-            map.value?.let { mv ->
-                RecordedTrackLayer(
-                    density = density,
-                    chevronColor = HISTORY_CHEVRON_COLOR,
-                    chevronHaloColor = HISTORY_CHEVRON_HALO_COLOR,
-                ).also { mv.layerManager.layers.add(it) }
-            }
+        remember(pathOverlays) {
+            pathOverlays?.let { overlays -> SearchPeakMarkerLayer(density).also { overlays.addMarkerLayer(it) } }
         }
 
     // Sweep any leftover .recording-*.jsonl staging files (from a crash or a swiped-away task).
@@ -1222,40 +1233,43 @@ private fun MapScreen(
         withContext(Dispatchers.IO) { RecordingController.sweepStaleStaging() }
     }
 
-    // Push the recorder's live polyline into the layer whenever it changes.
-    LaunchedEffect(recordedTrackLayer, recordedPoints) {
-        val layer = recordedTrackLayer ?: return@LaunchedEffect
-        layer.update(recordedPoints)
-        map.value?.layerManager?.redrawLayers()
+    // Live recording overlay: push the recorder's polyline into the recording layer whenever it
+    // changes (an empty list, once the session ends, clears the line).
+    LaunchedEffect(pathOverlays, recordedPoints) {
+        pathOverlays?.setRecording(recordedPoints)
     }
 
     // Rubber-band segment (docs/gating.md §6): while actively recording, keep the trail visually
     // connected to the current-location marker even when gating holds fixes back. Display-only -
     // nothing here is written to the track. Cleared outside RECORDING so a paused or finished
     // track does not chase the marker.
-    LaunchedEffect(recordedTrackLayer) {
-        val layer = recordedTrackLayer ?: return@LaunchedEffect
+    LaunchedEffect(pathOverlays) {
+        val overlays = pathOverlays ?: return@LaunchedEffect
         combine(GpsSource.fix, RecordingController.state) { fix, state ->
             if (state == Recorder.State.RECORDING && fix != null) LatLong(fix.latitude, fix.longitude) else null
-        }.collect { tip -> layer.updateLiveTip(tip) }
+        }.collect { tip -> overlays.setRecordingLiveTip(tip) }
     }
 
     // Bootstrap provisional (docs/gating.md §3.5/§6): before any point is written, the rubber
     // band's fixed end follows the best first-point candidate, so the overlay shows a dashed link
     // to the marker within seconds of recording starting instead of staying blank until the first
     // point commits. Display-only, like the band itself.
-    LaunchedEffect(recordedTrackLayer) {
-        val layer = recordedTrackLayer ?: return@LaunchedEffect
+    LaunchedEffect(pathOverlays) {
+        val overlays = pathOverlays ?: return@LaunchedEffect
         combine(RecordingController.provisional, RecordingController.state) { prov, state ->
             if (state == Recorder.State.RECORDING && prov != null) LatLong(prov.latitude, prov.longitude) else null
-        }.collect { anchor -> layer.updateProvisionalAnchor(anchor) }
+        }.collect { start -> overlays.setRecordingProvisionalStart(start) }
     }
 
-    // Push the loaded history track into its layer whenever it changes; null clears the overlay.
-    LaunchedEffect(historyTrackLayer, historyTrack) {
-        val layer = historyTrackLayer ?: return@LaunchedEffect
-        layer.update(historyTrack?.polyline ?: emptyList())
-        map.value?.layerManager?.redrawLayers()
+    // History-track overlay: show whichever saved track is currently loaded as the opened track;
+    // null clears it. Keyed on the point list rather than the track itself, so a rename (same
+    // points) leaves the line untouched while a different track is re-opened above the route.
+    LaunchedEffect(pathOverlays, historyTrack?.points) {
+        val overlays = pathOverlays ?: return@LaunchedEffect
+        overlays.removeOpened(OpenedPathSlot.TRACK)
+        historyTrack?.let { track ->
+            overlays.showOpened(key = OpenedPathSlot.TRACK, style = PathStyle.TRACK, points = track.polyline)
+        }
     }
 
     LaunchedEffect(searchPeakLayer, pendingPeak) {
@@ -1975,7 +1989,7 @@ private fun MapScreen(
                                 },
                                 onPlan = { showChooser = true },
                                 onClear = {
-                                    viewer?.clear()
+                                    clearOpenedPlan()
                                     displayedRoute = null
                                     displayedRouteFile = null
                                     historyTrack = null
@@ -2004,7 +2018,7 @@ private fun MapScreen(
                                 planner?.clear()
                                 val baseline = editBaseline
                                 if (baseline != null) {
-                                    viewer?.show(baseline)
+                                    showOpenedPlan(baseline)
                                     displayedRoute = baseline
                                     mode = PlanMode.ROUTE_VIEW
                                 } else {
@@ -2020,7 +2034,7 @@ private fun MapScreen(
                             onEdit = {
                                 val route = displayedRoute
                                 if (route != null && planner != null) {
-                                    viewer?.clear()
+                                    clearOpenedPlan()
                                     planner.loadFrom(route)
                                     // loadFrom pans to the route's first waypoint: stop following
                                     // so the next fix does not drag the map back onto the marker.
@@ -2090,7 +2104,7 @@ private fun MapScreen(
             onNew = {
                 showChooser = false
                 if (engine.isReady()) {
-                    viewer?.clear()
+                    clearOpenedPlan()
                     planner?.clear()
                     displayedRoute = null
                     displayedRouteFile = null
@@ -2157,7 +2171,7 @@ private fun MapScreen(
                     // Mirror the load-saved-route path: show the imported plan in view mode,
                     // framed whole (per docs/ui.md the baseline is set on 編輯, not here).
                     planner?.clear()
-                    viewer?.show(route)
+                    showOpenedPlan(route)
                     map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
                     displayedRoute = route
                     displayedRouteFile = savedFile
@@ -2256,7 +2270,7 @@ private fun MapScreen(
                                     }
                                 // Keep the route on screen: leave editing for view mode, not cleared.
                                 p.clear()
-                                viewer?.show(saved)
+                                showOpenedPlan(saved)
                                 displayedRoute = saved
                                 displayedRouteFile = savedFile
                                 editBaseline = saved
@@ -2321,7 +2335,7 @@ private fun MapScreen(
                     try {
                         val route = withContext(Dispatchers.IO) { pathStore.loadPlan(summary.file) }
                         planner?.clear()
-                        viewer?.show(route)
+                        showOpenedPlan(route)
                         // Frame the whole trace on file load (only here - not on save/cancel).
                         map.value?.fitToRoute(route.polyline.ifEmpty { route.waypoints.map { wpt -> wpt.point } })
                         displayedRoute = route

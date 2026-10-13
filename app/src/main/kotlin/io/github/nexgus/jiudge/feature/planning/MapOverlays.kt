@@ -7,8 +7,9 @@ import org.mapsforge.core.model.MapPosition
 import org.mapsforge.core.util.LatLongUtils
 import org.mapsforge.map.android.view.MapView
 
-// The route/waypoint overlay drawing now lives in [PlannedRouteLayer] (a single zoom-aware custom
-// layer shared by [RoutePlanner] and [RouteViewer]). This file keeps only viewport framing.
+// The route/waypoint overlay drawing lives in [io.github.nexgus.jiudge.feature.path.PathLayer] (one
+// zoom-aware custom layer per path, all owned by [io.github.nexgus.jiudge.feature.path.PathOverlays],
+// which [RoutePlanner] draws through). This file keeps only viewport framing.
 
 // Leave a margin around the trace when fitting it to the viewport, so the route does not sit
 // flush against the screen edges; achieved by fitting against a shrunken viewport.

@@ -1,11 +1,12 @@
 package io.github.nexgus.jiudge.feature.planning
 
 import androidx.compose.runtime.mutableStateListOf
-import io.github.nexgus.jiudge.core.elevation.DemElevation
 import io.github.nexgus.jiudge.core.routing.BRouterEngine
 import io.github.nexgus.jiudge.core.routing.RoutingException
 import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.data.route.PlannedRoute
+import io.github.nexgus.jiudge.data.route.joinRouteSegments
+import io.github.nexgus.jiudge.feature.path.PathOverlays
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mapsforge.map.android.view.MapView
@@ -13,19 +14,18 @@ import org.mapsforge.map.android.view.MapView
 /**
  * Drives an in-progress route plan over a mapsforge [MapView]: holds the placed waypoints, asks
  * [BRouterEngine] for the shortest on-trail path between consecutive waypoints, and renders them
- * through a single [PlannedRouteLayer]. New waypoints come from the map center (the on-screen
- * crosshair). Active only while planning mode is on; call [clear] when leaving it.
+ * through the editing layer of [overlays] (which owns the layer and its place among the other
+ * paths on the map). New waypoints come from the map center (the on-screen crosshair). Active only
+ * while planning mode is on; call [clear] when leaving it.
  *
  * Waypoints are Compose snapshot state so the bottom-bar button states recompose as they change.
- * [density] feeds the zoom-aware overlay; [dem] feeds its slope colouring (null -> grey route).
  * [toughDetector] (null when the basemap is unavailable) lets a leg whose endpoint sits on a
  * RudyMap "艱難路線" be routed through it instead of detoured around (the strict profile blocks it).
  */
 class RoutePlanner(
     private val mapView: MapView,
     private val engine: BRouterEngine,
-    private val density: Float,
-    private val dem: DemElevation?,
+    private val overlays: PathOverlays,
     private val toughDetector: ToughPathDetector? = null,
 ) {
     // Waypoints rather than bare LatLongs: a plan loaded for editing carries each point's optional
@@ -37,7 +37,6 @@ class RoutePlanner(
     // waypoints) so the bottom bar's "-" enablement recomposes off canRemoveLast. The whole overlay
     // is re-pushed to the layer on every change; rebuilding the marker set is cheap.
     private val segments = mutableStateListOf<PlannedRoute.Segment>()
-    private var layer: PlannedRouteLayer? = null
 
     // The single spelling of the imported-geometry protection: an imported segment cannot be
     // recomputed once dropped or re-snapped, so both "-" and the endpoint re-snap key off this.
@@ -127,23 +126,18 @@ class RoutePlanner(
         route.waypoints.firstOrNull()?.let { mapView.model.mapViewPosition.center = it.point }
     }
 
-    /** Removes the overlay layer and resets state. */
+    /** Removes the editing layer from the map and resets state. */
     fun clear() {
         segments.clear()
         _waypoints.clear()
-        layer?.let { mapView.layerManager.layers.remove(it) }
-        layer = null
-        mapView.layerManager.redrawLayers()
+        overlays.clearEditing()
     }
 
-    /** Pushes the current waypoints + segments to the (lazily added) overlay layer. */
+    /** Pushes the current waypoints + joined segments to the editing layer (added to the map on first use). */
     private fun pushOverlay() {
-        val overlay =
-            layer ?: PlannedRouteLayer(density, dem).also {
-                layer = it
-                mapView.layerManager.layers.add(it)
-            }
-        overlay.update(_waypoints.map { it.point }, segments.map { it.points })
-        mapView.layerManager.redrawLayers()
+        overlays.setEditing(
+            points = joinRouteSegments(segments.map { it.points }),
+            waypoints = _waypoints.map { it.point },
+        )
     }
 }
