@@ -113,6 +113,7 @@ import io.github.nexgus.jiudge.core.routing.ToughPathDetector
 import io.github.nexgus.jiudge.core.stats.TraceStats
 import io.github.nexgus.jiudge.core.stats.TraceStatsCalculator
 import io.github.nexgus.jiudge.core.storage.AppPaths
+import io.github.nexgus.jiudge.core.storage.DisplayPrefs
 import io.github.nexgus.jiudge.data.route.DuplicatePathNameException
 import io.github.nexgus.jiudge.data.route.GpxExporter
 import io.github.nexgus.jiudge.data.route.GpxImporter
@@ -143,6 +144,7 @@ import io.github.nexgus.jiudge.feature.mapdata.DownloadScreen
 import io.github.nexgus.jiudge.feature.mapdata.MapUpdateDialog
 import io.github.nexgus.jiudge.feature.path.CopyAsPlanDialog
 import io.github.nexgus.jiudge.feature.path.DeletePathDialog
+import io.github.nexgus.jiudge.feature.path.DistanceMarkerSwitch
 import io.github.nexgus.jiudge.feature.path.ImportPathDialog
 import io.github.nexgus.jiudge.feature.path.MapEntryControls
 import io.github.nexgus.jiudge.feature.path.PathDisplayOptions
@@ -152,6 +154,7 @@ import io.github.nexgus.jiudge.feature.path.PathStyle
 import io.github.nexgus.jiudge.feature.path.PathViewControls
 import io.github.nexgus.jiudge.feature.path.RenamePathDialog
 import io.github.nexgus.jiudge.feature.path.SavePathDialog
+import io.github.nexgus.jiudge.feature.path.SlopeSwitch
 import io.github.nexgus.jiudge.feature.planning.CrosshairOverlay
 import io.github.nexgus.jiudge.feature.planning.PlanningBottomBar
 import io.github.nexgus.jiudge.feature.planning.RoutePlanner
@@ -456,10 +459,6 @@ private enum class ScreenMode {
 // (feature/settings, not yet built) will expose this as a user toggle.
 private const val SHOW_ACCURACY_CIRCLE = true
 
-// Display options applied to every path on the map. Fixed for now - slope colouring off, distance
-// labels on - until the two on-map switches that toggle them exist.
-private val PATH_DISPLAY_OPTIONS = PathDisplayOptions(showSlope = false, showDistanceMarkers = true)
-
 // Centring on a searched peak keeps the current zoom, unless it is below MIN (too far out to see the
 // summit), in which case it pulls in to PEAK_VIEW.
 private const val PEAK_VIEW_MIN_ZOOM: Byte = 14
@@ -491,6 +490,7 @@ private fun MapScreen(
     // Screen pixels per dp; fed to the zoom-aware route/location overlays so their markers stay a
     // constant physical size across screens.
     val density = LocalDensity.current.density
+    val appContext = LocalContext.current.applicationContext
 
     // Resolved once on the main thread (needs a composition-bound FontFamily.Resolver) and reused
     // by the stats-chart PNG export (D4): the actual render + PNG compression still happens off the
@@ -508,12 +508,26 @@ private fun MapScreen(
     val toughDetector = remember(mapDir) { ToughPathDetector(File(mapDir, RudyMapView.BASEMAP_NAME)) }
     DisposableEffect(toughDetector) { onDispose { toughDetector.close() } }
 
+    // State of the two on-map switches, read from the device once and written back on each toggle.
+    // A saved slope "on" is kept as saved but is not in effect without a DEM: the switch and the
+    // layers treat it as off, and the saved value is left alone so slope display comes back once
+    // the elevation data is installed.
+    val displayPrefs = remember { DisplayPrefs(appContext) }
+    var slopeSaved by remember { mutableStateOf(displayPrefs.showSlope) }
+    var distanceMarkersOn by remember { mutableStateOf(displayPrefs.showDistanceMarkers) }
+    val slopeOn = slopeSaved && demElevation != null
+    val displayOptions = PathDisplayOptions(showSlope = slopeOn, showDistanceMarkers = distanceMarkersOn)
+
     // Every path drawn over the map - the opened paths, the plan being edited and the recording -
     // goes through one PathOverlays per live MapView (recreated if the view is). It owns their
-    // layers and stacking order; closing it cancels any slope sampling still running.
+    // layers and stacking order; closing it cancels any slope sampling still running. A new one
+    // starts with the display options in effect at that moment.
     val pathOverlays =
-        remember(map.value) { map.value?.let { PathOverlays(it, density, demElevation, PATH_DISPLAY_OPTIONS) } }
+        remember(map.value) { map.value?.let { PathOverlays(it, density, demElevation, displayOptions) } }
     DisposableEffect(pathOverlays) { onDispose { pathOverlays?.close() } }
+
+    // A toggled switch reaches the live layers here; the layers are not rebuilt.
+    LaunchedEffect(pathOverlays, displayOptions) { pathOverlays?.setDisplayOptions(displayOptions) }
 
     // One planner per live MapView, drawing through the overlays' editing layer.
     val planner =
@@ -596,7 +610,6 @@ private fun MapScreen(
     var identifyResult by remember { mutableStateOf<SymbolIdentifier.Match?>(null) }
     // Candidates awaiting a choice when several features share the crosshair spot.
     var identifyCandidates by remember { mutableStateOf<List<SymbolIdentifier.Match>?>(null) }
-    val appContext = LocalContext.current.applicationContext
     val symbolTable = remember { SymbolTable.load(appContext) }
     val identifier =
         remember(mapDir, symbolTable) {
@@ -1916,22 +1929,22 @@ private fun MapScreen(
             }
         }
 
-        // Bottom-end controls, stacked: bearing-mode toggle on top, recenter FAB below. Hidden during
-        // identify and route editing so it does not collide with their bottom bars. The recenter
-        // button is highlighted only when the map is no longer tracking the marker (the marker has
-        // drifted off-viewport or there is no fix yet); otherwise it is dimmed to signal "already
-        // following".
+        // Bottom-end controls, stacked: the distance-marker switch on top, the slope switch below it,
+        // the recenter FAB at the bottom. The whole column is hidden during identify so it does not
+        // collide with its bottom bar. The two switches show while any path is on the map - an
+        // opened path, the plan being edited or a recording - and the recenter button is also
+        // dropped while editing, where the crosshair owns the map centre. The recenter button is
+        // highlighted only when the map is no longer tracking the marker (the marker has drifted
+        // off-viewport or there is no fix yet); otherwise it is dimmed to signal "already following".
         //
         // Placement: by default it sits at BottomEnd on the same baseline as the bottom-start pill
         // row. On small screens, where the pill row (e.g. the four pills of the view state) would
-        // otherwise overlap this column, it lifts above the pill row instead - measured live
-        // off the actual pill-row width/height and the container width, so the choice adapts to
-        // whatever pill set the current mode is showing.
-        if (!identifyMode &&
-            identifyResult == null &&
-            identifyCandidates == null &&
-            mode != ScreenMode.EDIT
-        ) {
+        // otherwise overlap this column, the whole column lifts above the pill row instead -
+        // measured live off the actual pill-row width/height and the container width, so the choice
+        // adapts to whatever pill set the current mode is showing.
+        if (!identifyMode && identifyResult == null && identifyCandidates == null) {
+            val pathOnMap =
+                openedPaths.isNotEmpty() || mode == ScreenMode.EDIT || recordingState != Recorder.State.IDLE
             val stackAboveGapDp = 12.dp
             // True only when we have measurements for both groups AND they would overlap. The
             // measured pillRowWidthPx / fabColumnWidthPx already include each group's own 16 dp
@@ -1965,10 +1978,32 @@ private fun MapScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                MyLocationButton(
-                    onClick = { recenterOnCurrentLocation() },
-                    active = locationGranted && serviceEnabled && !markerInViewport,
-                )
+                if (pathOnMap) {
+                    DistanceMarkerSwitch(
+                        on = distanceMarkersOn,
+                        onClick = {
+                            distanceMarkersOn = !distanceMarkersOn
+                            displayPrefs.showDistanceMarkers = distanceMarkersOn
+                        },
+                    )
+                    SlopeSwitch(
+                        on = slopeOn,
+                        onClick = {
+                            if (demElevation == null) {
+                                scope.launch { snackbarHostState.showSnackbar("未安裝高程資料, 無法顯示坡度") }
+                            } else {
+                                slopeSaved = !slopeSaved
+                                displayPrefs.showSlope = slopeSaved
+                            }
+                        },
+                    )
+                }
+                if (mode != ScreenMode.EDIT) {
+                    MyLocationButton(
+                        onClick = { recenterOnCurrentLocation() },
+                        active = locationGranted && serviceEnabled && !markerInViewport,
+                    )
+                }
             }
         }
 

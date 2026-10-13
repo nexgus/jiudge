@@ -2,8 +2,15 @@ package io.github.nexgus.jiudge.feature.path
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -12,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import io.github.nexgus.jiudge.data.route.PathKind
 import io.github.nexgus.jiudge.data.route.PathStore
@@ -41,6 +49,55 @@ fun MapEntryControls(
         if (canClear) {
             MapPill("清除", onClear)
         }
+    }
+}
+
+/**
+ * The map's distance-marker switch: a small round button that shows or hides the kilometre labels
+ * on every path. [on] paints it in the theme's primary colour, as the identify toggle is when active.
+ */
+@Composable
+fun DistanceMarkerSwitch(
+    on: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    PathSwitchButton(Icons.Filled.Straighten, "里程標記", on, onClick, modifier)
+}
+
+/**
+ * The map's slope switch: a small round button that turns slope colouring on or off for every path.
+ * [on] paints it in the theme's primary colour, as the identify toggle is when active.
+ */
+@Composable
+fun SlopeSwitch(
+    on: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    PathSwitchButton(Icons.Filled.Terrain, "坡度顯示", on, onClick, modifier)
+}
+
+/** Shared look of the two map switches: the small FAB size of every other map control. */
+@Composable
+private fun PathSwitchButton(
+    icon: ImageVector,
+    description: String,
+    on: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SmallFloatingActionButton(
+        onClick = onClick,
+        modifier = modifier,
+        containerColor =
+            if (on) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                FloatingActionButtonDefaults.containerColor
+            },
+    ) {
+        Icon(imageVector = icon, contentDescription = description)
     }
 }
 
