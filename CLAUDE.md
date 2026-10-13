@@ -74,9 +74,12 @@
   右下角的里程開關與坡度開關套用於全部路徑, 狀態存於 `core/storage/DisplayPrefs`
 - 地圖符號辨識 ("?") (`feature/identify`)
 - 主選單 / 關於 (`feature/about`)
-- 現在位置標記 + 重新置中按鈕 - 前景 GPS + 羅盤朝向錐, OruxMaps 風格
+- 現在位置標記 + 跟隨開關 - 前景 GPS + 羅盤朝向錐, OruxMaps 風格
   (`feature/map/CurrentLocationLayer`, `core/location`). 僅限前景 (地圖可見時訂閱, pause 時釋放);
-  這**不是**下方的背景軌跡錄製
+  這**不是**下方的背景軌跡錄製. 右下角定位鍵為跟隨開關, 跟隨中高亮, 按下即關閉跟隨;
+  未跟隨時按下即置中並開啟跟隨. 只有錄製中 (開始錄製, 回到 App, 手勢結束時標記仍在畫面內)
+  自動開啟跟隨, 非錄製時啟動與回到 App 只置中一次. 開啟或匯入路徑, 搜尋山頭, 進入編輯,
+  以及手勢把標記拖出畫面時關閉跟隨
 - 山頭位置索引 (`core/index`): 將底圖的 `man_made=summit_board` POI 一次掃描成一個放在 `.map`
   旁的小 TSV, 缺漏 / 過期時重建 (以底圖大小 + mtime 標記). 每次進入地圖都會檢查;
   以不阻斷的建置 banner 顯示進度

@@ -177,7 +177,6 @@ import kotlinx.coroutines.withContext
 import org.mapsforge.core.model.LatLong
 import org.mapsforge.core.model.MapPosition
 import org.mapsforge.map.android.view.MapView
-import org.mapsforge.map.model.common.Observer
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -1146,7 +1145,8 @@ private fun MapScreen(
     val headingProvider = remember { HeadingProvider(context) }
     var locationGranted by remember { mutableStateOf(GpsSource.hasPermission(context)) }
     // Center the map on the first fix: true at launch when permission is already held (so a returning
-    // user opens straight onto their location), and re-armed when the recenter FAB is tapped.
+    // user opens straight onto their location), and re-armed when the follow button turns the
+    // follow on without a fix, or when a recording starts before one arrives.
     // Suppressed when this screen was rebuilt with a restored camera (map-data update apply): the
     // next fix must not yank the view away from where the user had it.
     var recenterOnFix by remember { mutableStateOf(initialCamera == null && GpsSource.hasPermission(context)) }
@@ -1156,22 +1156,19 @@ private fun MapScreen(
     var suppressResumeRefocus by remember { mutableStateOf(initialCamera != null) }
     // Persistent marker-follow toggle. While true, the map keeps the marker in sight on every fix -
     // safe-zone push while it is inside the viewport, hard recenter once it drifts out (typical of
-    // GPS jumps out of a tunnel or on public transport). Decided by each map gesture's end state:
-    // a gesture that ends with the marker still projecting inside the viewport keeps (or re-arms)
-    // the follow, one that ends with it outside stops it (that is the user's signal they want to
-    // look elsewhere). Also re-armed on ON_RESUME (recording or not, a return to the app is a
-    // "refocus") and on the recenter FAB. Sits alongside the one-shot [recenterOnFix] which still
-    // owns first-fix / FAB "jump to me" behaviour. Starts off after a restored-camera rebuild for
-    // the same reason as recenterOnFix; the next gesture or the FAB re-arms it as usual.
-    var followUser by remember { mutableStateOf(initialCamera == null) }
+    // GPS jumps out of a tunnel or on public transport). The bottom-end follow button toggles it
+    // directly. Outside a recording it is never turned on automatically: launch and ON_RESUME only
+    // centre once (through [recenterOnFix] or a direct snap). While RECORDING it is turned on when
+    // the recording becomes live, on ON_RESUME, and at the end of a map gesture that leaves the
+    // marker inside the viewport. In any state, a gesture that ends with the marker outside the
+    // viewport turns it off (the user's signal they want to look elsewhere), as do opening or
+    // importing a path, centring on a search peak and loading a plan to edit. A pause or the end
+    // of a recording leaves it as it is.
+    var followUser by remember { mutableStateOf(false) }
 
     // True while at least one finger is on the map. Pauses the safe-zone follow so an incoming GPS
     // update does not fight the user's pan/pinch mid-gesture.
     var userTouching by remember { mutableStateOf(false) }
-    // True when the current-location marker projects inside the MapView's pixel rectangle. Drives the
-    // recentre FAB's lit state (lit only when the map is no longer tracking the marker), and is
-    // recomputed on every map move (mapsforge Observer) and every new fix.
-    var markerInViewport by remember { mutableStateOf(false) }
 
     // Pixel sizes of the map-overlay container and the two bottom control groups. Drive the
     // small-screen fallback that lifts the bottom-end FAB column above the bottom-start pill row
@@ -1280,6 +1277,25 @@ private fun MapScreen(
         openedPaths = openedPaths - taken
     }
 
+    // A recording becoming live (a new or continued recording, a resume from the paused state, or
+    // this screen being built while the service is already recording) turns the follow on and
+    // centres on the marker: snap now when the last fix is fresh, otherwise leave it to the
+    // one-shot recenterOnFix on the next fix (also the path taken before the MapView exists).
+    LaunchedEffect(recordingState) {
+        if (recordingState != Recorder.State.RECORDING) return@LaunchedEffect
+        followUser = true
+        val mv = map.value
+        val fix = GpsSource.fix.value
+        if (mv != null &&
+            fix != null &&
+            System.currentTimeMillis() - fix.timeMs < STALE_FIX_THRESHOLD_MS
+        ) {
+            mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
+        } else {
+            recenterOnFix = true
+        }
+    }
+
     LaunchedEffect(searchPeakLayer, pendingPeak) {
         val peak = pendingPeak
         if (peak != null) searchPeakLayer?.show(peak.position) else searchPeakLayer?.clear()
@@ -1330,8 +1346,10 @@ private fun MapScreen(
                     // work in progress). In the edit state, or with a pending search peak
                     // / open search dialog, the user is deliberately looking at something else -
                     // keep the map where they left it and let followUser retain its prior value.
+                    // The refocus centres once; it turns the persistent follow on only while
+                    // recording (read from the controller so the value is current at resume time).
                     if (mode == ScreenMode.MAP && pendingPeak == null && !searchDialogOpen && !suppressResumeRefocus) {
-                        followUser = true
+                        if (RecordingController.state.value == Recorder.State.RECORDING) followUser = true
                         // Snap the map onto the last known position now if it is fresh; a stale
                         // fix (typically inside a long tunnel where GPS has been silent) would
                         // jump the map to an outdated spot, so fall back to the one-shot
@@ -1451,12 +1469,12 @@ private fun MapScreen(
         GpsSource.fix.collect { fix ->
             if (fix == null) {
                 lastFix = null
-                markerInViewport = false
                 return@collect
             }
             if (recenterOnFix && !userTouching) {
-                // One-shot land-on-marker; takes priority over safe-zone logic since the user
-                // explicitly asked for centring (either at launch or via the recenter FAB). Guarded
+                // One-shot land-on-marker; takes priority over safe-zone logic since centring was
+                // asked for explicitly (launch, ON_RESUME, the follow button or a recording becoming
+                // live). Guarded
                 // by !userTouching so a fix arriving mid-gesture cannot fight the user's pan; if
                 // the gesture turns out to be a real pan, the touch listener clears recenterOnFix
                 // on release and this branch never fires.
@@ -1473,12 +1491,11 @@ private fun MapScreen(
                 // search dialog and no pending search peak. The edit state and the search flow are
                 // cases where the user is deliberately looking at something other than their own
                 // location, so an incoming fix must not drag the map away.
-                // followUser gates every automatic pan below. It is only false once one of the
-                // user's own map gestures ended with the marker outside the viewport (see the
-                // touch listener below), or the user explicitly picked a target to look at
-                // (centerOnPeak, loading a route to edit, framing an opened or imported path), so
-                // the two branches here can safely
-                // assume the user still wants to be followed.
+                // followUser gates every automatic pan below. It is only true once the user turned
+                // the follow on with the follow button, or a recording turned it on (see the
+                // followUser declaration), and has not since been cleared by a gesture ending with
+                // the marker outside the viewport or by an explicit target to look at, so the two
+                // branches here can safely assume the user still wants to be followed.
                 // Foreground mode subscribes to every enabled non-passive provider (GPS + network,
                 // plus fused on Android 12+; GPS is dropped under a coarse-only grant), and all of
                 // them drive the marker; the follow path deliberately treats them the same so a
@@ -1507,30 +1524,12 @@ private fun MapScreen(
                     mv.model.mapViewPosition.center = LatLong(fix.latitude, fix.longitude)
                 }
             }
-            // Refresh the recentre-button highlight after any pan we just performed.
-            markerInViewport = MapFollow.isMarkerInViewport(mv, fix)
             lastFix = fix
         }
     }
 
-    // Map-move observer: pan / zoom / rotate by the user changes whether the marker projects inside
-    // the viewport, so the recentre button's lit state needs to refresh independently of fix updates.
-    DisposableEffect(map.value) {
-        val mv = map.value
-        if (mv == null) {
-            onDispose {}
-        } else {
-            val observer =
-                Observer {
-                    markerInViewport = MapFollow.isMarkerInViewport(mv, GpsSource.fix.value)
-                }
-            mv.model.mapViewPosition.addObserver(observer)
-            onDispose { mv.model.mapViewPosition.removeObserver(observer) }
-        }
-    }
-
-    // Collected in composition (1 Hz, unlike the high-rate heading) to drive the FAB highlight and the
-    // recenter behaviour.
+    // Collected in composition (1 Hz, unlike the high-rate heading) to drive the follow button's
+    // highlight (serviceEnabled) and the location info dialog.
     val currentFix by GpsSource.fix.collectAsState()
     val currentFixStale by GpsSource.fixStale.collectAsState()
     val serviceEnabled by GpsSource.serviceEnabled.collectAsState()
@@ -1571,9 +1570,9 @@ private fun MapScreen(
             context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             return
         }
-        // The FAB is the explicit "follow me" trigger, so re-arm the persistent follow as well as
-        // whatever one-shot centring path we take below. Without this, tapping the FAB after a
-        // manual pan would centre once and then stop tracking on the next fix.
+        // Called when the follow button turns the follow on: arm the persistent follow as well as
+        // whatever one-shot centring path we take below, so the map centres now and keeps
+        // tracking on later fixes.
         followUser = true
         val fix = GpsSource.fix.value
         if (fix != null) {
@@ -1663,7 +1662,7 @@ private fun MapScreen(
             managerList = null
             map.value?.fitToRoute(opened.path.framingPoints())
             // The user asked to look at this path: stop following so the next fix does not drag
-            // the map back onto the current-location marker. The recentre FAB re-arms follow.
+            // the map back onto the current-location marker. The follow button turns the follow back on.
             followUser = false
             recenterOnFix = false
         }
@@ -1698,15 +1697,18 @@ private fun MapScreen(
                 RudyMapView.create(ctx, mapDir, initialCamera).also { mv ->
                     // Observe touches for two things: (1) userTouching pauses the safe-zone follow
                     // while a finger (or two) is down, so an incoming fix does not fight the user's
-                    // pan/pinch mid-gesture; (2) at gesture end, decide followUser purely from the
-                    // end state: a marker still projecting inside the viewport means the user kept
-                    // (or brought back) their position in sight, so keep following - zooming around
-                    // the marker or panning back onto it re-arms the follow without the FAB. A
+                    // pan/pinch mid-gesture; (2) at gesture end, update followUser from the end
+                    // state. While recording, a marker still projecting inside the viewport means
+                    // the user kept (or brought back) their position in sight, so the follow is
+                    // turned on - zooming around the marker or panning back onto it re-arms it
+                    // without the follow button; outside a recording the flag keeps its value. A
                     // marker outside the viewport means they want to look elsewhere, so stop
                     // following and drop any armed one-shot recenter (without that clear, a fix
                     // arriving after the user let go would still snap the map back onto the marker,
                     // defeating the pan). With no usable fix (none yet, or the last one is stale)
                     // there is nothing to project, so both flags keep their pre-gesture values.
+                    // The recording state is read from the controller: this lambda is created once
+                    // with the MapView and would otherwise see a stale composition value.
                     // Returning false lets mapsforge's own gesture handling run unchanged.
                     mv.setOnTouchListener { _, event ->
                         when (event.actionMasked) {
@@ -1718,7 +1720,9 @@ private fun MapScreen(
                                     System.currentTimeMillis() - fix.timeMs < STALE_FIX_THRESHOLD_MS
                                 ) {
                                     if (MapFollow.isMarkerInViewport(mv, fix)) {
-                                        followUser = true
+                                        if (RecordingController.state.value == Recorder.State.RECORDING) {
+                                            followUser = true
+                                        }
                                     } else {
                                         followUser = false
                                         recenterOnFix = false
@@ -1898,7 +1902,7 @@ private fun MapScreen(
                 else -> Unit
             }
             // Persistent warning whenever precise location is not granted. Tapping reissues the same
-            // permission request the recenter button uses, so the system shows its standard dialog
+            // permission request the follow button uses, so the system shows its standard dialog
             // (with the precise/approximate toggle) - a single tap upgrades the grant. No dismiss
             // button: accuracy stays poor until precise is granted, so the warning stays put.
             if (!fineLocationGranted) {
@@ -1923,12 +1927,13 @@ private fun MapScreen(
         }
 
         // Bottom-end controls, stacked: the distance-marker switch on top, the slope switch below it,
-        // the recenter FAB at the bottom. The whole column is hidden during identify so it does not
+        // the follow button at the bottom. The whole column is hidden during identify so it does not
         // collide with its bottom bar. The two switches show while any path is on the map - an
-        // opened path, the plan being edited or a recording - and the recenter button is also
-        // dropped while editing, where the crosshair owns the map centre. The recenter button is
-        // highlighted only when the map is no longer tracking the marker (the marker has drifted
-        // off-viewport or there is no fix yet); otherwise it is dimmed to signal "already following".
+        // opened path, the plan being edited or a recording - and the follow button is also
+        // dropped while editing, where the crosshair owns the map centre. The follow button is a
+        // toggle for followUser: highlighted while following (with location granted and enabled);
+        // tapping it then turns the follow off without moving the map, otherwise tapping it runs
+        // the permission / location-service checks, centres on the marker and turns the follow on.
         //
         // Placement: by default it sits at BottomEnd on the same baseline as the bottom-start pill
         // row. On small screens, where the pill row (e.g. the four pills of the map state) would
@@ -1993,8 +1998,15 @@ private fun MapScreen(
                 }
                 if (mode != ScreenMode.EDIT) {
                     MyLocationButton(
-                        onClick = { recenterOnCurrentLocation() },
-                        active = locationGranted && serviceEnabled && !markerInViewport,
+                        onClick = {
+                            if (followUser) {
+                                followUser = false
+                                recenterOnFix = false
+                            } else {
+                                recenterOnCurrentLocation()
+                            }
+                        },
+                        active = locationGranted && serviceEnabled && followUser,
                     )
                 }
             }
@@ -2280,7 +2292,7 @@ private fun MapScreen(
                     addOpened(imported, savedFile)
                     map.value?.fitToRoute(imported.framingPoints())
                     // As with opening a path: stop following so the next fix does not drag the
-                    // map off the imported path. The recentre FAB re-arms follow.
+                    // map off the imported path. The follow button turns the follow back on.
                     followUser = false
                     recenterOnFix = false
                     snackbarHostState.showSnackbar("已匯入路徑: $name")
@@ -2666,7 +2678,7 @@ private fun MapScreen(
                     pendingPeak = peak
                     centerOnPeak(peak)
                     // User asked to look at a specific summit: stop following so the next fix does
-                    // not drag the map back onto the current-location marker. The recentre FAB
+                    // not drag the map back onto the current-location marker. The follow button
                     // re-arms follow when tapped.
                     followUser = false
                     recenterOnFix = false
@@ -2689,10 +2701,10 @@ private fun MapScreen(
 }
 
 /**
- * "Recenter on my location" FAB. Tapping requests location permission the first time, then centers
- * the map on the current fix. [active] highlights it only when the map is no longer tracking the
- * marker, so it acts as both a button and a "needs your attention" indicator. Uses the small FAB
- * variant so it sits at the same size as every other map-screen control button.
+ * "Follow my location" toggle FAB. [active] highlights it while the map is following the marker;
+ * what a tap does (turn the follow off, or check permission, centre and turn it on) is decided by
+ * the caller's [onClick]. Uses the small FAB variant so it sits at the same size as every other
+ * map-screen control button.
  */
 @Composable
 private fun MyLocationButton(
@@ -2710,7 +2722,7 @@ private fun MyLocationButton(
                 FloatingActionButtonDefaults.containerColor
             },
     ) {
-        Icon(imageVector = Icons.Filled.MyLocation, contentDescription = "回到目前位置")
+        Icon(imageVector = Icons.Filled.MyLocation, contentDescription = "跟隨目前位置")
     }
 }
 
