@@ -147,11 +147,11 @@ import io.github.nexgus.jiudge.feature.path.DeletePathDialog
 import io.github.nexgus.jiudge.feature.path.DistanceMarkerSwitch
 import io.github.nexgus.jiudge.feature.path.ImportPathDialog
 import io.github.nexgus.jiudge.feature.path.MapEntryControls
+import io.github.nexgus.jiudge.feature.path.OpenedPathChooserDialog
 import io.github.nexgus.jiudge.feature.path.PathDisplayOptions
 import io.github.nexgus.jiudge.feature.path.PathManagerScreen
 import io.github.nexgus.jiudge.feature.path.PathOverlays
 import io.github.nexgus.jiudge.feature.path.PathStyle
-import io.github.nexgus.jiudge.feature.path.PathViewControls
 import io.github.nexgus.jiudge.feature.path.RenamePathDialog
 import io.github.nexgus.jiudge.feature.path.SavePathDialog
 import io.github.nexgus.jiudge.feature.path.SlopeSwitch
@@ -202,9 +202,9 @@ private fun importDraftFile(context: Context): File = File(context.cacheDir, "im
 
 /**
  * A saved path shown on the map. [id] is what identifies it for as long as it stays opened - it is
- * the key of its map layer and what the focus points at - and it never changes, unlike [file],
- * whose location follows a rename. Whenever a path (re)joins the opened paths it does so under a
- * fresh id, which is what puts it on top of the others.
+ * the key of its map layer - and it never changes, unlike [file], whose location follows a rename.
+ * Whenever a path (re)joins the opened paths it does so under a fresh id, which is what puts it on
+ * top of the others.
  *
  * Deliberately not a data class: two entries are the same only when they are the same instance, so
  * comparing or removing one never walks the (possibly huge) point lists.
@@ -441,15 +441,12 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * The three states of the map screen, which decide the bottom-start action bar (unless a recording
- * session, which sits on top of any of them, owns that bar).
+ * The two states of the map screen, which decide the bottom-start action bar (unless a recording
+ * session, which sits on top of either of them, owns that bar).
  */
 private enum class ScreenMode {
-    /** No focused path and no edit in progress: the bar holds the entry buttons. */
+    /** No edit in progress: the bar holds the entry buttons. */
     MAP,
-
-    /** One opened path is focused: the bar acts on it. */
-    VIEW,
 
     /** A planned route is being edited with the crosshair. */
     EDIT,
@@ -538,15 +535,11 @@ private fun MapScreen(
         }
 
     // The saved paths shown on the map, bottom to top; any number may be open at once. They stay
-    // on the map through leaving the view state, editing another plan and recording, and go away
-    // only through 清除 or by deleting the path in the file manager. Memory only: a restart (or the
-    // screen rebuild after a map-data update) begins with none.
+    // on the map through editing another plan and recording, and go away only through 清除 or by
+    // deleting the path in the file manager. Memory only: a restart (or the screen rebuild after a
+    // map-data update) begins with none.
     var openedPaths by remember { mutableStateOf<List<OpenedPath>>(emptyList()) }
     var nextOpenedId by remember { mutableLongStateOf(0L) }
-
-    // The opened path the view-state action bar acts on; null when none is focused.
-    var focusId by remember { mutableStateOf<Long?>(null) }
-    val focusedPath by remember { derivedStateOf { openedPaths.firstOrNull { it.id == focusId } } }
 
     // Raised while a plan is being edited through the planner. editSource is the opened path the
     // edit started from - off openedPaths for the duration, since the editing layer draws it
@@ -554,17 +547,9 @@ private fun MapScreen(
     var editing by remember { mutableStateOf(false) }
     var editSource by remember { mutableStateOf<OpenedPath?>(null) }
 
-    // Derived, never set: editing wins, otherwise a focused path means the view state. Read through
+    // Derived, never set: the edit state while editing, the plain map state otherwise. Read through
     // the state delegate so long-lived effects and callbacks always see the current value.
-    val mode by remember {
-        derivedStateOf {
-            when {
-                editing -> ScreenMode.EDIT
-                focusedPath != null -> ScreenMode.VIEW
-                else -> ScreenMode.MAP
-            }
-        }
-    }
+    val mode by remember { derivedStateOf { if (editing) ScreenMode.EDIT else ScreenMode.MAP } }
 
     fun openedFor(file: File): OpenedPath? = openedPaths.firstOrNull { samePathFile(it.file, file) }
 
@@ -1287,13 +1272,12 @@ private fun MapScreen(
     // A continued recording takes its source track off the opened paths: all of that track's
     // points are the start of the recording now, so the recording layer draws them. Done once the
     // session is actually live rather than on the button press, so a start that never happens (a
-    // permission refused along the way) leaves the track where it was, still focused.
+    // permission refused along the way) leaves the track where it was on the map.
     LaunchedEffect(recordingState) {
         if (recordingState == Recorder.State.IDLE) return@LaunchedEffect
         val source = RecordingController.currentSession()?.takeIf { it.isContinuation }?.source ?: return@LaunchedEffect
         val taken = openedFor(source) ?: return@LaunchedEffect
         openedPaths = openedPaths - taken
-        if (focusId == taken.id) focusId = null
     }
 
     LaunchedEffect(searchPeakLayer, pendingPeak) {
@@ -1343,7 +1327,7 @@ private fun MapScreen(
                     headingProvider.start()
                     // Only refocus when the current UI context is one where following makes sense
                     // (the plain map state, or recording on top of it - all with no search / path
-                    // work in progress). In the view or edit state, or with a pending search peak
+                    // work in progress). In the edit state, or with a pending search peak
                     // / open search dialog, the user is deliberately looking at something else -
                     // keep the map where they left it and let followUser retain its prior value.
                     if (mode == ScreenMode.MAP && pendingPeak == null && !searchDialogOpen && !suppressResumeRefocus) {
@@ -1486,13 +1470,14 @@ private fun MapScreen(
             ) {
                 // The mode / pendingPeak / searchDialogOpen trio is the context gate: follow only
                 // in the plain map state (recording sits on top of it so it is included) with no
-                // search dialog and no pending search peak. The view state, the edit state and the
-                // search flow are cases where the user is deliberately looking at something other
-                // than their own location, so an incoming fix must not drag the map away.
+                // search dialog and no pending search peak. The edit state and the search flow are
+                // cases where the user is deliberately looking at something other than their own
+                // location, so an incoming fix must not drag the map away.
                 // followUser gates every automatic pan below. It is only false once one of the
                 // user's own map gestures ended with the marker outside the viewport (see the
                 // touch listener below), or the user explicitly picked a target to look at
-                // (centerOnPeak, loading a route to edit), so the two branches here can safely
+                // (centerOnPeak, loading a route to edit, framing an opened or imported path), so
+                // the two branches here can safely
                 // assume the user still wants to be followed.
                 // Foreground mode subscribes to every enabled non-passive provider (GPS + network,
                 // plus fused on Android 12+; GPS is dropped under a coarse-only grant), and all of
@@ -1602,6 +1587,11 @@ private fun MapScreen(
         }
     }
 
+    // Raised by 規劃 / 錄製 in the map state while a path of their kind is on the map: the chooser
+    // that picks which opened plan to edit (or which opened track to continue), or a new one.
+    var planChooserOpen by remember { mutableStateOf(false) }
+    var recordChooserOpen by remember { mutableStateOf(false) }
+
     // Enters the edit state on a blank plan; opened paths stay on the map. Routing a leg needs the
     // BRouter data, so without it the edit state is not entered and a timed message says why.
     fun startNewPlan() {
@@ -1620,7 +1610,6 @@ private fun MapScreen(
         val route = source.path as? PlannedRoute ?: return
         val activePlanner = planner ?: return
         openedPaths = openedPaths - source
-        focusId = null
         editSource = source
         activePlanner.loadFrom(route)
         // loadFrom pans to the route's first waypoint: stop following so the next fix does not
@@ -1631,13 +1620,13 @@ private fun MapScreen(
     }
 
     // Leaves the edit state without saving. A route that was opened before the edit goes back on
-    // the map as it was, on top and focused; a brand-new plan leaves nothing behind.
+    // the map as it was, on top; a brand-new plan leaves nothing behind.
     fun cancelEditing() {
         planner?.clear()
         val source = editSource
         editSource = null
         editing = false
-        if (source != null) focusId = addOpened(source.path, source.file).id
+        if (source != null) addOpened(source.path, source.file)
     }
 
     // Opens the file manager on a fresh listing. The manager belongs to the plain map state, so a
@@ -1666,25 +1655,28 @@ private fun MapScreen(
     }
 
     // Opens a path picked in the file manager: it joins the opened paths (those already on the map
-    // stay), the manager closes, the map frames the whole path and it becomes the focused one. A
-    // path that is already open is not added again - it is only focused and framed. On a read
-    // failure the manager stays up under the error dialog.
+    // stay), the manager closes and the map frames the whole path, staying in the map state. A path
+    // that is already open is not added again - it is only framed. On a read failure the manager
+    // stays up under the error dialog.
     fun openPath(summary: PathStore.Summary) {
-        fun focus(opened: OpenedPath) {
+        fun frame(opened: OpenedPath) {
             managerList = null
-            focusId = opened.id
             map.value?.fitToRoute(opened.path.framingPoints())
+            // The user asked to look at this path: stop following so the next fix does not drag
+            // the map back onto the current-location marker. The recentre FAB re-arms follow.
+            followUser = false
+            recenterOnFix = false
         }
         val shown = openedFor(summary.file)
         if (shown != null) {
-            focus(shown)
+            frame(shown)
             return
         }
         scope.launch {
             try {
                 val path = withContext(Dispatchers.IO) { pathStore.load(summary.file) }
                 // A second tap on the row may have opened it while this read was running.
-                focus(openedFor(summary.file) ?: addOpened(path, summary.file))
+                frame(openedFor(summary.file) ?: addOpened(path, summary.file))
             } catch (e: Exception) {
                 storageErrorMessage = "開啟失敗: ${e.message}"
             }
@@ -1939,7 +1931,7 @@ private fun MapScreen(
         // off-viewport or there is no fix yet); otherwise it is dimmed to signal "already following".
         //
         // Placement: by default it sits at BottomEnd on the same baseline as the bottom-start pill
-        // row. On small screens, where the pill row (e.g. the four pills of the view state) would
+        // row. On small screens, where the pill row (e.g. the four pills of the map state) would
         // otherwise overlap this column, the whole column lifts above the pill row instead -
         // measured live off the actual pill-row width/height and the container width, so the choice
         // adapts to whatever pill set the current mode is showing.
@@ -2084,17 +2076,26 @@ private fun MapScreen(
                         MapEntryControls(
                             canRecord = locationGranted,
                             canClear = openedPaths.isNotEmpty(),
-                            // 錄製 and 規劃 start right away, with no chooser in between.
+                            // 錄製 and 規劃 start right away while no path of their kind is on the
+                            // map; otherwise a chooser asks which one to continue or edit, or to
+                            // start afresh.
                             onRecord = {
-                                withStorageAccess { requestStartRecording(continuationSource = null) }
+                                if (openedPaths.any { it.path.kind == PathKind.TRACK }) {
+                                    recordChooserOpen = true
+                                } else {
+                                    withStorageAccess { requestStartRecording(continuationSource = null) }
+                                }
                             },
-                            onPlan = { startNewPlan() },
+                            onPlan = {
+                                if (openedPaths.any { it.path.kind == PathKind.PLAN }) {
+                                    planChooserOpen = true
+                                } else {
+                                    startNewPlan()
+                                }
+                            },
                             onFiles = { withStorageAccess { openManager() } },
                             // Takes every opened path off the map; the files are untouched.
-                            onClear = {
-                                openedPaths = emptyList()
-                                focusId = null
-                            },
+                            onClear = { openedPaths = emptyList() },
                         )
 
                     ScreenMode.EDIT ->
@@ -2115,29 +2116,6 @@ private fun MapScreen(
                             onSave = { showSave = true },
                             onCancel = { cancelEditing() },
                         )
-
-                    ScreenMode.VIEW ->
-                        focusedPath?.let { focused ->
-                            val path = focused.path
-                            PathViewControls(
-                                kind = path.kind,
-                                onEdit = { startEditing(focused) },
-                                // The track stays focused until the session is live (see the
-                                // effect that takes a continuation's source off the opened paths).
-                                onContinueRecording = { requestStartRecording(continuationSource = focused.file) },
-                                onStats = {
-                                    openStats(path.name, isTrack = path.kind == PathKind.TRACK) {
-                                        path.polyline to path.pointTimesMs
-                                    }
-                                },
-                                onExport = {
-                                    exportTarget = GpxExportTarget(focused.file, path.name)
-                                    gpxExportLauncher.launch(gpxSuggestedName(path.name))
-                                },
-                                // Back to the map state; the path stays on the map as an opened path.
-                                onLeave = { focusId = null },
-                            )
-                        }
                 }
             }
         }
@@ -2186,8 +2164,8 @@ private fun MapScreen(
 
         // Stats overlay: drawn last inside the map Box so it covers the map, banners, controls and
         // the file manager (its opaque Surface also swallows touches). Back and 關閉 both just clear
-        // the state; whatever it was opened from - the view state or the file manager - is
-        // untouched underneath, so closing lands back where the user came from.
+        // the state; the file manager it was opened from is untouched underneath, so closing lands
+        // back there.
         statsTarget?.let { target ->
             StatsScreen(
                 name = target.name,
@@ -2218,12 +2196,51 @@ private fun MapScreen(
         )
     }
 
+    // The 規劃 / 錄製 choosers list the opened paths of their kind, the most recently added first.
+    if (planChooserOpen) {
+        OpenedPathChooserDialog(
+            title = "規劃",
+            paths = openedPaths.filter { it.path.kind == PathKind.PLAN }.asReversed(),
+            pathLabel = { it.path.name },
+            newLabel = "新規劃",
+            onPickPath = { opened ->
+                planChooserOpen = false
+                startEditing(opened)
+            },
+            onPickNew = {
+                planChooserOpen = false
+                startNewPlan()
+            },
+            onDismiss = { planChooserOpen = false },
+        )
+    }
+
+    if (recordChooserOpen) {
+        OpenedPathChooserDialog(
+            title = "錄製",
+            paths = openedPaths.filter { it.path.kind == PathKind.TRACK }.asReversed(),
+            pathLabel = { it.path.name },
+            newLabel = "新錄製",
+            // The picked track stays on the map until the session is live (see the effect that
+            // takes a continuation's source off the opened paths).
+            onPickPath = { opened ->
+                recordChooserOpen = false
+                withStorageAccess { requestStartRecording(continuationSource = opened.file) }
+            },
+            onPickNew = {
+                recordChooserOpen = false
+                withStorageAccess { requestStartRecording(continuationSource = null) }
+            },
+            onDismiss = { recordChooserOpen = false },
+        )
+    }
+
     importDraftName?.let { draftName ->
         // Saves the staged import under [name] and shows it: whichever kind the draft holds, it
-        // becomes the topmost opened path, is focused and framed whole, and the file manager and
-        // the stats screen - either may be up when the import came from another app - close. The
-        // draft stays staged across a rejected-duplicate reopen, so retrying under another name
-        // re-reads it.
+        // becomes the topmost opened path and is framed whole in the map state, and the file
+        // manager and the stats screen - either may be up when the import came from another app -
+        // close. The draft stays staged across a rejected-duplicate reopen, so retrying under
+        // another name re-reads it.
         fun saveImported(name: String) {
             scope.launch {
                 // The staged draft can only vanish if the OS cleared the cache dir while the
@@ -2260,8 +2277,12 @@ private fun MapScreen(
                     managerList = null
                     statsTarget = null
                     statsData = null
-                    focusId = addOpened(imported, savedFile).id
+                    addOpened(imported, savedFile)
                     map.value?.fitToRoute(imported.framingPoints())
+                    // As with opening a path: stop following so the next fix does not drag the
+                    // map off the imported path. The recentre FAB re-arms follow.
+                    followUser = false
+                    recenterOnFix = false
                     snackbarHostState.showSnackbar("已匯入路徑: $name")
                 } catch (e: DuplicatePathNameException) {
                     // Keep the typed name (and the staged file) and reopen so the user can
@@ -2309,13 +2330,13 @@ private fun MapScreen(
                                     withContext(Dispatchers.IO) {
                                         pathStore.save(saved, replacing = replacing)
                                     }
-                                // Keep the route on screen: leave editing for the view state, with
-                                // the saved route as the topmost opened path and the focused one.
+                                // Keep the route on screen: leave editing for the map state, with
+                                // the saved route as the topmost opened path.
                                 p.clear()
                                 editSource = null
                                 editing = false
                                 saveNameDraft = null
-                                focusId = addOpened(saved, savedFile).id
+                                addOpened(saved, savedFile)
                                 snackbarHostState.showSnackbar("已儲存路徑: $name")
                             } catch (e: DuplicatePathNameException) {
                                 // Keep the typed name and reopen so the user can rename in place.
@@ -2375,7 +2396,7 @@ private fun MapScreen(
                         try {
                             val renamed = withContext(Dispatchers.IO) { pathStore.rename(target.file, newName) }
                             // Keep the path's entry on the map in step when it is opened: same id,
-                            // so its layer and the focus are untouched, with the new name and the
+                            // so its layer is untouched, with the new name and the
                             // new file - renaming may shift the file path (the slug follows the
                             // name), and export, edit and continued recording all act on that file.
                             openedFor(target.file)?.let { opened ->
@@ -2414,10 +2435,7 @@ private fun MapScreen(
                             withContext(Dispatchers.IO) { pathStore.delete(target.file) }
                             // A deleted path leaves the map with its file, so no line is ever left
                             // on screen without a file behind it. The other opened paths stay.
-                            openedFor(target.file)?.let { opened ->
-                                openedPaths = openedPaths - opened
-                                if (focusId == opened.id) focusId = null
-                            }
+                            openedFor(target.file)?.let { opened -> openedPaths = openedPaths - opened }
                             reloadManagerList()
                             snackbarHostState.showSnackbar("已刪除 \"${target.name}\"")
                         } catch (e: Exception) {
@@ -2485,14 +2503,15 @@ private fun MapScreen(
                                 val savedFile = withContext(Dispatchers.IO) { RecordingController.finalize(session, name) }
                                 // Saving ends the session - RecordingService.finish() tells the
                                 // service to release GPS/wake lock, remove the notification, and
-                                // call RecordingController.handleEnd() (back to IDLE) - and lands
-                                // in the view state on the just-saved track. It is read back from
-                                // the finalised file so the opened entry carries the real
-                                // timestamps and a file 繼續錄製 can hand to the service again.
+                                // call RecordingController.handleEnd() (back to IDLE) - and puts
+                                // the just-saved track on the map as the topmost opened path. It is
+                                // read back from the finalised file so the opened entry carries the
+                                // real timestamps and a file a continued recording can hand to the
+                                // service again.
                                 RecordingService.finish(context)
                                 val saved = withContext(Dispatchers.IO) { pathStore.load(savedFile) }
                                 saveTrackNameDraft = null
-                                focusId = addOpened(saved, savedFile).id
+                                addOpened(saved, savedFile)
                                 snackbarHostState.showSnackbar("已儲存路徑: $name")
                             } catch (e: DuplicatePathNameException) {
                                 // Keep the session alive (still PAUSED) and reopen the dialog with
@@ -2530,22 +2549,19 @@ private fun MapScreen(
                         RecordingService.finish(context)
                         saveTrackNameDraft = null
                         // A discarded continuation loses only the newly added points; its source
-                        // file is intact, so that track goes back on the map, on top and focused.
+                        // file is intact, so that track goes back on the map, on top.
                         // The source comes from the session, not from what this screen remembers,
                         // so this also holds after the activity was recreated mid-recording. A
-                        // discarded fresh recording has nothing to fall back to: back to the map
-                        // state, opened paths untouched.
+                        // discarded fresh recording has nothing to fall back to: opened paths are
+                        // left untouched.
                         val source = session.source
                         if (session.isContinuation && source != null) {
                             try {
                                 val original = withContext(Dispatchers.IO) { pathStore.load(source) }
-                                focusId = addOpened(original, source).id
+                                addOpened(original, source)
                             } catch (e: Exception) {
-                                focusId = null
                                 storageErrorMessage = "回復原始軌跡失敗: ${e.message}"
                             }
-                        } else {
-                            focusId = null
                         }
                     }
                 }

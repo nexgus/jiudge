@@ -58,7 +58,7 @@
 - 含 hillshade 的離線地圖渲染 (`feature/map`)
 - App 內下載 map / DEM / BRouter 資料 (`feature/mapdata`, `core/mapdata`)
 - 經 BRouter 的路徑規劃 - 航點, 儲存, 編輯既有規劃路徑 (`feature/planning`, `core/routing`,
-  `data/route`); 地圖狀態的 "規劃" 按下即進入編輯
+  `data/route`); 地圖狀態的 "規劃" 按下即進入編輯 (地圖上有已開啟規劃路徑時先以對話框選擇編輯哪一條或新規劃)
 - 在 `.hgt` DEM 上的裝置端高程查詢, 驅動路徑線的坡度顯示
   (`core/elevation/DemElevation`, `core/elevation/SlopeSampler`, `feature/path/PathLayer`)
 - 路徑合一 (`feature/path`, `data/route/PathStore`): 規劃路徑與軌跡為單一種路徑檔, 存於
@@ -68,7 +68,9 @@
   (僅軌跡), 刪除與匯入 GPX 的唯一入口; 畫面以 "軌跡" 與 "規劃路徑" 兩個分頁分開列出兩種路徑,
   上次所選分頁存於 `core/storage/DisplayPrefs`. 地圖可同時顯示多條已開啟路徑, 以種類色實線區分
   (錄製中軌跡紅, 軌跡藍, 規劃路徑綠); 已開啟路徑皆有方向箭頭, 起終點標記與里程標記.
-  檢視狀態的按鍵列依種類為 "編輯" 或 "繼續錄製", 其餘為 "統計", "匯出 GPX", "離開".
+  地圖只有地圖狀態與編輯狀態; 開啟或匯入路徑後維持地圖狀態, 地圖框住該路徑並停止跟隨現在位置.
+  地圖上已有同種已開啟路徑時, 地圖狀態的 "規劃" / "錄製" 先以對話框列出這些路徑 (最後加入者在上)
+  與 "新規劃" / "新錄製", 由使用者選擇編輯 / 接續哪一條或新建. 統計與匯出 GPX 的入口只有檔案管理畫面.
   右下角的里程開關與坡度開關套用於全部路徑, 狀態存於 `core/storage/DisplayPrefs`
 - 地圖符號辨識 ("?") (`feature/identify`)
 - 主選單 / 關於 (`feature/about`)
@@ -84,7 +86,7 @@
   (`FOREGROUND_SERVICE_LOCATION`) + partial wake lock + 電池最佳化豁免詢問 (advisory)
   + 錄製中螢幕恆亮; fix gating 規則 (`FixGate`);
   staging 檔逐點 append 與儲存 / 放棄 / 續錄流程 (`PathStore`);
-  地圖狀態的 "錄製" 按下即開始新錄製
+  地圖狀態的 "錄製" 按下即開始新錄製 (地圖上有已開啟軌跡時先以對話框選擇接續哪一條或新錄製)
 - GPX 匯入 (`data/route/GpxImporter` SAX 解析, 含逐點 `<time>`): 入口為檔案管理畫面的
   "匯入 GPX" (系統檔案挑選器) 與自其他 App 點開 `.gpx` (manifest 已註冊 `ACTION_VIEW`,
   MainActivity 為 `singleTask`); 匯入時只詢問名稱, 檔內每點皆有時間戳時存為軌跡
@@ -92,15 +94,14 @@
   Douglas-Peucker 3 m 抽稀, 匯入段標記 `origin:"import"`, 編輯時 "-" 對其停用);
   軌跡可於檔案管理畫面 "複製為規劃路徑" (`data/route/PathConversions`)
 - GPX 匯出 (`data/route/GpxExporter` 串流輸出 GPX 1.1): 檔案管理畫面各列的 "更多"
-  選單, 以及檢視狀態的按鍵列, 皆提供 "匯出 GPX", 經 SAF
+  選單提供 "匯出 GPX", 經 SAF
   `ACTION_CREATE_DOCUMENT` 存檔 (預設下載目錄, 使用者可另選); `<ele>` 一律由 DEM 取得
 - 路徑 / 軌跡統計畫面 (`core/stats`, `feature/stats`): 全螢幕 overlay, 直向剖面圖在上 /
   橫向剖面圖佔左半, 數據區依 "距離與高程 / 時間 / 速度" 分組為兩欄細格線卡片 (可捲動,
   爬升 / 下降帶坡度配色的 ↑ / ↓ 強調); 距離, 時間 / 速度類 (僅軌跡), DEM 爬升 / 海拔 /
   高低差與上坡 / 下坡里程 (30 m 重取樣 + 10 m 遲滯), 依坡度上色的高程剖面 (與地圖路徑線共用
   `core/elevation/SlopeScale`); 互動剖面圖 (雙指縮放 / 平移, 單指十字游標顯示距離 / 海拔 /
-  坡度 / 時間) 與匯出 PNG; 入口: 檢視狀態按鍵列的 "統計" 與檔案管理畫面的 "更多"
-  選單
+  坡度 / 時間) 與匯出 PNG; 入口為檔案管理畫面各列的 "更多" 選單
 
 **尚未建置 (已知待辦):**
 - 獨立航點的 GPX 匯出; KML 匯出與匯入; 獨立航點匯入

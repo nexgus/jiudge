@@ -1,12 +1,19 @@
 package io.github.nexgus.jiudge.feature.path
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -21,16 +28,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import io.github.nexgus.jiudge.data.route.PathKind
 import io.github.nexgus.jiudge.data.route.PathStore
 import io.github.nexgus.jiudge.feature.planning.MapPill
 
 /**
- * Entry controls of the plain map state: start recording, start a new plan, open the file manager,
- * or take every opened path off the map. "錄製" stays in place but is disabled while location
- * permission is not held - recording is meaningless without a fix, and the permission is picked up
- * through the location banner or the recenter button rather than from here. "清除" is omitted, not
- * disabled, while no path is opened.
+ * Entry controls of the plain map state: record (a new track, or onto an opened one), plan (a new
+ * route, or edit an opened one), open the file manager, or take every opened path off the map.
+ * "錄製" stays in place but is disabled while location permission is not held - recording is
+ * meaningless without a fix, and the permission is picked up through the location banner or the
+ * recenter button rather than from here. "清除" is omitted, not disabled, while no path is opened.
  */
 @Composable
 fun MapEntryControls(
@@ -102,31 +108,52 @@ private fun PathSwitchButton(
 }
 
 /**
- * Controls of the view state, acting on the focused path. The first button depends on [kind]: a
- * planned route can be edited ([onEdit]), a track can be recorded onto ([onContinueRecording]) -
- * what was walked cannot be re-planned, and a plan has no recording to continue. The rest are the
- * same for both: open the stats screen, export as GPX, or leave to the map state (the path stays on
- * the map).
+ * The chooser behind 規劃 and 錄製 while the map already shows paths of their kind: one row per
+ * path in [paths], in the given order and labelled by [pathLabel], then a last row [newLabel] for
+ * starting afresh. Tapping a row acts right away and is the only way to confirm; back or a tap
+ * outside dismisses it. The rows scroll when they outgrow the dialog.
  */
 @Composable
-fun PathViewControls(
-    kind: PathKind,
-    onEdit: () -> Unit,
-    onContinueRecording: () -> Unit,
-    onStats: () -> Unit,
-    onExport: () -> Unit,
-    onLeave: () -> Unit,
-    modifier: Modifier = Modifier,
+fun <T> OpenedPathChooserDialog(
+    title: String,
+    paths: List<T>,
+    pathLabel: (T) -> String,
+    newLabel: String,
+    onPickPath: (T) -> Unit,
+    onPickNew: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        when (kind) {
-            PathKind.PLAN -> MapPill("編輯", onEdit, primary = true)
-            PathKind.TRACK -> MapPill("繼續錄製", onContinueRecording, primary = true)
-        }
-        MapPill("統計", onStats)
-        MapPill("匯出 GPX", onExport)
-        MapPill("離開", onLeave)
-    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                paths.forEach { path ->
+                    ChooserRow(pathLabel(path)) { onPickPath(path) }
+                    HorizontalDivider()
+                }
+                ChooserRow(newLabel, onPickNew)
+            }
+        },
+        confirmButton = {},
+    )
+}
+
+/** One tappable full-width row of [OpenedPathChooserDialog]. */
+@Composable
+private fun ChooserRow(
+    label: String,
+    onClick: () -> Unit,
+) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.bodyLarge,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 12.dp),
+    )
 }
 
 /**
