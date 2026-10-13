@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>路徑合一計劃書</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #59636e;
+    --border: #c9d1d9;
+    --head-bg: #f3f5f7;
+    --code-bg: #eef1f4;
+    --accent: #0b57d0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a;
+      --fg: #e3e6ea;
+      --muted: #9aa4af;
+      --border: #3a424b;
+      --head-bg: #1e2328;
+      --code-bg: #242a31;
+      --accent: #8ab4f8;
+    }
+  }
+  html { background: var(--bg); color: var(--fg); }
+  body {
+    margin: 0;
+    padding: 24px 32px 64px;
+    font-family: -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+  }
+  h1 { font-size: 1.8rem; margin: 0 0 4px; }
+  h2 { font-size: 1.35rem; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1.1rem; margin: 28px 0 8px; }
+  p { margin: 8px 0; }
+  .meta { color: var(--muted); font-size: 0.9rem; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--head-bg); font-weight: 600; }
+  ol, ul { margin: 8px 0; padding-left: 28px; }
+  li { margin: 4px 0; }
+  .sw {
+    display: inline-block;
+    width: 0.9em;
+    height: 0.9em;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    vertical-align: -0.1em;
+    margin-right: 4px;
+  }
+  .nowrap { white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1>路徑合一計劃書</h1>
+<p class="meta">最後更新: 2026-10-13. 工作分支: <code>unifmt</code>.</p>
+
+<h2>1. 目的</h2>
+<ol>
+  <li>規劃路徑與軌跡合為單一種路徑. 檔案只有一種, 清單只有一份, 檢視畫面只有一種.</li>
+  <li>所有路徑預設以實線顯示, 以顏色區分錄製中軌跡, 軌跡與規劃路徑.</li>
+  <li>所有路徑皆支援坡度顯示與里程標記, 兩者各以一個按鍵切換.</li>
+  <li>已存路徑的開啟, 改名, 刪除, 匯出, 統計, 複製與匯入集中於單一的檔案管理畫面.</li>
+</ol>
+<p>設計取捨一律以登山者的操作體驗為判準, 工程量不列入考量.</p>
+
+<h2>2. 定義</h2>
+<table>
+  <tr><th class="nowrap">用詞</th><th>定義</th></tr>
+  <tr><td class="nowrap"><b>路徑</b></td><td>地圖上一條具有名稱的線, 為本 App 儲存, 開啟與顯示的單一種物件.</td></tr>
+  <tr><td class="nowrap"><b>軌跡</b></td><td>由定位點 (fix) 構成的路徑, 每一點皆有時間. 來源為錄製或匯入.</td></tr>
+  <tr><td class="nowrap"><b>規劃路徑</b></td><td>由航點 (waypoint) 與相鄰航點之間的路段 (segment) 構成的路徑, 沒有時間. 來源為規劃, 匯入或自軌跡複製.</td></tr>
+  <tr><td class="nowrap"><b>種類</b></td><td>路徑為軌跡或規劃路徑的區分. 種類由檔案內容判定, 不由使用者指定, 也不寫入檔案.</td></tr>
+  <tr><td class="nowrap"><b>路徑檔</b></td><td>儲存一條路徑的檔案, 格式為逐行 JSON (JSONL), 第一行為檔頭 (header), 其後每行一筆紀錄.</td></tr>
+  <tr><td class="nowrap"><b>路徑資料夾</b></td><td><code>Documents/Jiudge/paths/</code>, 存放所有路徑檔與錄製暫存檔 (staging file).</td></tr>
+  <tr><td class="nowrap"><b>舊資料夾</b></td><td><code>Documents/Jiudge/plans/</code> 與 <code>Documents/Jiudge/tracks/</code> 的合稱.</td></tr>
+  <tr><td class="nowrap"><b>錄製中軌跡</b></td><td>錄製工作階段目前累積的軌跡, 包含已按 "停止" 而尚未儲存或放棄者.</td></tr>
+  <tr><td class="nowrap"><b>已開啟路徑</b></td><td>經開啟, 儲存或匯入而顯示於地圖上的已存路徑. 地圖上可同時存在多條. 不含編輯中的規劃路徑與錄製中軌跡.</td></tr>
+  <tr><td class="nowrap"><b>檔案管理畫面</b></td><td>列出所有已存路徑的全螢幕畫面, 為開啟, 改名, 刪除, 匯出, 統計, 複製與匯入已存路徑的唯一入口.</td></tr>
+  <tr><td class="nowrap"><b>開啟路徑</b></td><td>於檔案管理畫面點按一列, 將該路徑加入地圖並使其成為焦點路徑的動作. 畫面與開關的 "開啟" 為一般用語, 不在此定義之內.</td></tr>
+  <tr><td class="nowrap"><b>焦點路徑</b></td><td>檢視狀態下, 下方按鍵列所作用的那一條已開啟路徑.</td></tr>
+  <tr><td class="nowrap"><b>地圖狀態</b></td><td>沒有焦點路徑, 也不在編輯中的畫面狀態. 下方按鍵列為入口按鍵.</td></tr>
+  <tr><td class="nowrap"><b>檢視狀態</b></td><td>存在焦點路徑的畫面狀態. 下方按鍵列為該路徑的操作按鍵.</td></tr>
+  <tr><td class="nowrap"><b>編輯狀態</b></td><td>正在以準心新增或移除航點的畫面狀態. 編輯對象只限規劃路徑.</td></tr>
+  <tr><td class="nowrap"><b>種類色</b></td><td>表示種類與錄製狀態的三種顏色, 見 4.9 節.</td></tr>
+  <tr><td class="nowrap"><b>坡度色</b></td><td>依行進方向的坡度分為五級的顏色, 由高程模型 (DEM) 每 30 公尺取樣計算.</td></tr>
+  <tr><td class="nowrap"><b>里程標記</b></td><td>沿線的公里數字標籤, 與終點旁的總里程標籤的合稱.</td></tr>
+  <tr><td class="nowrap"><b>起點標記</b>, <b>終點標記</b></td><td>路徑第一點與最後一點上的圓點. 起終點重合時合併為一個半綠半紅的圓點.</td></tr>
+  <tr><td class="nowrap"><b>中途航點</b></td><td>規劃路徑中, 起點與終點以外的航點, 以橘色小圓點顯示.</td></tr>
+  <tr><td class="nowrap"><b>坡度開關</b>, <b>里程開關</b></td><td>地圖右下角的兩個圓形按鍵, 分別切換坡度色與里程標記的顯示.</td></tr>
+</table>
+
+<h2>3. 議定事項</h2>
+<table>
+  <tr><th>編號</th><th>決議</th><th class="nowrap">議定日期</th></tr>
+  <tr><td>D1</td><td>不區分軌跡檔與規劃路徑檔. 檔案只有一種, 畫面只有一種.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D2</td><td>軌跡與規劃路徑預設皆以實線顯示, 以顏色區分. 錄製中軌跡為紅色, 非錄製中的軌跡為藍色, 規劃路徑為綠色.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D3</td><td>軌跡與規劃路徑皆支援坡度顯示, 畫面上以按鍵快速切換, 首次使用時為關閉.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D4</td><td>設計取捨以對使用者友善為判準, 工程量不列入考量.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D5</td><td>里程標記可切換顯示與否.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D6</td><td>起點標記與終點標記永遠顯示, 不提供關閉方式.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D7</td><td>所有路徑存於單一資料夾並列於同一份清單. 舊資料夾內的檔案由 App 自動搬入.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D8</td><td>種類由檔案內容判定. 匯入 GPX 時只詢問名稱, 不詢問種類. 檔案管理畫面對軌跡提供 "複製為規劃路徑".</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D9</td><td>地圖狀態的入口按鍵為 "錄製", "規劃", "檔案", "清除". "錄製" 與 "規劃" 按下即開始.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D10</td><td>開啟一條路徑即加入地圖, 不取代已顯示的路徑. 檢視狀態的第一個按鍵依種類為 "編輯" 或 "繼續錄製", 其餘按鍵相同.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D11</td><td>坡度顯示開啟時, 線條主體為坡度色, 外框為種類色.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D12</td><td>錄製中軌跡只顯示起點標記, 不顯示里程標記. 儲存後才顯示終點標記與里程標記.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D13</td><td>兩個開關位於右下角 "回到目前位置" 按鍵上方, 狀態跨次啟動保留. 里程開關首次使用時為開啟.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D14</td><td>已存路徑的開啟, 改名, 刪除, 匯出 GPX, 統計, 複製與匯入 GPX 集中於全螢幕的 "檔案管理" 畫面, 不另設其他清單.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D15</td><td>刪除已顯示於地圖上的路徑時, 該路徑一併自地圖移除.</td><td class="nowrap">2026-10-13</td></tr>
+  <tr><td>D16</td><td>檔案管理畫面的各列不設顯示勾選框. 自地圖移除路徑的手段為 "清除" 與刪除該路徑.</td><td class="nowrap">2026-10-13</td></tr>
+</table>
+
+<h2>4. 行為規格</h2>
+
+<h3>4.1 路徑檔與種類判定</h3>
+<ol>
+  <li>所有路徑檔存於路徑資料夾. 錄製暫存檔亦存於此, 檔名為 <code>.recording-&lt;開始時刻毫秒&gt;.jsonl</code>.</li>
+  <li>路徑檔檔名規則不變, 為 <code>&lt;名稱轉換後的字串&gt;-&lt;建立時刻毫秒&gt;.jsonl</code>.</li>
+  <li>檔頭含格式版本 <code>v</code>, 名稱 <code>name</code>, 建立時刻 <code>createdAt</code>, 產生程式 <code>app</code>, 以及選用的 <code>appVersion</code>. 新寫入的檔頭版本為 2, 不含種類欄位 <code>type</code>.</li>
+  <li>讀取時接受版本 1 與版本 2. 檔頭若有 <code>type</code> 欄位, 一律忽略.</li>
+  <li>紀錄的型別與欄位不變. 規劃路徑以航點紀錄 <code>wpt</code> 與路段紀錄 <code>seg</code> 表示, 軌跡以定位點紀錄 <code>pt</code> 表示.</li>
+</ol>
+<p>種類依下表判定:</p>
+<table>
+  <tr><th>檔案內容</th><th>種類</th></tr>
+  <tr><td>含至少一筆 <code>seg</code> 紀錄</td><td>規劃路徑</td></tr>
+  <tr><td>不含 <code>seg</code> 紀錄, 且含至少一筆 <code>pt</code> 紀錄</td><td>軌跡</td></tr>
+  <tr><td>兩者皆無</td><td>無效檔, 不列入清單</td></tr>
+</table>
+<p>每一筆 <code>pt</code> 紀錄皆含時間欄位 <code>t</code> (已讀證, 解析程式將其視為必要欄位), 故軌跡的每一點皆有時間.</p>
+
+<h3>4.2 名稱規則</h3>
+<ol>
+  <li>名稱不得與清單內任何其他路徑相同, 不分種類. 比對方式為去除頭尾空白後完全相同.</li>
+  <li>此規則適用於儲存新規劃, 儲存錄製, 匯入, 改名與 "複製為規劃路徑".</li>
+  <li>編輯既有規劃路徑後儲存, 以及繼續錄製後儲存, 比對時排除該路徑自身.</li>
+  <li>名稱留空時一律採用 "未命名路徑".</li>
+  <li>舊資料夾搬入的檔案不改名. 搬入後若有兩條路徑同名, 兩者並存.</li>
+</ol>
+
+<h3>4.3 舊資料夾的搬移</h3>
+<ol>
+  <li>搬移於儲存層每次被存取時執行, 舊資料夾皆不存在時立即結束. 搬移對每個檔案獨立進行.</li>
+  <li>舊資料夾內每個副檔名為 <code>.jsonl</code> 且非錄製暫存檔的檔案, 依序執行下列步驟: 將內容逐位元組複製為路徑資料夾內的同名暫時檔, 將暫時檔改名為正式檔名, 刪除舊資料夾內的原檔.</li>
+  <li>路徑資料夾內已有同名檔案時, 原檔留在舊資料夾, 不覆寫任何檔案.</li>
+  <li>任一步驟失敗時 (包含尚未取得儲存權限而無法讀寫的情形) 刪除暫時檔, 原檔留在舊資料夾, 於下次存取時重試.</li>
+  <li>舊資料夾內殘留的錄製暫存檔直接刪除, 與現行對殘留暫存檔的清理規則一致.</li>
+  <li>舊資料夾清空後即刪除該資料夾.</li>
+  <li>清單同時列出路徑資料夾與尚存的舊資料夾內的路徑檔, 故任何路徑檔皆不會因搬移失敗而自清單消失.</li>
+</ol>
+<p>搬移採用複製後刪除, 只依賴現行程式已在此儲存區使用的讀檔, 寫檔, 同資料夾改名與刪除四種操作 (已讀證). 清單顯示的日期取自檔頭的建立時刻, 故搬移後名稱與日期不變.</p>
+
+<h3>4.4 地圖狀態的入口按鍵</h3>
+<p>地圖狀態下, 左下角按鍵列由左至右如下表:</p>
+<table>
+  <tr><th class="nowrap">按鍵文字</th><th>樣式</th><th>按下後的行為</th><th>顯示條件</th></tr>
+  <tr><td class="nowrap">錄製</td><td>主要</td><td>確認儲存權限後, 進入現行的錄製啟動權限流程, 隨即開始新錄製. 已開啟路徑維持顯示.</td><td>永遠顯示. 未取得定位權限時停用.</td></tr>
+  <tr><td class="nowrap">規劃</td><td>主要</td><td>進入編輯狀態, 編輯對象為空白的新規劃. 已開啟路徑維持顯示. 路由資料未就緒時以畫面下方的限時訊息說明, 不進入編輯狀態.</td><td>永遠顯示.</td></tr>
+  <tr><td class="nowrap">檔案</td><td>次要</td><td>確認儲存權限後開啟檔案管理畫面.</td><td>永遠顯示.</td></tr>
+  <tr><td class="nowrap">清除</td><td>次要</td><td>自地圖移除所有已開啟路徑. 路徑檔不受影響.</td><td>至少有一條已開啟路徑時顯示.</td></tr>
+</table>
+<p>錄製中與已停止時, 左下角按鍵列維持現行內容 ("停止", "放棄", 以及 "儲存", "放棄", "繼續錄製"), 不含 "檔案". 參考路徑於開始錄製前開啟. 理由為議定事項未涵蓋錄製中的操作.</p>
+
+<h3>4.5 檔案管理畫面</h3>
+<p>檔案管理畫面為全螢幕畫面, 覆蓋地圖與所有按鍵, 覆蓋方式與統計畫面相同. 此畫面只由地圖狀態的 "檔案" 按鍵開啟.</p>
+<ol>
+  <li>頂端列由左至右為標題 "檔案管理", 文字按鍵 "匯入 GPX", 關閉圖示. 關閉圖示的位置與樣式與統計畫面相同.</li>
+  <li>按下關閉圖示或系統返回鍵即關閉此畫面, 回到地圖狀態.</li>
+  <li>頂端列下方為路徑清單, 佔滿其餘畫面並可捲動. 路徑依建立時刻由新至舊排列, 不分種類.</li>
+  <li>每一列由左至右為種類色圓點 (直徑 12 dp), 名稱與其下方的 "日期 - 距離", 以及 "更多" 選單. 軌跡的圓點為藍色, 規劃路徑的圓點為綠色.</li>
+  <li>"更多" 選單的項目依序為 "統計", "改名", "匯出 GPX", "複製為規劃路徑", "刪除". "複製為規劃路徑" 只出現於軌跡.</li>
+  <li>清單為空時顯示 "尚無已儲存的路徑".</li>
+</ol>
+<p>各動作的行為如下表:</p>
+<table>
+  <tr><th class="nowrap">動作</th><th>行為</th><th>完成或取消後所在的畫面</th></tr>
+  <tr><td class="nowrap">點按一列 (開啟)</td><td>關閉檔案管理畫面並開啟該路徑, 見 4.6 節.</td><td>地圖, 檢視狀態.</td></tr>
+  <tr><td class="nowrap">統計</td><td>統計畫面覆蓋於檔案管理畫面之上.</td><td>關閉統計後回到檔案管理畫面.</td></tr>
+  <tr><td class="nowrap">改名</td><td>以對話框詢問新名稱. 成功後清單重新整理. 該路徑為已開啟路徑時, 其名稱同步更新.</td><td>檔案管理畫面.</td></tr>
+  <tr><td class="nowrap">匯出 GPX</td><td>開啟系統的建立檔案畫面並匯出.</td><td>檔案管理畫面.</td></tr>
+  <tr><td class="nowrap">複製為規劃路徑</td><td>依 4.8 節的複製規則進行.</td><td>檔案管理畫面.</td></tr>
+  <tr><td class="nowrap">刪除</td><td>以對話框確認後刪除路徑檔. 成功後清單重新整理. 該路徑為已開啟路徑時, 一併自地圖移除, 確認對話框的內文並加註此事.</td><td>檔案管理畫面.</td></tr>
+  <tr><td class="nowrap">匯入 GPX</td><td>開啟系統檔案挑選器, 其後依 4.8 節的匯入規則進行.</td><td>匯入成功時為地圖, 檢視狀態. 取消挑選或取消命名時為檔案管理畫面.</td></tr>
+</table>
+<p>檔案管理畫面的各列不設顯示勾選框. 理由為勾選框增加操作複雜度, 且其作用無法由外觀得知.</p>
+
+<h3>4.6 開啟與顯示</h3>
+<ol>
+  <li>開啟一條路徑後, 該路徑加入地圖, 地圖視野調整為涵蓋整條路徑, 並進入檢視狀態, 以該路徑為焦點路徑.</li>
+  <li>已開啟的路徑再次被開啟時不重複加入, 只重新成為焦點路徑並調整視野.</li>
+  <li>已開啟路徑的數量不設上限.</li>
+  <li>已開啟路徑於離開檢視狀態, 進入編輯狀態, 開始錄製後皆維持顯示.</li>
+  <li>自地圖移除已開啟路徑的手段有兩種, 分別為地圖狀態的 "清除" (移除全部), 以及於檔案管理畫面刪除該路徑 (只移除該條).</li>
+</ol>
+
+<h3>4.7 檢視狀態</h3>
+<p>檢視狀態下, 左下角按鍵列由左至右如下表. 各按鍵於其適用種類下永遠顯示.</p>
+<table>
+  <tr><th class="nowrap">按鍵文字</th><th>適用種類</th><th>按下後的行為</th></tr>
+  <tr><td class="nowrap">編輯</td><td>規劃路徑</td><td>進入編輯狀態, 編輯對象為焦點路徑.</td></tr>
+  <tr><td class="nowrap">繼續錄製</td><td>軌跡</td><td>以焦點路徑為基礎開始錄製, 新的定位點接續於其後.</td></tr>
+  <tr><td class="nowrap">統計</td><td>全部</td><td>開啟統計畫面. 關閉統計後回到檢視狀態.</td></tr>
+  <tr><td class="nowrap">匯出 GPX</td><td>全部</td><td>開啟系統的建立檔案畫面並匯出.</td></tr>
+  <tr><td class="nowrap">離開</td><td>全部</td><td>回到地圖狀態. 該路徑維持為已開啟路徑.</td></tr>
+</table>
+<p>走過的紀錄無從重新規劃, 規劃路徑沒有可接續的錄製, 故第一個按鍵依種類而異.</p>
+
+<h3>4.8 編輯, 錄製, 匯入與複製</h3>
+<p>編輯狀態的按鍵列 ("+", "−", "儲存", "取消") 與航點操作規則不變. 匯入而來的路段仍不可用 "−" 移除.</p>
+<table>
+  <tr><th>操作</th><th>結果</th></tr>
+  <tr><td>於檢視狀態按 "編輯"</td><td>焦點路徑暫時離開已開啟路徑, 改由編輯畫面繪製. 其他已開啟路徑維持顯示.</td></tr>
+  <tr><td>新規劃按 "儲存"</td><td>詢問名稱後存檔. 存檔後的路徑成為已開啟路徑與焦點路徑, 進入檢視狀態.</td></tr>
+  <tr><td>既有規劃路徑編輯後按 "儲存"</td><td>覆蓋原路徑 (寫入新檔後刪除原路徑檔). 存檔後的路徑成為焦點路徑, 進入檢視狀態.</td></tr>
+  <tr><td>新規劃按 "取消"</td><td>回到地圖狀態, 不新增任何路徑.</td></tr>
+  <tr><td>既有規劃路徑編輯後按 "取消"</td><td>編輯前的路徑回到已開啟路徑並成為焦點路徑, 進入檢視狀態.</td></tr>
+  <tr><td>按 "繼續錄製"</td><td>焦點路徑離開已開啟路徑, 其全部定位點成為錄製中軌跡的開頭. 其他已開啟路徑維持顯示.</td></tr>
+  <tr><td>錄製後按 "儲存"</td><td>詢問名稱後存檔. 存檔後的軌跡成為已開啟路徑與焦點路徑, 進入檢視狀態.</td></tr>
+  <tr><td>新錄製按 "放棄" 並確認</td><td>回到地圖狀態. 已開啟路徑不受影響.</td></tr>
+  <tr><td>繼續錄製後按 "放棄" 並確認</td><td>只丟棄本次新增的定位點. 原軌跡重新成為已開啟路徑與焦點路徑, 進入檢視狀態.</td></tr>
+</table>
+<p>錄製服務, 定位點寫入前的篩選規則, 錄製中與已停止的按鍵列, 以及放棄錄製的確認對話框文字維持不變. 理由為本計劃只變更儲存位置, 顯示方式與路徑的開啟方式.</p>
+
+<p>匯入 GPX 的規則如下:</p>
+<ol>
+  <li>入口有兩處, 分別為檔案管理畫面的 "匯入 GPX" 按鍵, 以及自其他 App 開啟 <code>.gpx</code> 檔.</li>
+  <li>檔內每一點皆有時間時, 匯入為軌跡. 保留全部的點與時間, 不抽稀 (simplification), 建立時刻取最早一點的時間.</li>
+  <li>其餘情形匯入為規劃路徑. 捨棄時間, 各段以 3 公尺容差抽稀, 並標記為匯入路段.</li>
+  <li>命名對話框標題為 "匯入 GPX", 只有名稱欄位, 預填檔內名稱, 檔內無名稱時預填檔名. 按鍵為 "匯入" 與 "取消".</li>
+  <li>存檔後的路徑成為已開啟路徑與焦點路徑, 進入檢視狀態, 並以限時訊息顯示 "已匯入路徑: &lt;名稱&gt;". 檔案管理畫面開啟中時一併關閉.</li>
+  <li>名稱重複時重新開啟命名對話框, 保留已輸入的名稱.</li>
+  <li>檔內沒有任何點時, 以錯誤對話框顯示現行訊息. 編輯狀態下自其他 App 開啟 <code>.gpx</code> 檔時, 以現行的限時訊息拒絕.</li>
+</ol>
+
+<p>"複製為規劃路徑" 的規則如下:</p>
+<ol>
+  <li>命名對話框標題為 "複製為規劃路徑", 名稱欄位預填 "&lt;原名稱&gt; 規劃". 按鍵為 "複製" 與 "取消".</li>
+  <li>新的規劃路徑由該軌跡的全部定位點構成單一匯入路段, 以 3 公尺容差抽稀, 捨棄時間. 建立時刻為複製當下.</li>
+  <li>複製後檔案管理畫面維持開啟, 清單重新整理, 並以限時訊息顯示 "已複製為規劃路徑: &lt;名稱&gt;". 原軌跡不受影響, 地圖不變.</li>
+</ol>
+
+<h3>4.9 地圖外觀</h3>
+<p>線條顏色依下表決定:</p>
+<table>
+  <tr><th>路徑</th><th>坡度顯示關閉</th><th>坡度顯示開啟</th></tr>
+  <tr><td>錄製中軌跡</td><td><span class="sw" style="background:#D32F2F"></span>紅色實線, 白色外框</td><td>坡度色實線, <span class="sw" style="background:#D32F2F"></span>紅色外框</td></tr>
+  <tr><td>已開啟的軌跡</td><td><span class="sw" style="background:#1976D2"></span>藍色實線, 白色外框</td><td>坡度色實線, <span class="sw" style="background:#1976D2"></span>藍色外框</td></tr>
+  <tr><td>規劃路徑 (已開啟或編輯中)</td><td><span class="sw" style="background:#2E7D32"></span>綠色實線, 白色外框</td><td>坡度色實線, <span class="sw" style="background:#2E7D32"></span>綠色外框</td></tr>
+</table>
+<p>繪圖常數的初始值如下表. 實機驗收不合格時只調整此表的數值, 行為規格不變.</p>
+<table>
+  <tr><th>項目</th><th>初始值</th></tr>
+  <tr><td>種類色</td><td>紅 <code>#D32F2F</code>, 藍 <code>#1976D2</code>, 綠 <code>#2E7D32</code></td></tr>
+  <tr><td>線寬</td><td>5 dp. 縮放層級 14 以上固定, 10 以下縮為 0.5 倍, 兩者之間線性變化.</td></tr>
+  <tr><td>外框</td><td>線條兩側各加線寬的 0.3 倍. 坡度顯示關閉時為白色 <code>#FFFFFF</code>.</td></tr>
+  <tr><td>不透明度</td><td>線條與外框皆完全不透明.</td></tr>
+  <tr><td>方向箭頭</td><td>沿用規劃路徑現行的箭頭樣式與間距 (深色箭頭加白色光暈, 間距為線寬的 5 倍).</td></tr>
+</table>
+<p>各標記的顯示規則如下表. 標記的顏色與大小沿用規劃路徑現行的樣式.</p>
+<table>
+  <tr><th>項目</th><th>已開啟的軌跡</th><th>規劃路徑 (已開啟或編輯中)</th><th>錄製中軌跡</th><th>受哪個開關控制</th></tr>
+  <tr><td>方向箭頭</td><td>顯示</td><td>顯示</td><td>顯示</td><td>無, 永遠顯示</td></tr>
+  <tr><td>起點標記</td><td>顯示</td><td>顯示</td><td>顯示, 自第一個定位點寫入後出現</td><td>無, 永遠顯示</td></tr>
+  <tr><td>終點標記</td><td>顯示</td><td>顯示</td><td>不顯示</td><td>無, 永遠顯示</td></tr>
+  <tr><td>中途航點</td><td>不適用</td><td>顯示</td><td>不適用</td><td>無, 永遠顯示</td></tr>
+  <tr><td>沿線公里數字標籤</td><td>顯示</td><td>顯示</td><td>不顯示</td><td>里程開關</td></tr>
+  <tr><td>終點旁總里程標籤</td><td>顯示</td><td>顯示</td><td>不顯示</td><td>里程開關</td></tr>
+</table>
+<ol>
+  <li>錄製中軌跡尚無終點, 其末端由現在位置標記表示. 最後一個定位點至現在位置標記之間的紅色虛線維持現行規則.</li>
+  <li>錄製中軌跡不顯示里程標記, 以免與參考路徑的里程標記混淆.</li>
+  <li>坡度色的分級, 30 公尺取樣間距與取不到高程時的處理沿用現行規則.</li>
+  <li>坡度取樣於背景執行緒進行. 某條路徑的取樣完成前, 該路徑以坡度顯示關閉時的外觀顯示.</li>
+  <li>坡度顯示關閉時不進行任何坡度取樣. 錄製中軌跡於坡度顯示開啟時只對新增的部分取樣.</li>
+  <li>圖層 (layer) 由下而上的順序為已開啟路徑 (依開啟先後), 編輯中的規劃路徑, 錄製中軌跡, 山頭搜尋標記, 現在位置標記. 現在位置標記位於所有路徑之上.</li>
+  <li>繪製時, 相鄰且同色的線段合併為單一路徑繪製, 兩端點皆位於畫面同一側之外的線段不繪製.</li>
+</ol>
+
+<h3>4.10 坡度開關與里程開關</h3>
+<ol>
+  <li>右下角由上而下依序為里程開關, 坡度開關, "回到目前位置" 按鍵. 三者皆為小型圓形按鍵, 間距與現行右下角按鍵欄相同.</li>
+  <li>里程開關的圖示為 <code>Icons.Filled.Straighten</code>, 無障礙說明文字為 "里程標記". 坡度開關的圖示為 <code>Icons.Filled.Terrain</code>, 無障礙說明文字為 "坡度顯示". 兩個圖示皆存在於專案現用的圖示套件 (已讀證).</li>
+  <li>按一下即切換, 地圖上所有路徑同時改變. 開啟時按鍵底色為主題主色, 與左上角 "?" 按鍵開啟時相同. 關閉時為預設底色.</li>
+  <li>地圖上至少有一條路徑時顯示兩個開關. 路徑包含已開啟路徑, 編輯中的規劃路徑與錄製中軌跡. 地圖上沒有路徑時兩個開關皆不顯示.</li>
+  <li>編輯狀態下 "回到目前位置" 按鍵依現行規則隱藏, 兩個開關仍顯示. 符號辨識模式下整欄依現行規則隱藏.</li>
+  <li>坡度開關首次使用時為關閉, 里程開關首次使用時為開啟. 兩者的狀態寫入裝置, 下次啟動時沿用.</li>
+  <li>高程資料夾不存在時, 按下坡度開關只顯示限時訊息 "未安裝高程資料, 無法顯示坡度", 開關維持關閉. 啟動時若保存的狀態為開啟而高程資料夾不存在, 視為關閉.</li>
+  <li>小螢幕上右下角按鍵欄與左下角按鍵列重疊時, 整欄依現行規則上移至按鍵列上方.</li>
+</ol>
+
+<h3>4.11 統計與 GPX 匯出</h3>
+<ol>
+  <li>統計畫面的版面與計算不變. 時間與速度兩組資料於軌跡顯示, 於規劃路徑不顯示.</li>
+  <li>GPX 匯出內容依種類維持現行格式. 規劃路徑輸出具名航點與一條 <code>&lt;rte&gt;</code>, 軌跡輸出一條含時間的 <code>&lt;trk&gt;</code>. 理由為路徑檔的紀錄內容沒有改變.</li>
+</ol>
+
+<h3>4.12 介面文字</h3>
+<p>下表列出新增或變更的介面文字. 未列出的文字維持不變.</p>
+<table>
+  <tr><th>位置</th><th>文字</th></tr>
+  <tr><td>地圖狀態入口按鍵</td><td>錄製, 規劃, 檔案, 清除</td></tr>
+  <tr><td>檔案管理畫面標題</td><td>檔案管理</td></tr>
+  <tr><td>檔案管理畫面的清單為空</td><td>尚無已儲存的路徑</td></tr>
+  <tr><td>檔案管理畫面頂端列</td><td>文字按鍵 "匯入 GPX". 關閉圖示的無障礙說明文字 "關閉檔案管理"</td></tr>
+  <tr><td>"更多" 選單新增項目</td><td>複製為規劃路徑</td></tr>
+  <tr><td>儲存對話框 (規劃與錄製共用)</td><td>標題 "儲存路徑", 欄位標籤 "路徑名稱", 按鍵 "儲存" 與 "取消"</td></tr>
+  <tr><td>改名對話框</td><td>標題 "路徑改名", 欄位標籤 "路徑名稱", 按鍵 "確定" 與 "取消"</td></tr>
+  <tr><td>刪除確認對話框</td><td>標題 "刪除路徑", 按鍵不變. 內文為 <code>確定要刪除 "&lt;名稱&gt;" 嗎? 此操作無法復原.</code> 該路徑為已開啟路徑時, 內文為 <code>確定要刪除 "&lt;名稱&gt;" 嗎? 此路徑會一併自地圖移除. 此操作無法復原.</code></td></tr>
+  <tr><td>匯入命名對話框</td><td>標題 "匯入 GPX", 欄位標籤 "路徑名稱", 按鍵 "匯入" 與 "取消"</td></tr>
+  <tr><td>複製命名對話框</td><td>標題 "複製為規劃路徑", 欄位標籤 "路徑名稱", 按鍵 "複製" 與 "取消"</td></tr>
+  <tr><td>名稱留空時的名稱</td><td>未命名路徑</td></tr>
+  <tr><td>儲存成功的限時訊息</td><td>已儲存路徑: &lt;名稱&gt;</td></tr>
+  <tr><td>匯入成功的限時訊息</td><td>已匯入路徑: &lt;名稱&gt;</td></tr>
+  <tr><td>複製成功的限時訊息</td><td>已複製為規劃路徑: &lt;名稱&gt;</td></tr>
+  <tr><td>名稱重複的限時訊息</td><td>已有同名路徑 "&lt;名稱&gt;", 請改用其他名稱</td></tr>
+  <tr><td>讀取清單失敗的錯誤對話框</td><td>讀取清單失敗: &lt;原因&gt;</td></tr>
+  <tr><td>開啟路徑失敗的錯誤對話框</td><td>開啟失敗: &lt;原因&gt;</td></tr>
+  <tr><td>沒有高程資料的限時訊息</td><td>未安裝高程資料, 無法顯示坡度</td></tr>
+  <tr><td>兩個開關的無障礙說明文字</td><td>里程標記, 坡度顯示</td></tr>
+</table>
+
+<h2>5. 實作階段</h2>
+<p>各階段依序進行, 每一階段結束時 App 皆可建置並正常使用. 下列路徑皆相對於 <code>app/src/main/kotlin/io/github/nexgus/jiudge/</code>, 測試檔相對於 <code>app/src/test/kotlin/io/github/nexgus/jiudge/</code>. 新類別與新檔案的名稱為本計劃指定的名稱.</p>
+
+<h3>階段 1, 儲存層合一</h3>
+<p>本階段結束時, 畫面行為與現行相同, 路徑檔改存於路徑資料夾, 舊資料夾的檔案已搬入.</p>
+<table>
+  <tr><th>檔案</th><th>動作</th></tr>
+  <tr><td><code>data/route/Trace.kt</code></td><td>格式版本改為 2. 檔頭寫出時不含 <code>type</code>, 讀取時 <code>type</code> 為選用且不保存. 移除 <code>TYPE_PLAN</code> 與 <code>TYPE_TRACK</code>.</td></tr>
+  <tr><td><code>data/route/PathKind.kt</code> (新增)</td><td>種類列舉 <code>PathKind</code> (<code>PLAN</code>, <code>TRACK</code>), 以及依 4.1 節判定表由紀錄清單求種類的函數.</td></tr>
+  <tr><td><code>data/route/SavedPath.kt</code> (新增)</td><td>密封介面 <code>SavedPath</code>, 提供名稱, 建立時刻, 種類, 攤平後的座標序列, 距離, 各點時間 (規劃路徑為空值), 檔頭與紀錄清單.</td></tr>
+  <tr><td><code>data/route/PlannedRoute.kt</code>, <code>data/route/RecordedTrack.kt</code></td><td>實作 <code>SavedPath</code>. 檔頭不再帶種類.</td></tr>
+  <tr><td><code>data/route/RoutePaths.kt</code></td><td>新增路徑資料夾的存取函數 (不存在時建立). 舊資料夾的存取函數改為只回傳既存者, 不建立資料夾.</td></tr>
+  <tr><td><code>data/route/PathStore.kt</code> (新增)</td><td>取代 <code>RouteStore</code> 與 <code>TrackStore</code>. 提供含種類的清單, 讀取單一路徑檔, 儲存規劃路徑 (可指定被取代的路徑檔), 儲存軌跡, 改名, 刪除, 錄製暫存檔的建立, 附加, 定案與丟棄, 殘留暫存檔清理, 以及 4.3 節的搬移. 名稱重複時拋出 <code>DuplicatePathNameException</code>, 比對範圍依 4.2 節.</td></tr>
+  <tr><td><code>data/route/RouteStore.kt</code>, <code>data/route/TrackStore.kt</code></td><td>刪除.</td></tr>
+  <tr><td><code>feature/recording/Recorder.kt</code>, <code>core/recording/RecordingController.kt</code>, <code>core/recording/RecordingService.kt</code></td><td>改用 <code>PathStore</code> 與新的例外型別. <code>RecordingService.kt</code> 只需更新註解內的類別名稱.</td></tr>
+  <tr><td><code>MainActivity.kt</code>, <code>feature/planning/PlanningUi.kt</code>, <code>feature/recording/RecordingUi.kt</code></td><td>改用 <code>PathStore</code> 的型別. 現有兩份清單暫以種類篩選 <code>PathStore</code> 的清單取得內容, 此篩選於階段 3 移除. 名稱重複訊息與留空名稱改用 4.12 節的文字.</td></tr>
+  <tr><td>測試 <code>data/route/PathStoreTest.kt</code> (新增)</td><td>承接 <code>RouteStoreTest.kt</code> 與 <code>TrackStoreTest.kt</code> 的全部案例, 並新增種類判定, 跨種類名稱重複, 版本 1 檔頭讀取, 搬移 (正常搬入, 同名檔略過, 殘留暫存檔刪除, 空資料夾移除, 留在舊資料夾的檔案仍列於清單) 等案例.</td></tr>
+  <tr><td>測試 <code>data/route/RouteStoreTest.kt</code>, <code>data/route/TrackStoreTest.kt</code></td><td>刪除.</td></tr>
+  <tr><td>測試 <code>data/route/PlannedRouteTest.kt</code></td><td>配合檔頭不含種類而調整.</td></tr>
+</table>
+
+<h3>階段 2, 統一圖層</h3>
+<p>本階段結束時, 所有路徑皆以種類色實線顯示, 已開啟的軌跡具備里程標記與起終點標記, 錄製中軌跡具備起點標記. 坡度顯示固定為關閉, 里程標記固定為顯示.</p>
+<table>
+  <tr><th>檔案</th><th>動作</th></tr>
+  <tr><td><code>core/elevation/SlopeSampler.kt</code> (新增)</td><td>自現行規劃路徑圖層抽出坡度取樣, 為不依賴 Android 的純 Kotlin 程式. 支援對整條座標序列取樣, 以及只對新增部分接續取樣.</td></tr>
+  <tr><td><code>feature/path/PathGeometry.kt</code> (新增)</td><td>不依賴繪圖介面的計算, 包含累計距離, 里程標記位置, 同色線段合併與畫面外線段判定.</td></tr>
+  <tr><td><code>feature/path/PathLayer.kt</code> (新增)</td><td>單一路徑圖層, 依 4.9 節繪製. 輸入為樣式 (錄製中軌跡, 軌跡, 規劃路徑), 座標序列, 航點, 顯示選項 (坡度, 里程), 以及錄製用的現在位置端點與暫定起點. 坡度取樣於背景執行緒呼叫 <code>SlopeSampler</code>.</td></tr>
+  <tr><td><code>feature/path/PathOverlays.kt</code> (新增)</td><td>管理一個地圖畫面上所有的 <code>PathLayer</code>, 包含多條已開啟路徑, 編輯中的規劃路徑與錄製中軌跡. 負責 4.9 節的圖層順序, 以索引插入於現在位置標記與山頭搜尋標記之下, 並將顯示選項套用至全部圖層.</td></tr>
+  <tr><td><code>feature/planning/RoutePlanner.kt</code></td><td>改經 <code>PathOverlays</code> 的編輯圖層繪製, 不再自行建立圖層.</td></tr>
+  <tr><td><code>feature/planning/PlannedRouteLayer.kt</code>, <code>feature/planning/RouteViewer.kt</code>, <code>feature/recording/RecordedTrackLayer.kt</code></td><td>刪除.</td></tr>
+  <tr><td><code>MainActivity.kt</code></td><td>以 <code>PathOverlays</code> 取代規劃路徑檢視器, 錄製圖層與已存軌跡圖層的建立與更新. 本階段仍維持一條規劃路徑, 一條軌跡與錄製中軌跡的上限.</td></tr>
+  <tr><td><code>feature/planning/MapOverlays.kt</code>, <code>core/elevation/SlopeScale.kt</code>, <code>core/stats/TraceStatsCalculator.kt</code></td><td>更新註解內已刪除類別的名稱.</td></tr>
+  <tr><td>測試 <code>core/elevation/SlopeSamplerTest.kt</code>, <code>feature/path/PathGeometryTest.kt</code> (新增)</td><td>涵蓋整條取樣與接續取樣結果一致, 無高程時的結果, 里程標記位置, 同色線段合併, 畫面外線段判定.</td></tr>
+</table>
+<p>mapsforge 0.25.0 依圖層清單的順序逐一繪製, 並支援以索引插入圖層與查詢圖層索引 (已讀證, 依專案釘選版的類別檔). 高程查詢函數可由多個執行緒同時呼叫 (已讀證).</p>
+
+<h3>階段 3, 檔案管理畫面, 多條已開啟路徑與單一檢視狀態</h3>
+<p>本階段結束時, 4.4 至 4.8 節與 4.11, 4.12 節的行為全部到位.</p>
+<table>
+  <tr><th>檔案</th><th>動作</th></tr>
+  <tr><td><code>data/route/PathConversions.kt</code> (新增)</td><td>GPX 匯入與複製共用的 3 公尺抽稀容差常數, 以及由軌跡產生規劃路徑的函數 (4.8 節的複製規則).</td></tr>
+  <tr><td><code>feature/path/PathUi.kt</code> (新增)</td><td>地圖狀態的四個入口按鍵, 共用的命名對話框 (儲存, 改名, 匯入, 複製), 刪除確認對話框, 檢視狀態的按鍵列.</td></tr>
+  <tr><td><code>feature/path/PathManagerScreen.kt</code> (新增)</td><td>檔案管理畫面 (4.5 節), 含頂端列, 路徑清單, 種類色圓點與 "更多" 選單. 全螢幕不透明畫面與系統返回鍵的處理比照 <code>feature/stats/StatsScreen.kt</code>.</td></tr>
+  <tr><td><code>feature/planning/PlanningUi.kt</code></td><td>移除規劃入口選單, 規劃路徑清單與其選單, 儲存, 改名, 刪除, 匯入對話框, 規劃路徑檢視按鍵列與地圖狀態按鍵列. 保留準心, 按鍵元件, 編輯狀態按鍵列與山頭搜尋確認按鍵列.</td></tr>
+  <tr><td><code>feature/recording/RecordingUi.kt</code></td><td>移除錄製入口選單, 軌跡清單與其選單, 儲存, 改名, 刪除對話框與軌跡檢視按鍵列. 保留錄製中與已停止的按鍵列, 放棄確認對話框, 預設錄製名稱與兩個權限說明對話框.</td></tr>
+  <tr><td><code>MainActivity.kt</code></td><td>畫面狀態改為已開啟路徑清單 (每條含內容與其路徑檔) 加焦點路徑, 模式為地圖狀態, 檢視狀態, 編輯狀態三種. 移除階段 1 的種類篩選與階段 2 的顯示上限. 依 4.4 至 4.8 節重寫入口, 檔案管理畫面的開啟與關閉, 路徑的開啟, 編輯, 錄製銜接, 改名的同步與刪除時自地圖移除. 統計畫面關閉後依其開啟來源回到檔案管理畫面或檢視狀態. 匯入流程改為單一草稿檔, 種類由內容決定, 移除入口種類與第二份草稿. 新增複製流程. 統計與 GPX 匯出改依路徑的種類分流.</td></tr>
+  <tr><td>測試 <code>data/route/PathConversionsTest.kt</code> (新增)</td><td>涵蓋複製結果為單一匯入路段, 無時間, 已抽稀, 首尾點與原軌跡相同.</td></tr>
+</table>
+
+<h3>階段 4, 坡度開關與里程開關</h3>
+<p>本階段結束時, 4.10 節的行為全部到位.</p>
+<table>
+  <tr><th>檔案</th><th>動作</th></tr>
+  <tr><td><code>core/storage/DisplayPrefs.kt</code> (新增)</td><td>以 Android 平台內建的 <code>SharedPreferences</code> 保存兩個開關的狀態, 提供讀取與寫入. 不新增任何相依套件.</td></tr>
+  <tr><td><code>feature/path/PathUi.kt</code></td><td>新增兩個開關的按鍵元件.</td></tr>
+  <tr><td><code>MainActivity.kt</code></td><td>於右下角按鍵欄加入兩個開關, 依 4.10 節處理顯示條件, 編輯狀態下的顯示, 高程資料夾不存在時的訊息, 並將狀態套用至 <code>PathOverlays</code> 與寫入 <code>DisplayPrefs</code>.</td></tr>
+</table>
+
+<h3>階段 5, 專案文件同步</h3>
+<table>
+  <tr><th>檔案</th><th>動作</th></tr>
+  <tr><td>儲存庫根目錄的 <code>CLAUDE.md</code></td><td>更新架構表的本機儲存列與儲存決策段落中的資料夾名稱, "目前已建置" 清單中關於規劃, 錄製, 匯入與統計入口的描述, 以及目錄配置中新增的 <code>feature/path</code>.</td></tr>
+</table>
+
+<h2>6. 驗證</h2>
+
+<h3>6.1 每一階段結束時的自動檢查</h3>
+<p>依序執行下列指令, 三者皆須成功:</p>
+<pre><code>./gradlew ktlintFormat ktlintCheck
+./gradlew testDebugUnitTest
+./build.sh</code></pre>
+
+<h3>6.2 實機驗收</h3>
+<p>下列項目於實機上進行. 項目 3 至 5 的結果取決於實際底圖與裝置效能, 無法於開發主機上判定, 故各自訂有不合格時的處置.</p>
+<table>
+  <tr><th>編號</th><th>階段</th><th>步驟</th><th>合格條件</th><th>不合格時的處置</th></tr>
+  <tr><td>1</td><td>1</td><td>於舊資料夾內各有至少一個檔案的裝置上安裝新版, 分別開啟現有的規劃路徑清單與軌跡清單.</td><td>舊有路徑全數列出, 名稱, 日期與距離不變. 檔案管理員中舊資料夾已消失, 路徑資料夾內的路徑檔數等於搬移前兩個舊資料夾的路徑檔數總和.</td><td>修正搬移程式後重測.</td></tr>
+  <tr><td>2</td><td>1</td><td>新規劃, 新錄製, 繼續錄製, 匯入各存一次.</td><td>四個檔案皆出現於路徑資料夾, 舊資料夾未被重新建立.</td><td>修正後重測.</td></tr>
+  <tr><td>3</td><td>2</td><td>同時顯示錄製中軌跡, 一條軌跡與一條規劃路徑, 於林地, 溪流與既有步道線上, 以縮放層級 12, 15, 17 檢視.</td><td>三種顏色於三個縮放層級皆可一眼分辨, 且不與底圖要素混淆. 現在位置標記位於線條之上.</td><td>調整 4.9 節常數表的種類色, 線寬或外框比例.</td></tr>
+  <tr><td>4</td><td>4</td><td>承項目 3, 開啟坡度顯示.</td><td>可由外框顏色分辨三種路徑, 坡度色五級可分辨.</td><td>調整 4.9 節常數表的外框比例.</td></tr>
+  <tr><td>5</td><td>4</td><td>開啟一條不少於 20,000 點的軌跡, 分別於坡度顯示關閉與開啟時拖曳及縮放地圖.</td><td>拖曳與縮放皆無可察覺的停頓.</td><td>於圖層內加入顯示用抽稀, 依目前縮放層級以 1 像素為容差, 只影響繪製, 不影響檔案與統計.</td></tr>
+  <tr><td>6</td><td>3</td><td>開啟一條規劃路徑後按 "離開", 按 "錄製" 開始新錄製, 行走後依序測試 "停止", "儲存", 以及另一次的 "放棄".</td><td>錄製全程規劃路徑維持顯示. 儲存後進入檢視狀態且軌跡為藍色. 放棄後規劃路徑仍在地圖上.</td><td>修正後重測.</td></tr>
+  <tr><td>7</td><td>3</td><td>匯入一個每點皆有時間的 GPX 與一個無時間的 GPX. 對前者執行 "複製為規劃路徑".</td><td>匯入過程只詢問名稱. 前者為藍色且統計含時間與速度, 後者為綠色. 複製結果為綠色且可進入編輯狀態延伸.</td><td>修正後重測.</td></tr>
+  <tr><td>8</td><td>4</td><td>切換兩個開關後結束 App 再啟動. 另於地圖上沒有路徑時與編輯狀態下檢視右下角.</td><td>兩個開關的狀態與結束前相同. 沒有路徑時兩個開關皆不顯示, 編輯狀態下皆顯示. 起點與終點標記於任何開關組合下皆顯示.</td><td>修正後重測.</td></tr>
+  <tr><td>9</td><td>3</td><td>開啟兩條路徑後進入檔案管理畫面, 刪除其中一條. 另由 "更多" 開啟統計後關閉, 按 "匯入 GPX" 後取消挑選, 最後按系統返回鍵.</td><td>刪除確認對話框註明該路徑會自地圖移除. 刪除後該路徑的線自地圖消失, 另一條維持顯示. 關閉統計與取消挑選後皆回到檔案管理畫面. 系統返回鍵關閉檔案管理畫面並回到地圖狀態.</td><td>修正後重測.</td></tr>
+</table>
+
+</body>
+</html>
